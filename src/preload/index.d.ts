@@ -1,0 +1,221 @@
+import { ElectronAPI } from '@electron-toolkit/preload'
+
+interface AuthAPI {
+  login: (
+    username: string,
+    password: string
+  ) => Promise<{
+    success: boolean
+    error?: string
+    user?: {
+      id: number
+      username: string
+      realName: string
+      permissions: Record<string, boolean>
+      isAdmin: boolean
+    }
+  }>
+  logout: () => Promise<{ success: boolean }>
+  getUsers: () => Promise<
+    Array<{
+      id: number
+      username: string
+      realName: string
+      permissions: Record<string, boolean>
+      isAdmin: boolean
+    }>
+  >
+  createUser: (data: {
+    username: string
+    realName: string
+    password: string
+    permissions: Record<string, boolean>
+  }) => Promise<{ success: boolean; error?: string }>
+  updateUser: (data: {
+    id: number
+    realName?: string
+    password?: string
+    permissions?: Record<string, boolean>
+  }) => Promise<{ success: boolean; error?: string }>
+  deleteUser: (userId: number) => Promise<{ success: boolean; error?: string }>
+}
+
+interface LedgerAPI {
+  getAll: () => Promise<
+    Array<{
+      id: number
+      name: string
+      standard_type: 'enterprise' | 'npo'
+      start_period: string
+      current_period: string
+      created_at: string
+    }>
+  >
+  create: (data: {
+    name: string
+    standardType: 'enterprise' | 'npo'
+    startPeriod: string
+  }) => Promise<{ success: boolean; id?: number; error?: string }>
+  update: (data: {
+    id: number
+    name?: string
+    currentPeriod?: string
+  }) => Promise<{ success: boolean; error?: string }>
+  delete: (id: number) => Promise<{ success: boolean; error?: string }>
+  getPeriods: (ledgerId: number) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      period: string
+      is_closed: number
+      closed_at: string | null
+    }>
+  >
+}
+
+interface SubjectAPI {
+  getAll: (ledgerId: number) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      code: string
+      name: string
+      parent_code: string | null
+      category: string
+      balance_direction: number
+      has_auxiliary: number
+      is_cash_flow: number
+      level: number
+      is_system: number
+    }>
+  >
+  search: (
+    ledgerId: number,
+    keyword: string
+  ) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      code: string
+      name: string
+      category: string
+      balance_direction: number
+      is_cash_flow: number
+    }>
+  >
+  create: (data: {
+    ledgerId: number
+    code: string
+    name: string
+    parentCode: string | null
+    category: string
+    balanceDirection: number
+    hasAuxiliary: boolean
+    isCashFlow: boolean
+  }) => Promise<{ success: boolean; error?: string }>
+  update: (data: {
+    id: number
+    name?: string
+    hasAuxiliary?: boolean
+    isCashFlow?: boolean
+  }) => Promise<{ success: boolean; error?: string }>
+  delete: (id: number) => Promise<{ success: boolean; error?: string }>
+}
+
+interface SettingsAPI {
+  get: (key: string) => Promise<string | null>
+  getAll: () => Promise<Record<string, string>>
+  set: (key: string, value: string) => Promise<{ success: boolean }>
+}
+
+interface CashFlowAPI {
+  getItems: (ledgerId: number) => Promise<
+    Array<{
+      id: number
+      code: string
+      name: string
+      category: 'operating' | 'investing' | 'financing'
+      direction: 'inflow' | 'outflow'
+    }>
+  >
+}
+
+interface VoucherAPI {
+  getNextNumber: (ledgerId: number, period: string) => Promise<number>
+  list: (query: {
+    ledgerId: number
+    period?: string
+    dateFrom?: string
+    dateTo?: string
+    keyword?: string
+  }) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      period: string
+      voucher_date: string
+      voucher_number: number
+      voucher_word: string
+      status: 0 | 1 | 2
+      creator_id: number | null
+      auditor_id: number | null
+      bookkeeper_id: number | null
+      total_debit: number
+      total_credit: number
+    }>
+  >
+  getEntries: (voucherId: number) => Promise<
+    Array<{
+      id: number
+      voucher_id: number
+      row_order: number
+      summary: string
+      subject_code: string
+      debit_amount: number
+      credit_amount: number
+      cash_flow_item_id: number | null
+      subject_name?: string
+      cash_flow_code?: string
+      cash_flow_name?: string
+    }>
+  >
+  batchAction: (payload: {
+    action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
+    voucherIds: number[]
+  }) => Promise<{ success: boolean; error?: string }>
+  save: (data: {
+    ledgerId: number
+    voucherDate: string
+    voucherWord?: string
+    isCarryForward?: boolean
+    entries: Array<{
+      summary: string
+      subjectCode: string
+      debitAmount: string
+      creditAmount: string
+      cashFlowItemId: number | null
+    }>
+  }) => Promise<{
+    success: boolean
+    error?: string
+    voucherId?: number
+    voucherNumber?: number
+    status?: number
+  }>
+}
+
+interface DudeAPI {
+  auth: AuthAPI
+  ledger: LedgerAPI
+  subject: SubjectAPI
+  cashflow: CashFlowAPI
+  voucher: VoucherAPI
+  settings: SettingsAPI
+}
+
+declare global {
+  interface Window {
+    electron: ElectronAPI
+    api: DudeAPI
+  }
+}

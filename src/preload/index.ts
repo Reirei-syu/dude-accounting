@@ -1,0 +1,103 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import { electronAPI } from '@electron-toolkit/preload'
+
+// Type-safe API for renderer process
+const api = {
+  auth: {
+    login: (username: string, password: string) =>
+      ipcRenderer.invoke('auth:login', username, password),
+    logout: () => ipcRenderer.invoke('auth:logout'),
+    getUsers: () => ipcRenderer.invoke('auth:getUsers'),
+    createUser: (data: {
+      username: string
+      realName: string
+      password: string
+      permissions: Record<string, boolean>
+    }) => ipcRenderer.invoke('auth:createUser', data),
+    updateUser: (data: {
+      id: number
+      realName?: string
+      password?: string
+      permissions?: Record<string, boolean>
+    }) => ipcRenderer.invoke('auth:updateUser', data),
+    deleteUser: (userId: number) => ipcRenderer.invoke('auth:deleteUser', userId)
+  },
+  ledger: {
+    getAll: () => ipcRenderer.invoke('ledger:getAll'),
+    create: (data: { name: string; standardType: 'enterprise' | 'npo'; startPeriod: string }) =>
+      ipcRenderer.invoke('ledger:create', data),
+    update: (data: { id: number; name?: string; currentPeriod?: string }) =>
+      ipcRenderer.invoke('ledger:update', data),
+    delete: (id: number) => ipcRenderer.invoke('ledger:delete', id),
+    getPeriods: (ledgerId: number) => ipcRenderer.invoke('ledger:getPeriods', ledgerId)
+  },
+  subject: {
+    getAll: (ledgerId: number) => ipcRenderer.invoke('subject:getAll', ledgerId),
+    search: (ledgerId: number, keyword: string) =>
+      ipcRenderer.invoke('subject:search', ledgerId, keyword),
+    create: (data: {
+      ledgerId: number
+      code: string
+      name: string
+      parentCode: string | null
+      category: string
+      balanceDirection: number
+      hasAuxiliary: boolean
+      isCashFlow: boolean
+    }) => ipcRenderer.invoke('subject:create', data),
+    update: (data: { id: number; name?: string; hasAuxiliary?: boolean; isCashFlow?: boolean }) =>
+      ipcRenderer.invoke('subject:update', data),
+    delete: (id: number) => ipcRenderer.invoke('subject:delete', id)
+  },
+  cashflow: {
+    getItems: (ledgerId: number) => ipcRenderer.invoke('cashflow:getItems', ledgerId)
+  },
+  voucher: {
+    getNextNumber: (ledgerId: number, period: string) =>
+      ipcRenderer.invoke('voucher:getNextNumber', ledgerId, period),
+    list: (query: {
+      ledgerId: number
+      period?: string
+      dateFrom?: string
+      dateTo?: string
+      keyword?: string
+    }) => ipcRenderer.invoke('voucher:list', query),
+    getEntries: (voucherId: number) => ipcRenderer.invoke('voucher:getEntries', voucherId),
+    batchAction: (payload: {
+      action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
+      voucherIds: number[]
+    }) => ipcRenderer.invoke('voucher:batchAction', payload),
+    save: (data: {
+      ledgerId: number
+      voucherDate: string
+      voucherWord?: string
+      isCarryForward?: boolean
+      entries: Array<{
+        summary: string
+        subjectCode: string
+        debitAmount: string
+        creditAmount: string
+        cashFlowItemId: number | null
+      }>
+    }) => ipcRenderer.invoke('voucher:save', data)
+  },
+  settings: {
+    get: (key: string) => ipcRenderer.invoke('settings:get', key),
+    getAll: () => ipcRenderer.invoke('settings:getAll'),
+    set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value)
+  }
+}
+
+if (process.contextIsolated) {
+  try {
+    contextBridge.exposeInMainWorld('electron', electronAPI)
+    contextBridge.exposeInMainWorld('api', api)
+  } catch (error) {
+    console.error(error)
+  }
+} else {
+  // @ts-ignore (define in dts)
+  window.electron = electronAPI
+  // @ts-ignore (define in dts)
+  window.api = api
+}
