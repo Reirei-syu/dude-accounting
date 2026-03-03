@@ -47,7 +47,7 @@ export default function SystemParams(): JSX.Element {
         系统参数设置
       </h2>
 
-      <div className="glass-panel-light p-4 flex items-center justify-between">
+      <div className="glass-panel-light p-4 flex items-center justify-between gap-4 flex-wrap">
         <div>
           <div className="text-base" style={{ color: 'var(--color-text-primary)' }}>
             允许制单人与审核人为同一人
@@ -56,8 +56,9 @@ export default function SystemParams(): JSX.Element {
             仅影响系统自动生成的期末损益结转凭证
           </div>
         </div>
-        <label className="flex items-center gap-2">
+        <label className="flex items-center gap-2" htmlFor="allow-same-maker-auditor">
           <input
+            id="allow-same-maker-auditor"
             type="checkbox"
             checked={allowSameMakerAuditor}
             onChange={(e) => setAllowSameMakerAuditor(e.target.checked)}
@@ -81,6 +82,7 @@ export default function SystemParams(): JSX.Element {
       {message && (
         <div
           className="text-sm px-1"
+          aria-live="polite"
           style={{
             color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
           }}

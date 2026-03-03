@@ -106,12 +106,12 @@ export default function VoucherList(): JSX.Element {
   }
 
   return (
-    <div className="h-full flex flex-col p-4 gap-3">
-      <div className="flex items-center justify-between">
+    <div className="h-full flex flex-col p-4 gap-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
           凭证管理
         </h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button className="glass-btn-secondary" onClick={() => void runBatchAction('audit')}>
             审核
           </button>
@@ -131,73 +131,82 @@ export default function VoucherList(): JSX.Element {
       </div>
 
       <div className="glass-panel flex-1 overflow-hidden">
-        <div
-          className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
-          style={{
-            borderColor: 'var(--color-glass-border-light)',
-            color: 'var(--color-text-primary)'
-          }}
-        >
-          <div className="col-span-1">选择</div>
-          <div className="col-span-2">日期</div>
-          <div className="col-span-2">凭证号</div>
-          <div className="col-span-2">状态</div>
-          <div className="col-span-2 text-right">借方合计</div>
-          <div className="col-span-2 text-right">贷方合计</div>
-          <div className="col-span-1 text-right">期间</div>
-        </div>
-        <div className="overflow-y-auto h-[calc(100%-78px)]">
-          {rows.map((row) => (
+        <div className="h-full overflow-x-auto">
+          <div className="min-w-[860px] h-full">
             <div
-              key={row.id}
-              className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+              className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
+              style={{
+                borderColor: 'var(--color-glass-border-light)',
+                color: 'var(--color-text-primary)'
+              }}
+            >
+              <div className="col-span-1">选择</div>
+              <div className="col-span-2">日期</div>
+              <div className="col-span-2">凭证号</div>
+              <div className="col-span-2">状态</div>
+              <div className="col-span-2 text-right">借方合计</div>
+              <div className="col-span-2 text-right">贷方合计</div>
+              <div className="col-span-1 text-right">期间</div>
+            </div>
+            <div className="overflow-y-auto h-[calc(100%-78px)]">
+              {rows.map((row) => (
+                <div
+                  key={row.id}
+                  className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+                  style={{
+                    borderColor: 'var(--color-glass-border-light)',
+                    color: 'var(--color-text-secondary)'
+                  }}
+                >
+                  <div className="col-span-1">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(row.id)}
+                      onChange={() => toggleSelection(row.id)}
+                      aria-label={`选择凭证 ${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`}
+                    />
+                  </div>
+                  <div className="col-span-2">{row.voucher_date}</div>
+                  <div className="col-span-2">
+                    {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
+                  </div>
+                  <div className="col-span-2">{STATUS_TEXT[row.status]}</div>
+                  <div className="col-span-2 text-right">
+                    {new Decimal(row.total_debit).div(100).toFixed(2)}
+                  </div>
+                  <div className="col-span-2 text-right">
+                    {new Decimal(row.total_credit).div(100).toFixed(2)}
+                  </div>
+                  <div className="col-span-1 text-right">{row.period}</div>
+                </div>
+              ))}
+              {rows.length === 0 && !loading && (
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  当前期间暂无凭证
+                </div>
+              )}
+            </div>
+            <div
+              className="flex justify-end gap-6 px-4 py-2 border-t text-sm"
               style={{
                 borderColor: 'var(--color-glass-border-light)',
                 color: 'var(--color-text-secondary)'
               }}
             >
-              <div className="col-span-1">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(row.id)}
-                  onChange={() => toggleSelection(row.id)}
-                />
-              </div>
-              <div className="col-span-2">{row.voucher_date}</div>
-              <div className="col-span-2">
-                {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
-              </div>
-              <div className="col-span-2">{STATUS_TEXT[row.status]}</div>
-              <div className="col-span-2 text-right">
-                {new Decimal(row.total_debit).div(100).toFixed(2)}
-              </div>
-              <div className="col-span-2 text-right">
-                {new Decimal(row.total_credit).div(100).toFixed(2)}
-              </div>
-              <div className="col-span-1 text-right">{row.period}</div>
+              <span>借方合计：{totals.debit}</span>
+              <span>贷方合计：{totals.credit}</span>
             </div>
-          ))}
-          {rows.length === 0 && !loading && (
-            <div className="py-10 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              当前期间暂无凭证
-            </div>
-          )}
-        </div>
-        <div
-          className="flex justify-end gap-6 px-4 py-2 border-t text-sm"
-          style={{
-            borderColor: 'var(--color-glass-border-light)',
-            color: 'var(--color-text-secondary)'
-          }}
-        >
-          <span>借方合计：{totals.debit}</span>
-          <span>贷方合计：{totals.credit}</span>
+          </div>
         </div>
       </div>
 
       {message && (
         <div
           className="text-sm px-2"
+          aria-live="polite"
           style={{
             color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
           }}

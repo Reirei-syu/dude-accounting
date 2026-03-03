@@ -11,8 +11,17 @@ export default function TabBar(): JSX.Element {
           key={tab.id}
           className={`tab-btn ${activeTabId === tab.id ? 'active' : ''}`}
           onClick={() => setActiveTab(tab.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              setActiveTab(tab.id)
+            }
+          }}
           role="tab"
+          tabIndex={0}
           aria-selected={activeTabId === tab.id}
+          aria-controls={`workspace-tab-${tab.id}`}
+          id={`workspace-tab-button-${tab.id}`}
         >
           <span className="tab-title">{tab.title}</span>
           <button

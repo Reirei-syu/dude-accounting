@@ -27,6 +27,10 @@ interface SubjectDef {
   name: string
   category: 'asset' | 'liability' | 'common' | 'equity' | 'cost' | 'profit_loss'
   balance_direction: number // 1=debit, -1=credit
+  parent_code?: string | null
+  level?: number
+  has_auxiliary?: boolean
+  is_system?: boolean
   is_cash_flow?: boolean
 }
 
@@ -209,30 +213,221 @@ const ENTERPRISE_SUBJECTS: SubjectDef[] = [
 ]
 
 const NPO_SUBJECTS: SubjectDef[] = [
-  { code: '1001', name: '库存现金', category: 'asset', balance_direction: 1, is_cash_flow: true },
+  // 资产类
+  { code: '1001', name: '现金', category: 'asset', balance_direction: 1, is_cash_flow: true },
   { code: '1002', name: '银行存款', category: 'asset', balance_direction: 1, is_cash_flow: true },
-  { code: '1101', name: '应收账款', category: 'asset', balance_direction: 1 },
-  { code: '1102', name: '其他应收款', category: 'asset', balance_direction: 1 },
+  {
+    code: '1009',
+    name: '其他货币资金',
+    category: 'asset',
+    balance_direction: 1,
+    is_cash_flow: true
+  },
+  { code: '1101', name: '短期投资', category: 'asset', balance_direction: 1 },
+  { code: '1102', name: '短期投资跌价准备', category: 'asset', balance_direction: -1 },
+  { code: '1111', name: '应收票据', category: 'asset', balance_direction: 1 },
+  { code: '1121', name: '应收账款', category: 'asset', balance_direction: 1 },
+  { code: '1122', name: '其他应收款', category: 'asset', balance_direction: 1 },
+  { code: '1131', name: '坏账准备', category: 'asset', balance_direction: -1 },
+  { code: '1141', name: '预付账款', category: 'asset', balance_direction: 1 },
   { code: '1201', name: '存货', category: 'asset', balance_direction: 1 },
+  { code: '1202', name: '存货跌价准备', category: 'asset', balance_direction: -1 },
+  { code: '1301', name: '待摊费用', category: 'asset', balance_direction: 1 },
+  { code: '1401', name: '长期股权投资', category: 'asset', balance_direction: 1 },
+  { code: '1402', name: '长期债权投资', category: 'asset', balance_direction: 1 },
+  { code: '1403', name: '其他长期投资', category: 'asset', balance_direction: 1 },
+  { code: '1421', name: '长期投资减值准备', category: 'asset', balance_direction: -1 },
   { code: '1501', name: '固定资产', category: 'asset', balance_direction: 1 },
   { code: '1502', name: '累计折旧', category: 'asset', balance_direction: -1 },
-  { code: '1701', name: '无形资产', category: 'asset', balance_direction: 1 },
-  { code: '1702', name: '累计摊销', category: 'asset', balance_direction: -1 },
-  { code: '2001', name: '短期借款', category: 'liability', balance_direction: -1 },
-  { code: '2201', name: '应付账款', category: 'liability', balance_direction: -1 },
-  { code: '2202', name: '其他应付款', category: 'liability', balance_direction: -1 },
-  { code: '2301', name: '受托代理负债', category: 'liability', balance_direction: -1 },
-  { code: '4001', name: '非限定性净资产', category: 'equity', balance_direction: -1 },
-  { code: '4002', name: '限定性净资产', category: 'equity', balance_direction: -1 },
-  { code: '5001', name: '提供服务收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '5002', name: '会费收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '5003', name: '捐赠收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '5201', name: '业务活动成本', category: 'profit_loss', balance_direction: 1 },
-  { code: '5202', name: '管理费用', category: 'profit_loss', balance_direction: 1 },
-  { code: '5203', name: '筹资费用', category: 'profit_loss', balance_direction: 1 },
-  { code: '5301', name: '其他费用', category: 'profit_loss', balance_direction: 1 },
-  { code: '5401', name: '投资收益', category: 'profit_loss', balance_direction: -1 },
-  { code: '5402', name: '其他收益', category: 'profit_loss', balance_direction: -1 }
+  { code: '1505', name: '在建工程', category: 'asset', balance_direction: 1 },
+  { code: '1506', name: '文物资源', category: 'asset', balance_direction: 1 },
+  { code: '1509', name: '固定资产清理', category: 'asset', balance_direction: 1 },
+  { code: '1601', name: '无形资产', category: 'asset', balance_direction: 1 },
+  { code: '1602', name: '累计摊销', category: 'asset', balance_direction: -1 },
+  { code: '1701', name: '长期待摊费用', category: 'asset', balance_direction: 1 },
+  { code: '1801', name: '受托代理资产', category: 'asset', balance_direction: 1 },
+
+  // 负债类
+  { code: '2101', name: '短期借款', category: 'liability', balance_direction: -1 },
+  { code: '2201', name: '应付票据', category: 'liability', balance_direction: -1 },
+  { code: '2202', name: '应付账款', category: 'liability', balance_direction: -1 },
+  { code: '2203', name: '预收账款', category: 'liability', balance_direction: -1 },
+  { code: '2204', name: '应付职工薪酬', category: 'liability', balance_direction: -1 },
+  { code: '2206', name: '应交税费', category: 'liability', balance_direction: -1 },
+  { code: '2209', name: '其他应付款', category: 'liability', balance_direction: -1 },
+  { code: '2301', name: '预提费用', category: 'liability', balance_direction: -1 },
+  { code: '2501', name: '长期借款', category: 'liability', balance_direction: -1 },
+  { code: '2502', name: '长期应付款', category: 'liability', balance_direction: -1 },
+  { code: '2503', name: '预计负债', category: 'liability', balance_direction: -1 },
+  { code: '2601', name: '受托代理负债', category: 'liability', balance_direction: -1 },
+
+  // 净资产类
+  { code: '3101', name: '非限定性净资产', category: 'equity', balance_direction: -1 },
+  { code: '3102', name: '限定性净资产', category: 'equity', balance_direction: -1 },
+  { code: '3201', name: '以前年度净资产调整', category: 'equity', balance_direction: -1 },
+
+  // 收入类（一级）
+  {
+    code: '4101',
+    name: '捐赠收入',
+    category: 'profit_loss',
+    balance_direction: -1,
+    has_auxiliary: true
+  },
+  { code: '4201', name: '会费收入', category: 'profit_loss', balance_direction: -1 },
+  { code: '4301', name: '提供服务收入', category: 'profit_loss', balance_direction: -1 },
+  { code: '4401', name: '政府补助收入', category: 'profit_loss', balance_direction: -1 },
+  { code: '4501', name: '商品销售收入', category: 'profit_loss', balance_direction: -1 },
+  { code: '4601', name: '投资收益', category: 'profit_loss', balance_direction: -1 },
+  { code: '4701', name: '总部拨款收入', category: 'profit_loss', balance_direction: -1 },
+  { code: '4901', name: '其他收入', category: 'profit_loss', balance_direction: -1 },
+
+  // 收入类（二级：限定性/非限定性）
+  {
+    code: '410101',
+    name: '捐赠收入-非限定性',
+    parent_code: '4101',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1,
+    has_auxiliary: true
+  },
+  {
+    code: '410102',
+    name: '捐赠收入-限定性',
+    parent_code: '4101',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1,
+    has_auxiliary: true
+  },
+  {
+    code: '420101',
+    name: '会费收入-非限定性',
+    parent_code: '4201',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '420102',
+    name: '会费收入-限定性',
+    parent_code: '4201',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '430101',
+    name: '提供服务收入-非限定性',
+    parent_code: '4301',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '430102',
+    name: '提供服务收入-限定性',
+    parent_code: '4301',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '440101',
+    name: '政府补助收入-非限定性',
+    parent_code: '4401',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '440102',
+    name: '政府补助收入-限定性',
+    parent_code: '4401',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '450101',
+    name: '商品销售收入-非限定性',
+    parent_code: '4501',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '450102',
+    name: '商品销售收入-限定性',
+    parent_code: '4501',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '460101',
+    name: '投资收益-非限定性',
+    parent_code: '4601',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '460102',
+    name: '投资收益-限定性',
+    parent_code: '4601',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '470101',
+    name: '总部拨款收入-非限定性',
+    parent_code: '4701',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '470102',
+    name: '总部拨款收入-限定性',
+    parent_code: '4701',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '490101',
+    name: '其他收入-非限定性',
+    parent_code: '4901',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+  {
+    code: '490102',
+    name: '其他收入-限定性',
+    parent_code: '4901',
+    level: 2,
+    category: 'profit_loss',
+    balance_direction: -1
+  },
+
+  // 费用类
+  {
+    code: '5101',
+    name: '业务活动成本',
+    category: 'profit_loss',
+    balance_direction: 1,
+    has_auxiliary: true
+  },
+  { code: '5201', name: '税金及附加', category: 'profit_loss', balance_direction: 1 },
+  { code: '5301', name: '管理费用', category: 'profit_loss', balance_direction: 1 },
+  { code: '5401', name: '筹资费用', category: 'profit_loss', balance_direction: 1 },
+  { code: '5501', name: '资产减值损失', category: 'profit_loss', balance_direction: 1 },
+  { code: '5601', name: '所得税费用', category: 'profit_loss', balance_direction: 1 },
+  { code: '5901', name: '其他费用', category: 'profit_loss', balance_direction: 1 }
 ]
 
 function getStandardSubjects(standardType: AccountingStandardType): SubjectDef[] {
@@ -249,14 +444,35 @@ export function seedSubjectsForLedger(
   standardType: AccountingStandardType = 'enterprise'
 ): void {
   const insert = db.prepare(
-    `INSERT OR IGNORE INTO subjects (ledger_id, code, name, parent_code, category, balance_direction, is_cash_flow, level, is_system)
-     VALUES (?, ?, ?, NULL, ?, ?, ?, 1, 1)`
+    `INSERT OR IGNORE INTO subjects (
+      ledger_id,
+      code,
+      name,
+      parent_code,
+      category,
+      balance_direction,
+      has_auxiliary,
+      is_cash_flow,
+      level,
+      is_system
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
 
   const insertMany = db.transaction(() => {
     const subjectDefs = getStandardSubjects(standardType)
     for (const s of subjectDefs) {
-      insert.run(ledgerId, s.code, s.name, s.category, s.balance_direction, s.is_cash_flow ? 1 : 0)
+      insert.run(
+        ledgerId,
+        s.code,
+        s.name,
+        s.parent_code ?? null,
+        s.category,
+        s.balance_direction,
+        s.has_auxiliary ? 1 : 0,
+        s.is_cash_flow ? 1 : 0,
+        s.level ?? (s.parent_code ? 2 : 1),
+        s.is_system === false ? 0 : 1
+      )
     }
   })
   insertMany()
@@ -394,11 +610,15 @@ export function seedPLCarryForwardRulesForLedger(
 
   const subjectDefs = getStandardSubjects(standardType)
   const plCodes = subjectDefs.filter((s) => s.category === 'profit_loss').map((s) => s.code)
-  const toSubjectCode = standardType === 'npo' ? '4001' : '4103'
 
   const insertMany = db.transaction(() => {
     for (const code of plCodes) {
-      insert.run(ledgerId, code, toSubjectCode)
+      if (standardType === 'npo') {
+        const toSubjectCode = code.endsWith('02') ? '3102' : '3101'
+        insert.run(ledgerId, code, toSubjectCode)
+      } else {
+        insert.run(ledgerId, code, '4103')
+      }
     }
   })
   insertMany()
@@ -407,6 +627,31 @@ export function seedPLCarryForwardRulesForLedger(
 export function seedPLCarryForwardRules(db: Database.Database): void {
   void db
   // P&L rules are seeded per-ledger
+}
+
+export function getStandardTemplateSummaries(): Array<{
+  standardType: AccountingStandardType
+  name: string
+  subjectCount: number
+  topLevelCount: number
+  hasRestrictedSubAccounts: boolean
+}> {
+  return [
+    {
+      standardType: 'enterprise',
+      name: '企业会计准则（CAS 2026）',
+      subjectCount: ENTERPRISE_SUBJECTS.length,
+      topLevelCount: ENTERPRISE_SUBJECTS.filter((s) => !s.parent_code).length,
+      hasRestrictedSubAccounts: false
+    },
+    {
+      standardType: 'npo',
+      name: '民间非营利组织会计制度（2026）',
+      subjectCount: NPO_SUBJECTS.length,
+      topLevelCount: NPO_SUBJECTS.filter((s) => !s.parent_code).length,
+      hasRestrictedSubAccounts: true
+    }
+  ]
 }
 
 export { ENTERPRISE_SUBJECTS, NPO_SUBJECTS }

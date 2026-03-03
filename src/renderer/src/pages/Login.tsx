@@ -1,4 +1,4 @@
-import { useState, useCallback, type JSX, type KeyboardEvent, type SVGProps } from 'react'
+import { useState, useCallback, type JSX, type FormEvent, type SVGProps } from 'react'
 import { useAuthStore } from '../stores/authStore'
 import wallpaper from '../assets/wallpaper.png'
 
@@ -86,6 +86,10 @@ export default function Login(): JSX.Element {
 
   const handleLogin = useCallback(async () => {
     setError('')
+    if (!window.electron) {
+      setError('浏览器预览模式不支持登录，请在 Electron 客户端使用。')
+      return
+    }
     setLoading(true)
     try {
       const result = await window.api.auth.login(username, password)
@@ -101,14 +105,10 @@ export default function Login(): JSX.Element {
     }
   }, [username, password, login])
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === 'Enter') {
-        void handleLogin()
-      }
-    },
-    [handleLogin]
-  )
+  const handleSubmit = (e: FormEvent<HTMLFormElement>): void => {
+    e.preventDefault()
+    void handleLogin()
+  }
 
   return (
     <div
@@ -127,42 +127,49 @@ export default function Login(): JSX.Element {
           <span>Accounting</span>
         </h1>
 
-        <div className="login-dialog-form">
+        <form className="login-dialog-form" onSubmit={handleSubmit}>
           <section className="login-dialog-section">
-            <label className="login-field-label">账号</label>
+            <label className="login-field-label" htmlFor="username-input">
+              账号
+            </label>
             <div className="login-field-shell">
               <div className="login-field-inner">
                 <UserIcon className="login-field-icon" />
                 <input
+                  id="username-input"
                   className="login-field-input"
                   placeholder="请输入账号"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  onKeyDown={handleKeyDown}
                   autoFocus
+                  autoComplete="username"
+                  required
                 />
               </div>
             </div>
           </section>
 
           <section className="login-dialog-section">
-            <label className="login-field-label">密码</label>
+            <label className="login-field-label" htmlFor="password-input">
+              密码
+            </label>
             <div className="login-field-shell">
               <div className="login-field-inner">
                 <LockIcon className="login-field-icon" />
                 <input
+                  id="password-input"
                   className="login-field-input"
                   type={showPassword ? 'text' : 'password'}
                   placeholder="请输入密码"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={handleKeyDown}
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
                   className="login-field-eye"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  tabIndex={-1}
+                  aria-label={showPassword ? '隐藏密码' : '显示密码'}
                 >
                   {showPassword ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
@@ -171,17 +178,13 @@ export default function Login(): JSX.Element {
           </section>
 
           <div className="login-submit-row">
-            <button
-              className="login-submit-btn"
-              onClick={() => void handleLogin()}
-              disabled={loading || !username}
-            >
+            <button className="login-submit-btn" type="submit" disabled={loading || !username}>
               {loading ? '登录中...' : '登录'}
             </button>
           </div>
 
           {error && <p className="login-error">{error}</p>}
-        </div>
+        </form>
       </div>
     </div>
   )

@@ -20,7 +20,16 @@ function App(): JSX.Element {
     }
   }, [isLoggedIn, login])
 
-  return isLoggedIn ? <MainLayout /> : <Login />
+  return (
+    <>
+      <a className="skip-link" href="#app-main">
+        跳转到主内容
+      </a>
+      <main id="app-main" className="h-full">
+        {isLoggedIn ? <MainLayout /> : <Login />}
+      </main>
+    </>
+  )
 }
 
 export default App

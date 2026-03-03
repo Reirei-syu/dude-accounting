@@ -96,8 +96,8 @@ export default function SubjectSettings(): JSX.Element {
   }
 
   return (
-    <div className="h-full flex flex-col p-4 gap-3">
-      <div className="flex items-center justify-between">
+    <div className="h-full flex flex-col p-4 gap-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
           会计科目设置
         </h2>
@@ -107,7 +107,7 @@ export default function SubjectSettings(): JSX.Element {
       </div>
 
       {creating && (
-        <div className="glass-panel-light p-3 grid grid-cols-5 gap-2 items-center">
+        <div className="glass-panel-light p-3 grid grid-cols-1 md:grid-cols-5 gap-2 items-center">
           <input
             className="glass-input"
             placeholder="科目编码"
@@ -148,47 +148,57 @@ export default function SubjectSettings(): JSX.Element {
       )}
 
       <div className="glass-panel flex-1 overflow-hidden">
-        <div
-          className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
-          style={{
-            borderColor: 'var(--color-glass-border-light)',
-            color: 'var(--color-text-primary)'
-          }}
-        >
-          <div className="col-span-2">编码</div>
-          <div className="col-span-4">名称</div>
-          <div className="col-span-2">类别</div>
-          <div className="col-span-2">方向</div>
-          <div className="col-span-2 text-right">类型</div>
-        </div>
-        <div className="overflow-y-auto h-[calc(100%-41px)]">
-          {rows.map((row) => (
+        <div className="h-full overflow-x-auto">
+          <div className="min-w-[840px] h-full">
             <div
-              key={row.id}
-              className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+              className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
               style={{
                 borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-secondary)'
+                color: 'var(--color-text-primary)'
               }}
             >
-              <div className="col-span-2">{row.code}</div>
-              <div className="col-span-4">{row.name}</div>
-              <div className="col-span-2">{row.category}</div>
-              <div className="col-span-2">{row.balance_direction === 1 ? '借' : '贷'}</div>
-              <div className="col-span-2 text-right">{row.is_system === 1 ? '系统' : '自定义'}</div>
+              <div className="col-span-2">编码</div>
+              <div className="col-span-4">名称</div>
+              <div className="col-span-2">类别</div>
+              <div className="col-span-2">方向</div>
+              <div className="col-span-2 text-right">类型</div>
             </div>
-          ))}
-          {rows.length === 0 && (
-            <div className="py-10 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              当前账套暂无科目
+            <div className="overflow-y-auto h-[calc(100%-41px)]">
+              {rows.map((row) => (
+                <div
+                  key={row.id}
+                  className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+                  style={{
+                    borderColor: 'var(--color-glass-border-light)',
+                    color: 'var(--color-text-secondary)'
+                  }}
+                >
+                  <div className="col-span-2">{row.code}</div>
+                  <div className="col-span-4">{row.name}</div>
+                  <div className="col-span-2">{row.category}</div>
+                  <div className="col-span-2">{row.balance_direction === 1 ? '借' : '贷'}</div>
+                  <div className="col-span-2 text-right">
+                    {row.is_system === 1 ? '系统' : '自定义'}
+                  </div>
+                </div>
+              ))}
+              {rows.length === 0 && (
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  当前账套暂无科目
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
       {message && (
         <div
           className="text-sm px-2"
+          aria-live="polite"
           style={{
             color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
           }}

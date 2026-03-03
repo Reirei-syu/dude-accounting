@@ -14,6 +14,7 @@ export default function MainLayout(): JSX.Element {
     useLedgerStore()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const userDisplayName = user?.realName || user?.username || '当前用户'
 
   const handleLogout = async (): Promise<void> => {
     if (window.electron) {
@@ -66,9 +67,7 @@ export default function MainLayout(): JSX.Element {
       return
     }
 
-    const standardType = window.confirm(
-      '是否使用民非准则？\n选择“确定”为民非，选择“取消”为企业'
-    )
+    const standardType = window.confirm('是否使用民非准则？\n选择“确定”为民非，选择“取消”为企业')
       ? 'npo'
       : 'enterprise'
 
@@ -150,14 +149,20 @@ export default function MainLayout(): JSX.Element {
       <div className="main-shell-dim" />
       <Sidebar />
 
-      <section className="main-content">
+      <section className="main-content" aria-label="工作区">
         <header className="main-info-row">
-          <div className="main-meta-group">
-            <span className="main-meta-label">账套：</span>
+          <h1 className="sr-only">Dude Accounting 主界面</h1>
+
+          <div className="main-meta-group" role="group" aria-label="账套切换">
+            <label className="main-meta-label" htmlFor="ledger-selector">
+              账套：
+            </label>
             <select
+              id="ledger-selector"
               className="main-meta-control"
               value={currentLedger?.id ?? ''}
               onChange={(e) => handleSwitchLedger(Number(e.target.value))}
+              aria-label="选择账套"
             >
               <option value="">未选择</option>
               {ledgers.map((ledger) => (
@@ -171,25 +176,30 @@ export default function MainLayout(): JSX.Element {
               <button
                 className="glass-btn-secondary main-create-ledger-btn"
                 onClick={() => void handleCreateLedger()}
+                aria-label="新建账套"
               >
-                新建
+                新建账套
               </button>
             )}
           </div>
 
-          <div className="main-meta-group">
-            <span className="main-meta-label">会计期间：</span>
+          <div className="main-meta-group" role="group" aria-label="会计期间切换">
+            <label className="main-meta-label" htmlFor="period-input">
+              会计期间：
+            </label>
             <input
+              id="period-input"
               type="month"
               className="main-meta-control"
               value={currentPeriod || ''}
               onChange={(e) => void handleSwitchPeriod(e.target.value)}
+              aria-label="选择会计期间"
             />
             <span className="main-period-text">{formatPeriod(currentPeriod)}</span>
           </div>
 
           <button type="button" className="main-logout-btn" onClick={() => void handleLogout()}>
-            {user?.realName || user?.username} | 退出
+            {userDisplayName} | 退出登录
           </button>
         </header>
 

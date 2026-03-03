@@ -37,7 +37,19 @@ export default function SuspendedOverlay(): JSX.Element {
   }
 
   return (
-    <div className="feature-overlay" onClick={() => setSuspended(null)}>
+    <div
+      className="feature-overlay"
+      onClick={() => setSuspended(null)}
+      role="dialog"
+      aria-modal="true"
+      aria-label="功能菜单"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          setSuspended(null)
+        }
+      }}
+      tabIndex={0}
+    >
       <div className="feature-panel" onClick={(e) => e.stopPropagation()}>
         {subMenus.map((item) => (
           <button

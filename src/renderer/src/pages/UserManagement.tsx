@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useState, type FormEvent, type JSX } from 'react'
 
 interface UserRow {
   id: number
@@ -117,19 +117,25 @@ export default function UserManagement(): JSX.Element {
     }
   }
 
+  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    void handleCreate()
+  }
+
   return (
-    <div className="h-full flex flex-col p-4 gap-3">
+    <div className="h-full flex flex-col p-4 gap-4">
       <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
         账号管理
       </h2>
 
-      <div className="glass-panel-light p-3 flex flex-col gap-3">
-        <div className="grid grid-cols-4 gap-2 items-center">
+      <form className="glass-panel-light p-3 flex flex-col gap-3" onSubmit={handleSubmit}>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
           <input
             className="glass-input"
             placeholder="登录名"
             value={form.username}
             onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
+            autoComplete="username"
           />
           <input
             className="glass-input"
@@ -139,11 +145,13 @@ export default function UserManagement(): JSX.Element {
           />
           <input
             className="glass-input"
+            type="password"
             placeholder="密码（可空）"
             value={form.password}
             onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+            autoComplete="new-password"
           />
-          <button className="glass-btn-secondary" onClick={() => void handleCreate()}>
+          <button className="glass-btn-secondary" type="submit">
             新增用户
           </button>
         </div>
@@ -157,6 +165,7 @@ export default function UserManagement(): JSX.Element {
               <input
                 type="checkbox"
                 checked={form.permissions[option.key]}
+                aria-label={`权限：${option.label}`}
                 onChange={(e) =>
                   setForm((prev) => ({
                     ...prev,
@@ -168,59 +177,67 @@ export default function UserManagement(): JSX.Element {
             </label>
           ))}
         </div>
-      </div>
+      </form>
 
       <div className="glass-panel flex-1 overflow-hidden">
-        <div
-          className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
-          style={{
-            borderColor: 'var(--color-glass-border-light)',
-            color: 'var(--color-text-primary)'
-          }}
-        >
-          <div className="col-span-2">登录名</div>
-          <div className="col-span-2">真实姓名</div>
-          <div className="col-span-2">角色</div>
-          <div className="col-span-4">权限</div>
-          <div className="col-span-2 text-right">操作</div>
-        </div>
-        <div className="overflow-y-auto h-[calc(100%-41px)]">
-          {users.map((user) => (
+        <div className="h-full overflow-x-auto">
+          <div className="min-w-[880px] h-full">
             <div
-              key={user.id}
-              className="grid grid-cols-12 py-2 px-3 border-b text-sm items-center"
+              className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
               style={{
                 borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-secondary)'
+                color: 'var(--color-text-primary)'
               }}
             >
-              <div className="col-span-2">{user.username}</div>
-              <div className="col-span-2">{user.realName}</div>
-              <div className="col-span-2">{user.isAdmin ? '管理员' : '普通用户'}</div>
-              <div className="col-span-4">{getPermissionSummary(user)}</div>
-              <div className="col-span-2 text-right">
-                {!user.isAdmin && (
-                  <button
-                    className="glass-btn-secondary px-3 py-1 text-xs"
-                    onClick={() => void handleDelete(user.id)}
-                  >
-                    删除
-                  </button>
-                )}
-              </div>
+              <div className="col-span-2">登录名</div>
+              <div className="col-span-2">真实姓名</div>
+              <div className="col-span-2">角色</div>
+              <div className="col-span-4">权限</div>
+              <div className="col-span-2 text-right">操作</div>
             </div>
-          ))}
-          {users.length === 0 && (
-            <div className="py-10 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              暂无用户
+            <div className="overflow-y-auto h-[calc(100%-41px)]">
+              {users.map((user) => (
+                <div
+                  key={user.id}
+                  className="grid grid-cols-12 py-2 px-3 border-b text-sm items-center"
+                  style={{
+                    borderColor: 'var(--color-glass-border-light)',
+                    color: 'var(--color-text-secondary)'
+                  }}
+                >
+                  <div className="col-span-2">{user.username}</div>
+                  <div className="col-span-2">{user.realName}</div>
+                  <div className="col-span-2">{user.isAdmin ? '管理员' : '普通用户'}</div>
+                  <div className="col-span-4">{getPermissionSummary(user)}</div>
+                  <div className="col-span-2 text-right">
+                    {!user.isAdmin && (
+                      <button
+                        className="glass-btn-secondary px-3 py-1 text-xs"
+                        onClick={() => void handleDelete(user.id)}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {users.length === 0 && (
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  暂无用户
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
       {message && (
         <div
           className="text-sm px-2"
+          aria-live="polite"
           style={{
             color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
           }}

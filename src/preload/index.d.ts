@@ -71,6 +71,31 @@ interface LedgerAPI {
       closed_at: string | null
     }>
   >
+  getStandardTemplates: () => Promise<
+    Array<{
+      standardType: 'enterprise' | 'npo'
+      name: string
+      subjectCount: number
+      topLevelCount: number
+      hasRestrictedSubAccounts: boolean
+    }>
+  >
+  applyStandardTemplate: (data: {
+    ledgerId: number
+    standardType: 'enterprise' | 'npo'
+  }) => Promise<{
+    success: boolean
+    error?: string
+    subjectCount?: number
+    ledger?: {
+      id: number
+      name: string
+      standard_type: 'enterprise' | 'npo'
+      start_period: string
+      current_period: string
+      created_at: string
+    }
+  }>
 }
 
 interface SubjectAPI {

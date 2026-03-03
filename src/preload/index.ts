@@ -29,7 +29,10 @@ const api = {
     update: (data: { id: number; name?: string; currentPeriod?: string }) =>
       ipcRenderer.invoke('ledger:update', data),
     delete: (id: number) => ipcRenderer.invoke('ledger:delete', id),
-    getPeriods: (ledgerId: number) => ipcRenderer.invoke('ledger:getPeriods', ledgerId)
+    getPeriods: (ledgerId: number) => ipcRenderer.invoke('ledger:getPeriods', ledgerId),
+    getStandardTemplates: () => ipcRenderer.invoke('ledger:getStandardTemplates'),
+    applyStandardTemplate: (data: { ledgerId: number; standardType: 'enterprise' | 'npo' }) =>
+      ipcRenderer.invoke('ledger:applyStandardTemplate', data)
   },
   subject: {
     getAll: (ledgerId: number) => ipcRenderer.invoke('subject:getAll', ledgerId),

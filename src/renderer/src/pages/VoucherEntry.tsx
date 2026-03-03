@@ -381,13 +381,13 @@ export default function VoucherEntry(): JSX.Element {
   }
 
   return (
-    <div className="h-full flex flex-col p-4">
+    <div className="h-full flex flex-col p-4 gap-3">
       {/* 顶部操作区 */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
           记账凭证
         </h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button className="glass-btn-secondary" onClick={() => void handleNewVoucher()}>
             新建
           </button>
@@ -404,13 +404,14 @@ export default function VoucherEntry(): JSX.Element {
 
       {/* 表头区 */}
       <div
-        className="flex justify-between items-center mb-2 px-2"
+        className="flex justify-between items-center mb-2 px-2 gap-2 flex-wrap"
         style={{ color: 'var(--color-text-secondary)', fontSize: 14 }}
       >
         <span>单位：{currentLedger?.name || ''}</span>
         <div className="flex items-center gap-2">
-          <span>日期：</span>
+          <label htmlFor="voucher-date-input">日期：</label>
           <input
+            id="voucher-date-input"
             type="date"
             className="glass-input px-2 py-1 bg-transparent border-none shadow-none text-sm"
             value={date}
@@ -421,7 +422,7 @@ export default function VoucherEntry(): JSX.Element {
       </div>
 
       {/* 表格主体 */}
-      <div className="glass-panel overflow-hidden flex-1 flex flex-col">
+      <div className="glass-panel overflow-auto flex-1 flex flex-col">
         {/* 表头 */}
         <div
           className="grid grid-cols-12 text-center py-3 border-b"
@@ -465,10 +466,12 @@ export default function VoucherEntry(): JSX.Element {
               >
                 <input
                   ref={setRef(rIdx, 0)}
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-white focus:bg-white/10 transition-colors"
+                  className="w-full h-full bg-transparent px-3 py-3 outline-none focus:bg-white/10 transition-colors"
                   value={row.summary}
                   onChange={(e) => updateRow(rIdx, 'summary', e.target.value)}
                   onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
+                  placeholder="摘要"
+                  aria-label={`第 ${rIdx + 1} 行摘要`}
                 />
               </div>
               <div
@@ -477,7 +480,7 @@ export default function VoucherEntry(): JSX.Element {
               >
                 <input
                   ref={setRef(rIdx, 1)}
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-white focus:bg-white/10 transition-colors"
+                  className="w-full h-full bg-transparent px-3 py-3 outline-none focus:bg-white/10 transition-colors"
                   value={row.subjectInput}
                   onChange={(e) => handleSubjectInput(rIdx, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(e, rIdx, 1)}
@@ -487,7 +490,8 @@ export default function VoucherEntry(): JSX.Element {
                       setActiveSubjectRowId((prev) => (prev === row.id ? null : prev))
                     }, 100)
                   }}
-                  placeholder="输入科目代码"
+                  placeholder="输入科目代码或名称"
+                  aria-label={`第 ${rIdx + 1} 行会计科目`}
                 />
                 {activeSubjectRowId === row.id && (subjectOptions[row.id] || []).length > 0 && (
                   <div className="absolute z-30 left-0 right-0 top-full mt-1 glass-panel-light max-h-48 overflow-y-auto">
@@ -513,7 +517,8 @@ export default function VoucherEntry(): JSX.Element {
                 <input
                   ref={setRef(rIdx, 2)}
                   type="text"
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-right text-white focus:bg-white/10 transition-colors"
+                  inputMode="decimal"
+                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
                   value={row.debit}
                   onChange={(e) => {
                     if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
@@ -526,13 +531,15 @@ export default function VoucherEntry(): JSX.Element {
                     setRows(newRows)
                   }}
                   onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
+                  aria-label={`第 ${rIdx + 1} 行借方金额`}
                 />
               </div>
               <div className="col-span-2 relative">
                 <input
                   ref={setRef(rIdx, 3)}
                   type="text"
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-right text-white focus:bg-white/10 transition-colors"
+                  inputMode="decimal"
+                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
                   value={row.credit}
                   onChange={(e) => {
                     if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
@@ -545,6 +552,7 @@ export default function VoucherEntry(): JSX.Element {
                     setRows(newRows)
                   }}
                   onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
+                  aria-label={`第 ${rIdx + 1} 行贷方金额`}
                 />
                 {row.isCashFlow && (
                   <button
@@ -555,7 +563,7 @@ export default function VoucherEntry(): JSX.Element {
                       setActiveCashFlowRowId((prev) => (prev === row.id ? null : row.id))
                     }
                   >
-                    ¥
+                    流
                   </button>
                 )}
                 {row.isCashFlow && activeCashFlowRowId === row.id && (
@@ -567,6 +575,7 @@ export default function VoucherEntry(): JSX.Element {
                         updateCashFlowItem(rIdx, e.target.value)
                         setActiveCashFlowRowId(null)
                       }}
+                      aria-label={`第 ${rIdx + 1} 行现金流量项目`}
                     >
                       <option value="">选择现金流量项目</option>
                       {cashFlowItems.map((item) => (
@@ -601,6 +610,7 @@ export default function VoucherEntry(): JSX.Element {
       {message && (
         <div
           className="mt-2 px-2 text-sm"
+          aria-live="polite"
           style={{
             color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
           }}
@@ -611,7 +621,7 @@ export default function VoucherEntry(): JSX.Element {
 
       {/* 表尾区 */}
       <div
-        className="flex justify-between mt-2 px-2 text-xs"
+        className="flex justify-between mt-2 px-2 text-xs flex-wrap gap-2"
         style={{ color: 'var(--color-text-muted)' }}
       >
         <span>记账：待记账</span>

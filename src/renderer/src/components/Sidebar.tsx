@@ -23,22 +23,25 @@ export default function Sidebar(): JSX.Element {
   }
 
   return (
-    <aside className="main-sidebar glass-panel">
+    <aside className="main-sidebar glass-panel" aria-label="主导航">
       <div className="main-brand-wrap">
         <span className="main-brand">Dude Accounting</span>
+        <p className="ui-kicker">Financial Console</p>
       </div>
 
-      <div className="main-sidebar-nav">
+      <nav className="main-sidebar-nav" aria-label="功能模块">
         {MODULES.map((mod) => (
           <button
             key={mod.id}
+            type="button"
             className={`sidebar-btn ${suspendedModule === mod.id ? 'active' : ''}`}
             onClick={() => handleModuleClick(mod.id)}
+            aria-pressed={suspendedModule === mod.id}
           >
             {mod.label}
           </button>
         ))}
-      </div>
+      </nav>
     </aside>
   )
 }

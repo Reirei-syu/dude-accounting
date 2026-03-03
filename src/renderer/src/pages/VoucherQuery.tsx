@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX } from 'react'
+import { useMemo, useState, type FormEvent, type JSX } from 'react'
 import Decimal from 'decimal.js'
 import { useLedgerStore } from '../stores/ledgerStore'
 
@@ -66,88 +66,119 @@ export default function VoucherQuery(): JSX.Element {
     }
   }
 
+  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+    event.preventDefault()
+    void handleQuery()
+  }
+
   return (
-    <div className="h-full flex flex-col p-4 gap-3">
+    <div className="h-full flex flex-col p-4 gap-4">
       <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
         凭证查询
       </h2>
 
-      <div className="glass-panel-light p-3 flex items-center gap-3 flex-wrap">
-        <label className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+      <form
+        className="glass-panel-light p-3 flex items-center gap-3 flex-wrap"
+        onSubmit={handleSubmit}
+      >
+        <label
+          className="text-sm"
+          htmlFor="voucher-date-from"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
           从
         </label>
         <input
+          id="voucher-date-from"
           type="date"
           className="glass-input px-3 py-2 text-sm"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
         />
-        <label className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+        <label
+          className="text-sm"
+          htmlFor="voucher-date-to"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
           到
         </label>
         <input
+          id="voucher-date-to"
           type="date"
           className="glass-input px-3 py-2 text-sm"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
         />
         <input
+          id="voucher-keyword"
           className="glass-input px-3 py-2 text-sm min-w-[220px]"
           placeholder="摘要关键字"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
+          aria-label="摘要关键字"
         />
-        <button className="glass-btn-secondary px-5 py-2" onClick={() => void handleQuery()}>
+        <button className="glass-btn-secondary px-5 py-2" type="submit">
           {loading ? '查询中...' : '查询'}
         </button>
-      </div>
+      </form>
 
       <div className="glass-panel flex-1 overflow-hidden">
-        <div
-          className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
-          style={{
-            borderColor: 'var(--color-glass-border-light)',
-            color: 'var(--color-text-primary)'
-          }}
-        >
-          <div className="col-span-2">日期</div>
-          <div className="col-span-2">凭证号</div>
-          <div className="col-span-2">状态</div>
-          <div className="col-span-3 text-right">借方发生额</div>
-          <div className="col-span-3 text-right">贷方发生额</div>
-        </div>
-        <div className="overflow-y-auto h-[calc(100%-41px)]">
-          {rows.map((row) => (
+        <div className="h-full overflow-x-auto">
+          <div className="min-w-[760px] h-full">
             <div
-              key={row.id}
-              className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+              className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
               style={{
                 borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-secondary)'
+                color: 'var(--color-text-primary)'
               }}
             >
-              <div className="col-span-2">{row.voucher_date}</div>
-              <div className="col-span-2">
-                {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
-              </div>
-              <div className="col-span-2">{STATUS_TEXT[row.status]}</div>
-              <div className="col-span-3 text-right">
-                {new Decimal(row.total_debit).div(100).toFixed(2)}
-              </div>
-              <div className="col-span-3 text-right">
-                {new Decimal(row.total_credit).div(100).toFixed(2)}
-              </div>
+              <div className="col-span-2">日期</div>
+              <div className="col-span-2">凭证号</div>
+              <div className="col-span-2">状态</div>
+              <div className="col-span-3 text-right">借方发生额</div>
+              <div className="col-span-3 text-right">贷方发生额</div>
             </div>
-          ))}
-          {rows.length === 0 && !loading && (
-            <div className="py-10 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              暂无数据
+            <div className="overflow-y-auto h-[calc(100%-41px)]">
+              {rows.map((row) => (
+                <div
+                  key={row.id}
+                  className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+                  style={{
+                    borderColor: 'var(--color-glass-border-light)',
+                    color: 'var(--color-text-secondary)'
+                  }}
+                >
+                  <div className="col-span-2">{row.voucher_date}</div>
+                  <div className="col-span-2">
+                    {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
+                  </div>
+                  <div className="col-span-2">{STATUS_TEXT[row.status]}</div>
+                  <div className="col-span-3 text-right">
+                    {new Decimal(row.total_debit).div(100).toFixed(2)}
+                  </div>
+                  <div className="col-span-3 text-right">
+                    {new Decimal(row.total_credit).div(100).toFixed(2)}
+                  </div>
+                </div>
+              ))}
+              {rows.length === 0 && !loading && (
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  暂无数据
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       </div>
 
-      {error && <div style={{ color: 'var(--color-danger)' }}>{error}</div>}
+      {error && (
+        <div style={{ color: 'var(--color-danger)' }} aria-live="polite">
+          {error}
+        </div>
+      )}
     </div>
   )
 }
