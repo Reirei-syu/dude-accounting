@@ -5,8 +5,17 @@ import SuspendedOverlay from '../components/SuspendedOverlay'
 import { useUIStore } from '../stores/uiStore'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
-import { useEffect, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import wallpaper from '../assets/wallpaper.png'
+
+const generateRandomString = (length = 10): string => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*'
+  let result = ''
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length))
+  }
+  return result
+}
 
 export default function MainLayout(): JSX.Element {
   const { isMenuSuspended } = useUIStore()
@@ -26,6 +35,16 @@ export default function MainLayout(): JSX.Element {
     }
     logout()
   }
+
+  const [isCreatingLedger, setIsCreatingLedger] = useState(false)
+  const [createForm, setCreateForm] = useState({
+    name: '',
+    startPeriod: '',
+    standardType: 'enterprise' as 'enterprise' | 'npo'
+  })
+  const [isDeletingLedger, setIsDeletingLedger] = useState(false)
+  const [deleteValidationCode, setDeleteValidationCode] = useState('')
+  const [deleteInputCode, setDeleteInputCode] = useState('')
 
   const handleSwitchLedger = (ledgerId: number): void => {
     const target = ledgers.find((ledger) => ledger.id === ledgerId)
@@ -47,29 +66,26 @@ export default function MainLayout(): JSX.Element {
     }
   }
 
-  const handleCreateLedger = async (): Promise<void> => {
-    if (!window.electron) return
+  const openCreateLedger = (): void => {
+    const now = new Date()
+    const defaultPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    setCreateForm({ name: '', startPeriod: defaultPeriod, standardType: 'enterprise' })
+    setIsCreatingLedger(true)
+  }
 
-    const name = window.prompt('请输入账套名称', '新账套')
-    if (!name) return
+  const submitCreateLedger = async (): Promise<void> => {
+    if (!window.electron) return
+    const { name, startPeriod, standardType } = createForm
+
     if (!name.trim()) {
       window.alert('账套名称不能为空')
       return
     }
 
-    const now = new Date()
-    const defaultPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-    const startPeriod =
-      window.prompt('请输入起始会计期间（YYYY-MM）', defaultPeriod)?.trim() || defaultPeriod
-
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(startPeriod)) {
       window.alert('起始会计期间格式应为 YYYY-MM')
       return
     }
-
-    const standardType = window.confirm('是否使用民非准则？\n选择“确定”为民非，选择“取消”为企业')
-      ? 'npo'
-      : 'enterprise'
 
     try {
       const result = await window.api.ledger.create({
@@ -81,12 +97,54 @@ export default function MainLayout(): JSX.Element {
         window.alert(result.error || '创建账套失败')
         return
       }
+      setIsCreatingLedger(false)
       const finalLedgers = await window.api.ledger.getAll()
       setLedgers(finalLedgers)
       const created = finalLedgers.find((ledger) => ledger.id === result.id)
       if (created) setCurrentLedger(created)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : '创建账套失败')
+    }
+  }
+
+  const openDeleteLedger = (): void => {
+    if (!currentLedger) {
+      window.alert('请先选择要删除的账套')
+      return
+    }
+    setDeleteValidationCode(generateRandomString(10))
+    setDeleteInputCode('')
+    setIsDeletingLedger(true)
+  }
+
+  const submitDeleteLedger = async (): Promise<void> => {
+    if (!currentLedger) return
+    if (deleteInputCode !== deleteValidationCode) {
+      window.alert('验证码输入不一致，删除取消。')
+      return
+    }
+    const confirmSecond = window.confirm(
+      '删除后数据不可恢复！确实要删除【' + currentLedger.name + '】吗？'
+    )
+    if (!confirmSecond) return
+
+    try {
+      const result = await window.api.ledger.delete(currentLedger.id)
+      if (!result.success) {
+        window.alert(result.error || '删除账套失败')
+        return
+      }
+      setIsDeletingLedger(false)
+      const finalLedgers = await window.api.ledger.getAll()
+      setLedgers(finalLedgers)
+      if (finalLedgers.length > 0) {
+        setCurrentLedger(finalLedgers[0])
+      } else {
+        // Fallback if deleting the last ledger
+        window.location.reload()
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '删除操作失败')
     }
   }
 
@@ -173,13 +231,23 @@ export default function MainLayout(): JSX.Element {
             </select>
 
             {window.electron && (
-              <button
-                className="glass-btn-secondary main-create-ledger-btn"
-                onClick={() => void handleCreateLedger()}
-                aria-label="新建账套"
-              >
-                新建账套
-              </button>
+              <>
+                <button
+                  className="glass-btn-secondary main-create-ledger-btn"
+                  onClick={openCreateLedger}
+                  aria-label="新建账套"
+                >
+                  新建账套
+                </button>
+                <button
+                  className="glass-btn-secondary main-create-ledger-btn"
+                  style={{ color: 'var(--color-danger)', borderColor: 'rgba(185, 28, 28, 0.3)' }}
+                  onClick={openDeleteLedger}
+                  aria-label="删除当期账套"
+                >
+                  删除账套
+                </button>
+              </>
             )}
           </div>
 
@@ -213,6 +281,133 @@ export default function MainLayout(): JSX.Element {
             <Workspace />
           </div>
           {isMenuSuspended && <SuspendedOverlay />}
+
+          {/* 新建账套弹窗 */}
+          {isCreatingLedger && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+              <div className="bg-white/90 p-6 rounded-2xl shadow-xl border border-slate-200 w-96 flex flex-col gap-4">
+                <h3 className="text-lg font-bold text-slate-800">新建账套</h3>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-semibold text-slate-600">账套名称</label>
+                  <input
+                    className="glass-input"
+                    placeholder="例如：杜小德科技有限公司"
+                    value={createForm.name}
+                    onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-semibold text-slate-600">启用年月 (YYYY-MM)</label>
+                  <input
+                    type="month"
+                    className="glass-input"
+                    value={createForm.startPeriod}
+                    onChange={(e) => setCreateForm({ ...createForm, startPeriod: e.target.value })}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-semibold text-slate-600">准则模板</label>
+                  <select
+                    className="glass-input"
+                    value={createForm.standardType}
+                    onChange={(e) =>
+                      setCreateForm({
+                        ...createForm,
+                        standardType: e.target.value as 'enterprise' | 'npo'
+                      })
+                    }
+                  >
+                    <option value="enterprise">企业会计准则（CAS）</option>
+                    <option value="npo">民间非营利组织会计制度</option>
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-3 mt-4">
+                  <button
+                    className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition"
+                    onClick={() => setIsCreatingLedger(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="px-4 py-2 bg-blue-900 text-white font-medium rounded-lg hover:bg-blue-800 shadow transition"
+                    onClick={() => void submitCreateLedger()}
+                  >
+                    确认创建
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 删除账套弹窗 */}
+          {isDeletingLedger && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-md">
+              <div className="bg-white/95 p-6 rounded-2xl shadow-2xl border border-red-200 w-96 flex flex-col gap-4">
+                <h3 className="text-lg font-bold text-red-700 flex items-center gap-2">
+                  <svg
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                  </svg>
+                  高危操作：删除账套
+                </h3>
+
+                <p className="text-sm text-slate-700 leading-relaxed">
+                  您正在尝试删除账套 <strong className="text-black">{currentLedger?.name}</strong>。
+                  <br />
+                  该操作将永久清空该账套下的所有凭证、科目和期初数据，并且
+                  <strong>绝对无法恢复</strong>！
+                </p>
+
+                <div className="bg-slate-100 p-3 rounded text-center border border-slate-200">
+                  <span className="text-xs text-slate-500 block mb-1">
+                    请在下方输入验证码以解锁删除按钮
+                  </span>
+                  <div className="font-mono text-lg font-bold tracking-widest text-slate-800 select-none bg-white py-2 rounded shadow-sm border border-slate-300">
+                    {deleteValidationCode}
+                  </div>
+                </div>
+
+                <input
+                  className="glass-input font-mono !border-red-300 focus:!border-red-500"
+                  placeholder="请准确输入上方提示字符"
+                  value={deleteInputCode}
+                  onChange={(e) => setDeleteInputCode(e.target.value)}
+                  autoComplete="off"
+                />
+
+                <div className="flex justify-end gap-3 mt-2">
+                  <button
+                    className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition"
+                    onClick={() => setIsDeletingLedger(false)}
+                  >
+                    取消操作
+                  </button>
+                  <button
+                    className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 shadow disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    disabled={deleteInputCode !== deleteValidationCode}
+                    onClick={() => void submitDeleteLedger()}
+                  >
+                    确认删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </section>
     </div>

@@ -296,8 +296,9 @@ export default function SubjectSettings(): JSX.Element {
               {visibleRows.map((row) => (
                 <div
                   key={row.id}
-                  className={`grid grid-cols-12 py-2 px-3 border-b text-sm items-center ${row.isCategory ? 'font-semibold bg-white/40' : ''
-                    }`}
+                  className={`grid grid-cols-12 py-2 px-3 border-b text-sm items-center ${
+                    row.isCategory ? 'font-semibold bg-white/40' : ''
+                  }`}
                   style={{
                     borderColor: 'var(--color-glass-border-light)',
                     color: row.isCategory
