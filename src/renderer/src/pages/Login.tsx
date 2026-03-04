@@ -122,10 +122,7 @@ export default function Login(): JSX.Element {
       <div className="login-page-dim" />
 
       <div className="login-dialog-card">
-        <h1 className="login-dialog-title">
-          Dude
-          <span>Accounting</span>
-        </h1>
+        <h1 className="login-dialog-title">Dude Accounting</h1>
 
         <form className="login-dialog-form" onSubmit={handleSubmit}>
           <section className="login-dialog-section">

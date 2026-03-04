@@ -588,25 +588,19 @@ button {
 
 .login-dialog-title {
   margin: 0 0 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   color: var(--color-primary);
-  font-family: var(--font-heading);
-  font-size: 36px;
+  font-family: 'SimHei', 'Microsoft YaHei', sans-serif;
+  font-size: 34px;
+  font-weight: 700;
   line-height: 1;
-}
-
-.login-dialog-title span {
-  font-size: 24px;
-  color: #334155;
+  text-align: center;
 }
 
 .login-dialog-form {
   width: 100%;
 }
 
-.login-dialog-section + .login-dialog-section {
+.login-dialog-section+.login-dialog-section {
   margin-top: 14px;
 }
 
@@ -619,9 +613,16 @@ button {
 }
 
 .login-field-shell {
-  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #fff;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.85), rgba(129, 140, 248, 0.85), rgba(192, 132, 252, 0.85), rgba(244, 114, 182, 0.85));
+  padding: 1.5px;
+  transition: opacity 0.3s ease, filter 0.3s ease;
+  opacity: 0.8;
+}
+
+.login-field-shell:focus-within {
+  opacity: 1;
+  filter: brightness(1.05);
 }
 
 .login-field-inner {
@@ -630,6 +631,8 @@ button {
   gap: 8px;
   min-height: 42px;
   padding: 0 10px;
+  background: #fff;
+  border-radius: calc(var(--radius-sm) - 1.5px);
 }
 
 .login-field-icon {
@@ -647,6 +650,12 @@ button {
   background: transparent;
   color: var(--color-text-primary);
   font-size: 15px;
+}
+
+.login-field-input:focus,
+.login-field-input:focus-visible {
+  box-shadow: none;
+  outline: none;
 }
 
 .login-field-eye {
@@ -792,11 +801,12 @@ button {
   }
 
   .login-dialog-title {
-    font-size: 30px;
+    font-size: 28px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {
