@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type JSX } from 'react'
+import { useCallback, useEffect, useState, useMemo, type JSX } from 'react'
 import { useLedgerStore } from '../stores/ledgerStore'
 
 interface SubjectRow {
@@ -8,6 +8,15 @@ interface SubjectRow {
   category: string
   balance_direction: number
   is_system: number
+  parent_code: string | null
+  level: number
+}
+
+interface TreeRow extends Omit<SubjectRow, 'id'> {
+  id: string | number
+  isCategory?: boolean
+  __logical_parent: string | null
+  __logical_level: number
 }
 
 const CATEGORY_OPTIONS: Array<{ value: string; label: string }> = [
@@ -18,6 +27,36 @@ const CATEGORY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'cost', label: '成本' },
   { value: 'profit_loss', label: '损益' }
 ]
+
+const ChevronRight = (): JSX.Element => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polyline points="9 18 15 12 9 6"></polyline>
+  </svg>
+)
+
+const ChevronDown = (): JSX.Element => (
+  <svg
+    width="14"
+    height="14"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <polyline points="6 9 12 15 18 9"></polyline>
+  </svg>
+)
 
 export default function SubjectSettings(): JSX.Element {
   const currentLedger = useLedgerStore((s) => s.currentLedger)
@@ -54,6 +93,96 @@ export default function SubjectSettings(): JSX.Element {
     })
     return () => window.cancelAnimationFrame(frameId)
   }, [loadRows])
+
+  const categoryLabels = useMemo(() => {
+    const isNpo = currentLedger?.standard_type === 'npo'
+    return {
+      asset: '资产类',
+      liability: '负债类',
+      common: '共同类',
+      equity: isNpo ? '净资产类' : '所有者权益类',
+      cost: '成本类',
+      profit_loss: '损益类'
+    } as Record<string, string>
+  }, [currentLedger])
+
+  const treeNodes = useMemo(() => {
+    const orderedCategories = ['asset', 'liability', 'common', 'equity', 'cost', 'profit_loss']
+    const nodes: TreeRow[] = []
+    const catsInDb = new Set(rows.map((r) => r.category))
+
+    for (const cat of orderedCategories) {
+      if (!catsInDb.has(cat)) continue
+
+      nodes.push({
+        id: `cat_${cat}`,
+        code: `cat_${cat}`,
+        name: categoryLabels[cat] || cat,
+        category: cat,
+        balance_direction: 0,
+        is_system: 1,
+        parent_code: null,
+        level: 0,
+        isCategory: true,
+        __logical_parent: null,
+        __logical_level: 0
+      })
+
+      const catRows = rows.filter((r) => r.category === cat)
+      for (const r of catRows) {
+        nodes.push({
+          ...r,
+          isCategory: false,
+          __logical_parent: r.parent_code || `cat_${cat}`,
+          __logical_level: r.level || 1
+        })
+      }
+    }
+    return nodes
+  }, [rows, categoryLabels])
+
+  const [expandedCodes, setExpandedCodes] = useState<Set<string>>(new Set())
+
+  const hasChildrenMap = useMemo(() => {
+    const map = new Set<string>()
+    for (const r of treeNodes) {
+      if (r.__logical_parent) map.add(r.__logical_parent)
+    }
+    return map
+  }, [treeNodes])
+
+  const toggleExpand = (code: string): void => {
+    setExpandedCodes((prev) => {
+      const next = new Set(prev)
+      if (next.has(code)) {
+        next.delete(code)
+      } else {
+        next.add(code)
+      }
+      return next
+    })
+  }
+
+  const nodeMap = useMemo(() => {
+    const map = new Map<string, TreeRow>()
+    for (const node of treeNodes) {
+      map.set(node.code, node)
+    }
+    return map
+  }, [treeNodes])
+
+  const visibleRows = useMemo(() => {
+    return treeNodes.filter((row) => {
+      if (row.isCategory) return true
+      let currentParent = row.__logical_parent
+      while (currentParent) {
+        if (!expandedCodes.has(currentParent)) return false
+        const parentRow = nodeMap.get(currentParent)
+        currentParent = parentRow?.__logical_parent || null
+      }
+      return true
+    })
+  }, [treeNodes, expandedCodes, nodeMap])
 
   const handleCreate = async (): Promise<void> => {
     setMessage(null)
@@ -164,24 +293,55 @@ export default function SubjectSettings(): JSX.Element {
               <div className="col-span-2 text-right">类型</div>
             </div>
             <div className="overflow-y-auto h-[calc(100%-41px)]">
-              {rows.map((row) => (
+              {visibleRows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+                  className={`grid grid-cols-12 py-2 px-3 border-b text-sm items-center ${row.isCategory ? 'font-semibold bg-white/40' : ''
+                    }`}
                   style={{
                     borderColor: 'var(--color-glass-border-light)',
-                    color: 'var(--color-text-secondary)'
+                    color: row.isCategory
+                      ? 'var(--color-text-primary)'
+                      : 'var(--color-text-secondary)'
                   }}
                 >
-                  <div className="col-span-2">{row.code}</div>
-                  <div className="col-span-4">{row.name}</div>
-                  <div className="col-span-2">{row.category}</div>
-                  <div className="col-span-2">{row.balance_direction === 1 ? '借' : '贷'}</div>
+                  <div className="col-span-2">{row.isCategory ? '' : row.code}</div>
+                  <div
+                    className="col-span-4 flex items-center gap-1"
+                    style={{ paddingLeft: `${row.__logical_level * 16}px` }}
+                  >
+                    {hasChildrenMap.has(row.code) ? (
+                      <button
+                        className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-slate-700 transition-colors rounded shrink-0"
+                        onClick={() => toggleExpand(row.code)}
+                        aria-label={expandedCodes.has(row.code) ? '折叠' : '展开'}
+                      >
+                        {expandedCodes.has(row.code) ? <ChevronDown /> : <ChevronRight />}
+                      </button>
+                    ) : (
+                      <div className="w-5 h-5 shrink-0" />
+                    )}
+                    <span className="truncate">{row.name}</span>
+                  </div>
+                  <div className="col-span-2 text-slate-500">
+                    {row.isCategory ? '' : row.category}
+                  </div>
+                  <div className="col-span-2">
+                    {row.isCategory ? '' : row.balance_direction === 1 ? '借' : '贷'}
+                  </div>
                   <div className="col-span-2 text-right">
-                    {row.is_system === 1 ? '系统' : '自定义'}
+                    {row.isCategory ? '' : row.is_system === 1 ? '系统' : '自定义'}
                   </div>
                 </div>
               ))}
+              {visibleRows.length === 0 && rows.length > 0 && (
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  暂无可见科目
+                </div>
+              )}
               {rows.length === 0 && (
                 <div
                   className="py-10 text-center text-sm"
