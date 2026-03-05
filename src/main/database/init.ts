@@ -143,10 +143,11 @@ export function initializeDatabase(): void {
     CREATE TABLE IF NOT EXISTS initial_balances (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ledger_id INTEGER NOT NULL,
+      period TEXT NOT NULL,
       subject_code TEXT NOT NULL,
       debit_amount INTEGER NOT NULL DEFAULT 0,
       credit_amount INTEGER NOT NULL DEFAULT 0,
-      UNIQUE(ledger_id, subject_code),
+      UNIQUE(ledger_id, period, subject_code),
       FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
     );
 
@@ -177,6 +178,8 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
   `)
 
+  ensureInitialBalanceSchema(db)
+
   // Seed default data
   seedAdminUser(db)
   seedSubjects(db)
@@ -189,6 +192,45 @@ export function initializeDatabase(): void {
   )
   insertSetting.run('allow_same_maker_auditor', '0')
   insertSetting.run('wallpaper_path', '')
+}
+
+function ensureInitialBalanceSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('initial_balances')").all() as Array<{
+    name: string
+  }>
+  if (columns.length === 0) return
+
+  const hasPeriod = columns.some((col) => col.name === 'period')
+  if (!hasPeriod) {
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE initial_balances_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ledger_id INTEGER NOT NULL,
+          period TEXT NOT NULL,
+          subject_code TEXT NOT NULL,
+          debit_amount INTEGER NOT NULL DEFAULT 0,
+          credit_amount INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(ledger_id, period, subject_code),
+          FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
+        );
+      `)
+      db.exec(`
+        INSERT INTO initial_balances_new (ledger_id, period, subject_code, debit_amount, credit_amount)
+        SELECT ib.ledger_id, l.start_period, ib.subject_code, ib.debit_amount, ib.credit_amount
+        FROM initial_balances ib
+        INNER JOIN ledgers l ON l.id = ib.ledger_id;
+      `)
+      db.exec('DROP TABLE initial_balances;')
+      db.exec('ALTER TABLE initial_balances_new RENAME TO initial_balances;')
+    })
+
+    migrate()
+  }
+
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_initial_balances_ledger_period ON initial_balances(ledger_id, period)'
+  ).run()
 }
 
 export function closeDatabase(): void {
