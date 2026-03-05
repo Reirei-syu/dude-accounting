@@ -1,0 +1,2 @@
+﻿# Keep append-only dev log conflict-free during rebase/merge
+prds/开发日志.md text eol=lf merge=union
