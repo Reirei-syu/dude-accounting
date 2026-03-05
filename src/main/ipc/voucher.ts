@@ -19,6 +19,13 @@ interface SaveVoucherInput {
   entries: VoucherEntryInput[]
 }
 
+interface UpdateVoucherInput {
+  voucherId: number
+  ledgerId: number
+  voucherDate: string
+  entries: VoucherEntryInput[]
+}
+
 interface NormalizedVoucherEntry {
   summary: string
   subjectCode: string
@@ -243,6 +250,158 @@ export function registerVoucherHandlers(): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : '保存凭证失败'
+      }
+    }
+  })
+
+  ipcMain.handle('voucher:update', (event, payload: UpdateVoucherInput) => {
+    try {
+      requirePermission(event, 'voucher_entry')
+
+      if (!payload.voucherId) {
+        return { success: false, error: '请选择凭证' }
+      }
+      if (!payload.ledgerId) {
+        return { success: false, error: '请选择账套' }
+      }
+      if (!payload.voucherDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.voucherDate)) {
+        return { success: false, error: '凭证日期格式不正确' }
+      }
+
+      const voucher = db
+        .prepare(
+          `SELECT id, ledger_id, voucher_number, voucher_word, status
+           FROM vouchers
+           WHERE id = ?`
+        )
+        .get(payload.voucherId) as
+        | {
+            id: number
+            ledger_id: number
+            voucher_number: number
+            voucher_word: string
+            status: number
+          }
+        | undefined
+
+      if (!voucher) {
+        return { success: false, error: '凭证不存在' }
+      }
+      if (voucher.ledger_id !== payload.ledgerId) {
+        return { success: false, error: '凭证不属于当前账套' }
+      }
+      if (voucher.status !== 0) {
+        return { success: false, error: '仅未审核凭证可修改' }
+      }
+
+      const period = payload.voucherDate.slice(0, 7)
+      const entries = normalizeEntries(payload.entries)
+      if (entries.length < 2) {
+        return { success: false, error: '至少需要两条有效分录' }
+      }
+
+      let totalDebit = 0
+      let totalCredit = 0
+      const subjectByCode = new Map<string, { is_cash_flow: number }>()
+      const selectSubjectStmt = db.prepare(
+        'SELECT code, is_cash_flow FROM subjects WHERE ledger_id = ? AND code = ?'
+      )
+      const selectCashFlowStmt = db.prepare(
+        'SELECT id FROM cash_flow_items WHERE ledger_id = ? AND id = ?'
+      )
+
+      for (const [index, entry] of entries.entries()) {
+        if (!entry.subjectCode) {
+          return { success: false, error: `第${index + 1}行缺少会计科目` }
+        }
+
+        if (entry.debitCents > 0 && entry.creditCents > 0) {
+          return { success: false, error: `第${index + 1}行借贷不能同时有值` }
+        }
+
+        if (entry.debitCents === 0 && entry.creditCents === 0) {
+          return { success: false, error: `第${index + 1}行借贷金额不能同时为空` }
+        }
+
+        let subject = subjectByCode.get(entry.subjectCode)
+        if (!subject) {
+          subject = selectSubjectStmt.get(payload.ledgerId, entry.subjectCode) as
+            | { code: string; is_cash_flow: number }
+            | undefined
+          if (!subject) {
+            return { success: false, error: `第${index + 1}行科目不存在：${entry.subjectCode}` }
+          }
+          subjectByCode.set(entry.subjectCode, subject)
+        }
+
+        if (subject.is_cash_flow === 1) {
+          if (entry.cashFlowItemId === null) {
+            return { success: false, error: `第${index + 1}行为现金流科目，必须指定现金流量项目` }
+          }
+
+          const cashFlowItem = selectCashFlowStmt.get(payload.ledgerId, entry.cashFlowItemId) as
+            | { id: number }
+            | undefined
+          if (!cashFlowItem) {
+            return { success: false, error: `第${index + 1}行现金流量项目无效` }
+          }
+        }
+
+        totalDebit += entry.debitCents
+        totalCredit += entry.creditCents
+      }
+
+      if (totalDebit <= 0 || totalCredit <= 0 || totalDebit !== totalCredit) {
+        return { success: false, error: '借贷不平衡，无法保存' }
+      }
+
+      const updateVoucherTx = db.transaction(() => {
+        db.prepare(
+          `UPDATE vouchers
+           SET period = ?, voucher_date = ?, updated_at = datetime('now')
+           WHERE id = ?`
+        ).run(period, payload.voucherDate, payload.voucherId)
+
+        db.prepare('DELETE FROM voucher_entries WHERE voucher_id = ?').run(payload.voucherId)
+
+        const insertEntryStmt = db.prepare(
+          `INSERT INTO voucher_entries (
+             voucher_id, row_order, summary, subject_code, debit_amount, credit_amount, cash_flow_item_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+
+        for (const [index, entry] of entries.entries()) {
+          insertEntryStmt.run(
+            payload.voucherId,
+            index + 1,
+            entry.summary,
+            entry.subjectCode,
+            entry.debitCents,
+            entry.creditCents,
+            entry.cashFlowItemId
+          )
+        }
+      })
+
+      try {
+        updateVoucherTx()
+      } catch (error) {
+        if (isVoucherNumberConflictError(error)) {
+          return { success: false, error: '凭证编号冲突，请调整日期后重试' }
+        }
+        throw error
+      }
+
+      return {
+        success: true,
+        voucherId: voucher.id,
+        voucherNumber: voucher.voucher_number,
+        status: voucher.status
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '修改凭证失败'
       }
     }
   })

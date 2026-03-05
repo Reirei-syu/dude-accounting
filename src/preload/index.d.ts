@@ -227,6 +227,24 @@ interface VoucherAPI {
     voucherNumber?: number
     status?: number
   }>
+  update: (data: {
+    voucherId: number
+    ledgerId: number
+    voucherDate: string
+    entries: Array<{
+      summary: string
+      subjectCode: string
+      debitAmount: string
+      creditAmount: string
+      cashFlowItemId: number | null
+    }>
+  }) => Promise<{
+    success: boolean
+    error?: string
+    voucherId?: number
+    voucherNumber?: number
+    status?: number
+  }>
 }
 
 interface DudeAPI {

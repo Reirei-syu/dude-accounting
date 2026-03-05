@@ -112,7 +112,13 @@ export const useUIStore = create<UIState>((set, get) => ({
 
     const existing = tabs.find((t) => !isBlankTab(t) && t.id === tab.id)
     if (existing) {
-      set({ activeTabId: tab.id, isMenuSuspended: false, suspendedModule: null })
+      const nextTabs = tabs.map((item) => (item.id === tab.id ? { ...item, ...tab } : item))
+      set({
+        tabs: nextTabs,
+        activeTabId: tab.id,
+        isMenuSuspended: false,
+        suspendedModule: null
+      })
     } else {
       set({
         tabs: [...tabs, tab],

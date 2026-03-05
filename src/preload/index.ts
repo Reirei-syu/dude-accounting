@@ -82,7 +82,19 @@ const api = {
         creditAmount: string
         cashFlowItemId: number | null
       }>
-    }) => ipcRenderer.invoke('voucher:save', data)
+    }) => ipcRenderer.invoke('voucher:save', data),
+    update: (data: {
+      voucherId: number
+      ledgerId: number
+      voucherDate: string
+      entries: Array<{
+        summary: string
+        subjectCode: string
+        debitAmount: string
+        creditAmount: string
+        cashFlowItemId: number | null
+      }>
+    }) => ipcRenderer.invoke('voucher:update', data)
   },
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),

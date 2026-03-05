@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type KeyboardEvent, type JSX } from 'react'
+import { useState, useRef, useEffect, useMemo, type KeyboardEvent, type JSX } from 'react'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
 import Decimal from 'decimal.js'
@@ -33,6 +33,43 @@ interface CashFlowDraft {
   cashFlowItemId: number | null
 }
 
+interface VoucherEntryProps {
+  title?: string
+  componentType?: string
+  editVoucherId?: number | string
+  editRequestKey?: number
+}
+
+interface VoucherListItem {
+  id: number
+  period: string
+  voucher_date: string
+  voucher_number: number
+  voucher_word: string
+  status: 0 | 1 | 2
+}
+
+interface VoucherEntryFromApi {
+  id: number
+  voucher_id: number
+  row_order: number
+  summary: string
+  subject_code: string
+  debit_amount: number
+  credit_amount: number
+  cash_flow_item_id: number | null
+  subject_name?: string
+}
+
+interface SignatureRow {
+  summary: string
+  subjectCode: string
+  debit: string
+  credit: string
+  cashFlowItemId: number | null
+  isCashFlow: boolean
+}
+
 const createEmptyRow = (): VoucherRow => ({
   id: Math.random().toString(36).substring(7),
   summary: '',
@@ -48,9 +85,50 @@ const createEmptyRow = (): VoucherRow => ({
 const DEFAULT_ROWS = 4
 const AMOUNT_PATTERN = /^\d+(\.\d{0,2})?$/
 
-export default function VoucherEntry(): JSX.Element {
+const toAmountText = (cents: number): string => new Decimal(cents).div(100).toFixed(2)
+
+const normalizeRowsForSignature = (rows: VoucherRow[]): SignatureRow[] =>
+  rows.map((row) => ({
+    summary: row.summary.trim(),
+    subjectCode: row.subjectCode.trim(),
+    debit: row.debit.trim(),
+    credit: row.credit.trim(),
+    cashFlowItemId: row.cashFlowItemId,
+    isCashFlow: row.isCashFlow
+  }))
+
+const buildDraftSignature = (voucherDate: string, rows: VoucherRow[]): string =>
+  JSON.stringify({
+    voucherDate,
+    rows: normalizeRowsForSignature(rows)
+  })
+
+const padRows = (rows: VoucherRow[]): VoucherRow[] => {
+  if (rows.length >= DEFAULT_ROWS) return rows
+  return [...rows, ...Array.from({ length: DEFAULT_ROWS - rows.length }, () => createEmptyRow())]
+}
+
+const sortVoucherRowsAsc = (rows: VoucherListItem[]): VoucherListItem[] =>
+  [...rows].sort((left, right) => {
+    if (left.voucher_date !== right.voucher_date) {
+      return left.voucher_date.localeCompare(right.voucher_date)
+    }
+    return left.voucher_number - right.voucher_number
+  })
+
+const toPositiveInt = (value: unknown): number | null => {
+  const parsed = typeof value === 'number' ? value : Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) return null
+  return parsed
+}
+
+export default function VoucherEntry({
+  editVoucherId,
+  editRequestKey
+}: VoucherEntryProps): JSX.Element {
   const { currentLedger, currentPeriod } = useLedgerStore()
   const currentUser = useAuthStore((s) => s.user)
+  const normalizedEditVoucherId = useMemo(() => toPositiveInt(editVoucherId), [editVoucherId])
   const [date, setDate] = useState(
     currentPeriod ? `${currentPeriod}-01` : new Date().toISOString().split('T')[0]
   )
@@ -65,6 +143,10 @@ export default function VoucherEntry(): JSX.Element {
   const [cashFlowDraft, setCashFlowDraft] = useState<Record<string, CashFlowDraft>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [editingVoucherId, setEditingVoucherId] = useState<number | null>(null)
+  const [editableVouchers, setEditableVouchers] = useState<VoucherListItem[]>([])
+  const [loadingVoucher, setLoadingVoucher] = useState(false)
+  const [baselineSignature, setBaselineSignature] = useState<string>('')
 
   // Matrix of refs for keyboard navigation: row x col
   // col 0: summary, 1: subject, 2: debit, 3: credit
@@ -94,15 +176,17 @@ export default function VoucherEntry(): JSX.Element {
   }, [currentLedger])
 
   useEffect(() => {
+    if (editingVoucherId !== null) return
     if (!currentPeriod) return
     const nextDate = `${currentPeriod}-01`
     const frameId = window.requestAnimationFrame(() => {
       setDate((prev) => (prev.startsWith(currentPeriod) ? prev : nextDate))
     })
     return () => window.cancelAnimationFrame(frameId)
-  }, [currentPeriod])
+  }, [currentPeriod, editingVoucherId])
 
   useEffect(() => {
+    if (editingVoucherId !== null) return
     if (!currentLedger || !date || date.length < 7) return
     if (!window.electron) return
     const ledgerId = currentLedger.id
@@ -124,7 +208,7 @@ export default function VoucherEntry(): JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [currentLedger, date])
+  }, [currentLedger, date, editingVoucherId])
 
   const updateRow = (
     index: number,
@@ -204,6 +288,21 @@ export default function VoucherEntry(): JSX.Element {
   }
 
   const { debit: totalDebit, credit: totalCredit, balanced } = computeTotals()
+  const currentEditableIndex = useMemo(() => {
+    if (editingVoucherId === null) return -1
+    const exactIndex = editableVouchers.findIndex((voucher) => voucher.id === editingVoucherId)
+    if (exactIndex >= 0) return exactIndex
+    return editableVouchers.findIndex((voucher) => String(voucher.id) === String(editingVoucherId))
+  }, [editingVoucherId, editableVouchers])
+  const hasPrevVoucher = editingVoucherId !== null && currentEditableIndex > 0
+  const hasNextVoucher =
+    editingVoucherId !== null &&
+    currentEditableIndex >= 0 &&
+    currentEditableIndex < editableVouchers.length - 1
+  const hasUnsavedChanges =
+    editingVoucherId !== null &&
+    baselineSignature !== '' &&
+    buildDraftSignature(date, rows) !== baselineSignature
 
   // Dynamic set ref helper
   const setRef =
@@ -324,6 +423,82 @@ export default function VoucherEntry(): JSX.Element {
     setMessage({ type: 'success', text: '现金流量分配已更新' })
   }
 
+  const loadEditableVoucherRows = async (ledgerId: number): Promise<VoucherListItem[]> => {
+    const allList = await window.api.voucher.list({ ledgerId })
+    return sortVoucherRowsAsc((allList as VoucherListItem[]).filter((voucher) => voucher.status === 0))
+  }
+
+  const loadVoucherForEdit = async (voucherId: number): Promise<boolean> => {
+    if (!currentLedger || !window.electron) return false
+    const normalizedVoucherId = toPositiveInt(voucherId)
+    if (normalizedVoucherId === null) {
+      setMessage({ type: 'error', text: '凭证编号无效' })
+      return false
+    }
+
+    setLoadingVoucher(true)
+    setMessage(null)
+    try {
+      const editableList = await loadEditableVoucherRows(currentLedger.id)
+      const targetVoucher = editableList.find((voucher) => voucher.id === normalizedVoucherId)
+      if (!targetVoucher) {
+        setMessage({ type: 'error', text: '该凭证不可修改（仅未审核凭证可编辑）' })
+        return false
+      }
+
+      const [entries, subjects] = await Promise.all([
+        window.api.voucher.getEntries(normalizedVoucherId),
+        window.api.subject.getAll(currentLedger.id)
+      ])
+      const cashFlowSubjectCodeSet = new Set(
+        subjects.filter((subject) => subject.is_cash_flow === 1).map((subject) => subject.code)
+      )
+
+      const mappedRows = (entries as VoucherEntryFromApi[]).map((entry) => {
+        const subjectName = entry.subject_name || ''
+        return {
+          id: Math.random().toString(36).substring(7),
+          summary: entry.summary || '',
+          subjectInput: `${entry.subject_code} ${subjectName}`.trim(),
+          subjectCode: entry.subject_code,
+          subjectName,
+          debit: entry.debit_amount > 0 ? toAmountText(entry.debit_amount) : '',
+          credit: entry.credit_amount > 0 ? toAmountText(entry.credit_amount) : '',
+          cashFlowItemId: entry.cash_flow_item_id,
+          isCashFlow:
+            cashFlowSubjectCodeSet.has(entry.subject_code) || entry.cash_flow_item_id !== null
+        } satisfies VoucherRow
+      })
+
+      const finalRows = padRows(mappedRows)
+      setRows(finalRows)
+      setDate(targetVoucher.voucher_date)
+      setVoucherNumber(targetVoucher.voucher_number)
+      setEditingVoucherId(normalizedVoucherId)
+      setEditableVouchers(editableList)
+      setSubjectOptions({})
+      setActiveSubjectRowId(null)
+      setCashFlowDialogOpen(false)
+      setCashFlowDraft({})
+      setBaselineSignature(buildDraftSignature(targetVoucher.voucher_date, finalRows))
+      return true
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '加载凭证失败'
+      })
+      return false
+    } finally {
+      setLoadingVoucher(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!currentLedger || !window.electron) return
+    if (!normalizedEditVoucherId) return
+    void loadVoucherForEdit(normalizedEditVoucherId)
+  }, [currentLedger, normalizedEditVoucherId, editRequestKey])
+
   const validateAndCleanRows = (): {
     valid: boolean
     cleanedRows: VoucherRow[]
@@ -369,11 +544,15 @@ export default function VoucherEntry(): JSX.Element {
   }
 
   const resetVoucher = (): void => {
-    setRows(Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow()))
+    const nextRows = Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow())
+    setRows(nextRows)
     setSubjectOptions({})
     setActiveSubjectRowId(null)
     setCashFlowDialogOpen(false)
     setCashFlowDraft({})
+    setEditingVoucherId(null)
+    setEditableVouchers([])
+    setBaselineSignature('')
   }
 
   const handleNewVoucher = async (): Promise<void> => {
@@ -393,59 +572,112 @@ export default function VoucherEntry(): JSX.Element {
     }
   }
 
-  const handleSave = async (): Promise<void> => {
+  const saveVoucher = async (mode: 'newAfterSave' | 'stay'): Promise<boolean> => {
     setMessage(null)
     if (!currentLedger) {
       setMessage({ type: 'error', text: '请先创建或选择账套' })
-      return
+      return false
     }
     if (!window.electron) {
       setMessage({
         type: 'error',
         text: '浏览器预览模式不支持保存凭证，请在 Electron 客户端中操作'
       })
-      return
+      return false
     }
 
     const { valid, cleanedRows, error } = validateAndCleanRows()
     if (!valid) {
       setMessage({ type: 'error', text: error || '校验失败' })
-      return
+      return false
     }
 
     setSaving(true)
     try {
-      const result = await window.api.voucher.save({
-        ledgerId: currentLedger.id,
-        voucherDate: date,
-        voucherWord: '记',
-        entries: cleanedRows.map((row) => ({
-          summary: row.summary,
-          subjectCode: row.subjectCode,
-          debitAmount: row.debit,
-          creditAmount: row.credit,
-          cashFlowItemId: row.cashFlowItemId
-        }))
-      })
+      const payloadEntries = cleanedRows.map((row) => ({
+        summary: row.summary,
+        subjectCode: row.subjectCode,
+        debitAmount: row.debit,
+        creditAmount: row.credit,
+        cashFlowItemId: row.cashFlowItemId
+      }))
+
+      const result =
+        editingVoucherId === null
+          ? await window.api.voucher.save({
+              ledgerId: currentLedger.id,
+              voucherDate: date,
+              voucherWord: '记',
+              entries: payloadEntries
+            })
+          : await window.api.voucher.update({
+              voucherId: editingVoucherId,
+              ledgerId: currentLedger.id,
+              voucherDate: date,
+              entries: payloadEntries
+            })
 
       if (!result.success) {
         setMessage({ type: 'error', text: result.error || '保存失败' })
-        return
+        return false
       }
 
-      setMessage({
-        type: 'success',
-        text: `凭证已保存（记-${String(result.voucherNumber).padStart(4, '0')}）`
-      })
-      await handleNewVoucher()
+      if (editingVoucherId === null) {
+        setMessage({
+          type: 'success',
+          text: `凭证已保存（记-${String(result.voucherNumber).padStart(4, '0')}）`
+        })
+        if (mode === 'newAfterSave') {
+          await handleNewVoucher()
+        }
+      } else {
+        setMessage({
+          type: 'success',
+          text: `凭证已更新（记-${String(voucherNumber).padStart(4, '0')}）`
+        })
+        setBaselineSignature(buildDraftSignature(date, rows))
+      }
+      return true
     } catch (error) {
       setMessage({
         type: 'error',
         text: error instanceof Error ? error.message : '保存失败'
       })
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSave = async (): Promise<void> => {
+    const mode = editingVoucherId === null ? 'newAfterSave' : 'stay'
+    await saveVoucher(mode)
+  }
+
+  const handleSwitchVoucher = async (direction: 'prev' | 'next'): Promise<void> => {
+    if (editingVoucherId === null) {
+      setMessage({ type: 'error', text: '请先在凭证管理中选择一张凭证进行编辑' })
+      return
+    }
+    if (loadingVoucher || saving) return
+    if (currentEditableIndex < 0) {
+      setMessage({ type: 'error', text: '凭证导航序列已过期，请返回凭证管理重新打开' })
+      return
+    }
+
+    const targetIndex = direction === 'prev' ? currentEditableIndex - 1 : currentEditableIndex + 1
+    const targetVoucher = editableVouchers[targetIndex]
+    if (!targetVoucher) return
+
+    setMessage(null)
+    if (hasUnsavedChanges) {
+      const shouldSaveFirst = window.confirm('当前凭证未保存，是否先保存后再切换？')
+      if (!shouldSaveFirst) return
+      const saved = await saveVoucher('stay')
+      if (!saved) return
+    }
+
+    await loadVoucherForEdit(targetVoucher.id)
   }
 
   return (
@@ -453,9 +685,23 @@ export default function VoucherEntry(): JSX.Element {
       {/* 顶部操作区 */}
       <div className="flex justify-between items-center gap-3 flex-wrap">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          记账凭证
+          {editingVoucherId ? '记账凭证（编辑）' : '记账凭证'}
         </h2>
         <div className="flex gap-2 flex-wrap">
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void handleSwitchVoucher('prev')}
+            disabled={!hasPrevVoucher || loadingVoucher || saving}
+          >
+            上一张
+          </button>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void handleSwitchVoucher('next')}
+            disabled={!hasNextVoucher || loadingVoucher || saving}
+          >
+            下一张
+          </button>
           <button className="glass-btn-secondary" onClick={() => void handleNewVoucher()}>
             新建
           </button>
@@ -463,7 +709,7 @@ export default function VoucherEntry(): JSX.Element {
             className="glass-btn-secondary"
             style={{ borderColor: balanced ? 'var(--color-success)' : '' }}
             onClick={() => void handleSave()}
-            disabled={saving}
+            disabled={saving || loadingVoucher}
           >
             {saving ? '保存中...' : '保存'}
           </button>
