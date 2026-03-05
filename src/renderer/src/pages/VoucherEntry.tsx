@@ -28,6 +28,11 @@ interface CashFlowItem {
   name: string
 }
 
+interface CashFlowDraft {
+  selected: boolean
+  cashFlowItemId: number | null
+}
+
 const createEmptyRow = (): VoucherRow => ({
   id: Math.random().toString(36).substring(7),
   summary: '',
@@ -56,7 +61,8 @@ export default function VoucherEntry(): JSX.Element {
   const [subjectOptions, setSubjectOptions] = useState<Record<string, SubjectItem[]>>({})
   const [cashFlowItems, setCashFlowItems] = useState<CashFlowItem[]>([])
   const [activeSubjectRowId, setActiveSubjectRowId] = useState<string | null>(null)
-  const [activeCashFlowRowId, setActiveCashFlowRowId] = useState<string | null>(null)
+  const [cashFlowDialogOpen, setCashFlowDialogOpen] = useState(false)
+  const [cashFlowDraft, setCashFlowDraft] = useState<Record<string, CashFlowDraft>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
@@ -253,8 +259,69 @@ export default function VoucherEntry(): JSX.Element {
     setActiveSubjectRowId(null)
   }
 
-  const updateCashFlowItem = (rowIdx: number, value: string): void => {
-    updateRow(rowIdx, 'cashFlowItemId', value ? Number(value) : null)
+  const cashFlowCandidateRows = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.isCashFlow && row.subjectCode)
+
+  const openCashFlowDialog = (): void => {
+    if (cashFlowCandidateRows.length === 0) {
+      setMessage({ type: 'error', text: '当前没有可分配现金流量的分录' })
+      return
+    }
+    const draft: Record<string, CashFlowDraft> = {}
+    cashFlowCandidateRows.forEach(({ row }) => {
+      draft[row.id] = {
+        selected: row.cashFlowItemId !== null,
+        cashFlowItemId: row.cashFlowItemId
+      }
+    })
+    setCashFlowDraft(draft)
+    setCashFlowDialogOpen(true)
+  }
+
+  const toggleCashFlowRow = (rowId: string, checked: boolean): void => {
+    setCashFlowDraft((prev) => ({
+      ...prev,
+      [rowId]: {
+        selected: checked,
+        cashFlowItemId: checked ? (prev[rowId]?.cashFlowItemId ?? null) : null
+      }
+    }))
+  }
+
+  const changeCashFlowDraftItem = (rowId: string, value: string): void => {
+    setCashFlowDraft((prev) => ({
+      ...prev,
+      [rowId]: {
+        selected: true,
+        cashFlowItemId: value ? Number(value) : null
+      }
+    }))
+  }
+
+  const applyCashFlowAllocation = (): void => {
+    const hasMissingItem = cashFlowCandidateRows.some(({ row }) => {
+      const draft = cashFlowDraft[row.id]
+      return draft?.selected === true && draft.cashFlowItemId === null
+    })
+
+    if (hasMissingItem) {
+      setMessage({ type: 'error', text: '请为已勾选分录选择现金流量项目' })
+      return
+    }
+
+    setRows((prev) =>
+      prev.map((row) => {
+        const draft = cashFlowDraft[row.id]
+        if (!draft) return row
+        return {
+          ...row,
+          cashFlowItemId: draft.selected ? draft.cashFlowItemId : null
+        }
+      })
+    )
+    setCashFlowDialogOpen(false)
+    setMessage({ type: 'success', text: '现金流量分配已更新' })
   }
 
   const validateAndCleanRows = (): {
@@ -305,7 +372,8 @@ export default function VoucherEntry(): JSX.Element {
     setRows(Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow()))
     setSubjectOptions({})
     setActiveSubjectRowId(null)
-    setActiveCashFlowRowId(null)
+    setCashFlowDialogOpen(false)
+    setCashFlowDraft({})
   }
 
   const handleNewVoucher = async (): Promise<void> => {
@@ -418,6 +486,13 @@ export default function VoucherEntry(): JSX.Element {
             onChange={(e) => setDate(e.target.value)}
           />
         </div>
+        <button
+          type="button"
+          className="glass-btn-secondary text-sm px-3 py-1.5"
+          onClick={openCashFlowDialog}
+        >
+          现金流量分配
+        </button>
         <span>字号：记-{String(voucherNumber).padStart(4, '0')}</span>
       </div>
 
@@ -555,36 +630,14 @@ export default function VoucherEntry(): JSX.Element {
                   aria-label={`第 ${rIdx + 1} 行贷方金额`}
                 />
                 {row.isCashFlow && (
-                  <button
-                    type="button"
-                    className="absolute right-1 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full text-xs glass-btn-secondary p-0"
-                    title="选择现金流量项目"
-                    onClick={() =>
-                      setActiveCashFlowRowId((prev) => (prev === row.id ? null : row.id))
-                    }
+                  <span
+                    className="absolute left-2 bottom-1 text-[11px] pointer-events-none"
+                    style={{
+                      color: row.cashFlowItemId ? 'var(--color-success)' : 'var(--color-danger)'
+                    }}
                   >
-                    流
-                  </button>
-                )}
-                {row.isCashFlow && activeCashFlowRowId === row.id && (
-                  <div className="absolute z-30 right-0 top-full mt-1 glass-panel-light p-2 min-w-[280px]">
-                    <select
-                      className="glass-input w-full text-sm"
-                      value={row.cashFlowItemId ?? ''}
-                      onChange={(e) => {
-                        updateCashFlowItem(rIdx, e.target.value)
-                        setActiveCashFlowRowId(null)
-                      }}
-                      aria-label={`第 ${rIdx + 1} 行现金流量项目`}
-                    >
-                      <option value="">选择现金流量项目</option>
-                      {cashFlowItems.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.code} {item.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                    {row.cashFlowItemId ? '已分配现金流' : '待分配现金流'}
+                  </span>
                 )}
               </div>
             </div>
@@ -606,6 +659,134 @@ export default function VoucherEntry(): JSX.Element {
           <div className="col-span-2 text-right pr-3 font-bold">{totalCredit}</div>
         </div>
       </div>
+
+      {cashFlowDialogOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 px-4"
+          onClick={() => setCashFlowDialogOpen(false)}
+        >
+          <div
+            className="glass-panel w-full max-w-5xl max-h-[80vh] flex flex-col p-4 gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>
+                现金流量分配
+              </h3>
+              <button
+                type="button"
+                className="glass-btn-secondary text-sm px-3 py-1.5"
+                onClick={() => setCashFlowDialogOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div
+              className="overflow-auto rounded-md border"
+              style={{ borderColor: 'var(--color-glass-border-light)' }}
+            >
+              <div
+                className="grid grid-cols-12 py-2 text-xs font-semibold border-b"
+                style={{
+                  color: 'var(--color-text-secondary)',
+                  borderColor: 'var(--color-glass-border-light)'
+                }}
+              >
+                <div className="col-span-1 text-center">选择</div>
+                <div className="col-span-1 text-center">行号</div>
+                <div className="col-span-3 px-2">摘要</div>
+                <div className="col-span-3 px-2">会计科目</div>
+                <div className="col-span-1 text-right pr-2">金额</div>
+                <div className="col-span-3 px-2">现金流量项目</div>
+              </div>
+
+              {cashFlowCandidateRows.map(({ row, index }) => {
+                const draft = cashFlowDraft[row.id] ?? {
+                  selected: false,
+                  cashFlowItemId: null
+                }
+                const amount = row.debit || row.credit || '0.00'
+                const direction = row.debit ? '借' : '贷'
+                return (
+                  <div
+                    key={row.id}
+                    className="grid grid-cols-12 items-center py-2 border-b last:border-b-0"
+                    style={{ borderColor: 'var(--color-glass-border-light)' }}
+                  >
+                    <div className="col-span-1 flex justify-center">
+                      <input
+                        type="checkbox"
+                        checked={draft.selected}
+                        onChange={(e) => toggleCashFlowRow(row.id, e.target.checked)}
+                        aria-label={`选择第 ${index + 1} 行进行现金流量分配`}
+                      />
+                    </div>
+                    <div
+                      className="col-span-1 text-center text-sm"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      {index + 1}
+                    </div>
+                    <div
+                      className="col-span-3 px-2 text-sm truncate"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      {row.summary || '-'}
+                    </div>
+                    <div
+                      className="col-span-3 px-2 text-sm truncate"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      {row.subjectCode} {row.subjectName}
+                    </div>
+                    <div
+                      className="col-span-1 text-right pr-2 text-sm"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      {direction}
+                      {amount}
+                    </div>
+                    <div className="col-span-3 px-2">
+                      <select
+                        className="glass-input w-full text-sm"
+                        value={draft.cashFlowItemId ?? ''}
+                        disabled={!draft.selected}
+                        onChange={(e) => changeCashFlowDraftItem(row.id, e.target.value)}
+                        aria-label={`第 ${index + 1} 行现金流量项目`}
+                      >
+                        <option value="">选择现金流量项目</option>
+                        {cashFlowItems.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.code} {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="glass-btn-secondary"
+                onClick={() => setCashFlowDialogOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="glass-btn-secondary"
+                onClick={applyCashFlowAllocation}
+              >
+                确认分配
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {message && (
         <div
