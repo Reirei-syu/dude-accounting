@@ -35,6 +35,20 @@ interface SubjectDef {
 }
 
 type AccountingStandardType = 'enterprise' | 'npo'
+type CashFlowEntryDirection = 'inflow' | 'outflow'
+
+type CashFlowMappingTemplate = {
+  subjectCode: string
+  counterpartSubjectCode: string
+  entryDirection: CashFlowEntryDirection
+  cashFlowItemCode: string
+}
+
+type CashFlowMappingBlueprint = {
+  counterpartSubjectCodes: string[]
+  entryDirection: CashFlowEntryDirection
+  cashFlowItemCode: string
+}
 
 const ENTERPRISE_SUBJECTS: SubjectDef[] = [
   // ===== 一、资产类（78个）=====
@@ -430,6 +444,101 @@ const NPO_SUBJECTS: SubjectDef[] = [
   { code: '5901', name: '其他费用', category: 'profit_loss', balance_direction: 1 }
 ]
 
+const ENTERPRISE_CASH_SUBJECT_CODES = ['1001', '1002', '1012']
+const NPO_CASH_SUBJECT_CODES = ['1001', '1002', '1009']
+
+const ENTERPRISE_CASH_FLOW_MAPPING_BLUEPRINTS: CashFlowMappingBlueprint[] = [
+  { counterpartSubjectCodes: ['1121', '1122', '2203'], entryDirection: 'inflow', cashFlowItemCode: 'CF01' },
+  { counterpartSubjectCodes: ['2221'], entryDirection: 'inflow', cashFlowItemCode: 'CF02' },
+  { counterpartSubjectCodes: ['2241', '6301'], entryDirection: 'inflow', cashFlowItemCode: 'CF03' },
+  { counterpartSubjectCodes: ['2202', '1123'], entryDirection: 'outflow', cashFlowItemCode: 'CF04' },
+  { counterpartSubjectCodes: ['2211'], entryDirection: 'outflow', cashFlowItemCode: 'CF05' },
+  { counterpartSubjectCodes: ['2221'], entryDirection: 'outflow', cashFlowItemCode: 'CF06' },
+  { counterpartSubjectCodes: ['2241', '6601', '6602', '6603', '6711'], entryDirection: 'outflow', cashFlowItemCode: 'CF07' },
+  { counterpartSubjectCodes: ['1501', '1503', '1511'], entryDirection: 'inflow', cashFlowItemCode: 'CF08' },
+  { counterpartSubjectCodes: ['6111'], entryDirection: 'inflow', cashFlowItemCode: 'CF09' },
+  { counterpartSubjectCodes: ['1606'], entryDirection: 'inflow', cashFlowItemCode: 'CF10' },
+  { counterpartSubjectCodes: ['1601', '1604', '1701', '1801'], entryDirection: 'outflow', cashFlowItemCode: 'CF12' },
+  { counterpartSubjectCodes: ['1501', '1503', '1511'], entryDirection: 'outflow', cashFlowItemCode: 'CF13' },
+  { counterpartSubjectCodes: ['4001', '4002'], entryDirection: 'inflow', cashFlowItemCode: 'CF15' },
+  { counterpartSubjectCodes: ['2001', '2501'], entryDirection: 'inflow', cashFlowItemCode: 'CF16' },
+  { counterpartSubjectCodes: ['2001', '2501'], entryDirection: 'outflow', cashFlowItemCode: 'CF18' },
+  { counterpartSubjectCodes: ['2231', '2232', '4104', '6603'], entryDirection: 'outflow', cashFlowItemCode: 'CF19' },
+  { counterpartSubjectCodes: ['2701'], entryDirection: 'outflow', cashFlowItemCode: 'CF20' }
+]
+
+const NPO_CASH_FLOW_MAPPING_BLUEPRINTS: CashFlowMappingBlueprint[] = [
+  {
+    counterpartSubjectCodes: [
+      '4101',
+      '410101',
+      '410102',
+      '4201',
+      '420101',
+      '420102',
+      '4301',
+      '430101',
+      '430102',
+      '4401',
+      '440101',
+      '440102',
+      '4501',
+      '450101',
+      '450102',
+      '4601',
+      '460101',
+      '460102',
+      '4701',
+      '470101',
+      '470102',
+      '4901',
+      '490101',
+      '490102'
+    ],
+    entryDirection: 'inflow',
+    cashFlowItemCode: 'CF03'
+  },
+  { counterpartSubjectCodes: ['2202', '1141'], entryDirection: 'outflow', cashFlowItemCode: 'CF04' },
+  { counterpartSubjectCodes: ['2204'], entryDirection: 'outflow', cashFlowItemCode: 'CF05' },
+  { counterpartSubjectCodes: ['2206'], entryDirection: 'outflow', cashFlowItemCode: 'CF06' },
+  { counterpartSubjectCodes: ['2209', '5101', '5201', '5301', '5401', '5501', '5601', '5901'], entryDirection: 'outflow', cashFlowItemCode: 'CF07' },
+  { counterpartSubjectCodes: ['1401', '1402', '1403'], entryDirection: 'inflow', cashFlowItemCode: 'CF08' },
+  { counterpartSubjectCodes: ['1501', '1505', '1601', '1701'], entryDirection: 'outflow', cashFlowItemCode: 'CF12' },
+  { counterpartSubjectCodes: ['1401', '1402', '1403'], entryDirection: 'outflow', cashFlowItemCode: 'CF13' },
+  { counterpartSubjectCodes: ['2101', '2501', '2502'], entryDirection: 'inflow', cashFlowItemCode: 'CF16' },
+  { counterpartSubjectCodes: ['2101', '2501', '2502'], entryDirection: 'outflow', cashFlowItemCode: 'CF18' }
+]
+
+function expandCashFlowMappingBlueprints(
+  cashSubjectCodes: string[],
+  blueprints: CashFlowMappingBlueprint[]
+): CashFlowMappingTemplate[] {
+  const templates: CashFlowMappingTemplate[] = []
+  for (const subjectCode of cashSubjectCodes) {
+    for (const blueprint of blueprints) {
+      for (const counterpartSubjectCode of blueprint.counterpartSubjectCodes) {
+        templates.push({
+          subjectCode,
+          counterpartSubjectCode,
+          entryDirection: blueprint.entryDirection,
+          cashFlowItemCode: blueprint.cashFlowItemCode
+        })
+      }
+    }
+  }
+  return templates
+}
+
+const ENTERPRISE_CASH_FLOW_MAPPINGS = expandCashFlowMappingBlueprints(
+  ENTERPRISE_CASH_SUBJECT_CODES,
+  ENTERPRISE_CASH_FLOW_MAPPING_BLUEPRINTS
+)
+
+const NPO_CASH_FLOW_MAPPINGS = expandCashFlowMappingBlueprints(
+  NPO_CASH_SUBJECT_CODES,
+  NPO_CASH_FLOW_MAPPING_BLUEPRINTS
+)
+
 function getStandardSubjects(standardType: AccountingStandardType): SubjectDef[] {
   return standardType === 'npo' ? NPO_SUBJECTS : ENTERPRISE_SUBJECTS
 }
@@ -593,6 +702,61 @@ export function seedCashFlowItemsForLedger(db: Database.Database, ledgerId: numb
 export function seedCashFlowItems(db: Database.Database): void {
   void db
   // Cash flow items are seeded per-ledger
+}
+
+function getCashFlowMappingTemplates(standardType: AccountingStandardType): CashFlowMappingTemplate[] {
+  return standardType === 'npo' ? NPO_CASH_FLOW_MAPPINGS : ENTERPRISE_CASH_FLOW_MAPPINGS
+}
+
+/**
+ * Seed default cash flow auto-mapping rules for a ledger.
+ */
+export function seedCashFlowMappingsForLedger(
+  db: Database.Database,
+  ledgerId: number,
+  standardType: AccountingStandardType = 'enterprise'
+): void {
+  const itemRows = db
+    .prepare(`SELECT id, code FROM cash_flow_items WHERE ledger_id = ?`)
+    .all(ledgerId) as Array<{ id: number; code: string }>
+  const itemIdByCode = new Map(itemRows.map((item) => [item.code, item.id]))
+
+  const subjectRows = db
+    .prepare(`SELECT code FROM subjects WHERE ledger_id = ?`)
+    .all(ledgerId) as Array<{ code: string }>
+  const subjectCodes = new Set(subjectRows.map((row) => row.code))
+
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO cash_flow_mappings (
+      ledger_id,
+      subject_code,
+      counterpart_subject_code,
+      entry_direction,
+      cash_flow_item_id
+    ) VALUES (?, ?, ?, ?, ?)`
+  )
+
+  const insertMany = db.transaction(() => {
+    const templates = getCashFlowMappingTemplates(standardType)
+    for (const template of templates) {
+      if (!subjectCodes.has(template.subjectCode) || !subjectCodes.has(template.counterpartSubjectCode)) {
+        continue
+      }
+      const cashFlowItemId = itemIdByCode.get(template.cashFlowItemCode)
+      if (!cashFlowItemId) {
+        continue
+      }
+      insert.run(
+        ledgerId,
+        template.subjectCode,
+        template.counterpartSubjectCode,
+        template.entryDirection,
+        cashFlowItemId
+      )
+    }
+  })
+
+  insertMany()
 }
 
 /**

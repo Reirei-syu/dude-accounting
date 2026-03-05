@@ -144,6 +144,8 @@ export function initializeDatabase(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ledger_id INTEGER NOT NULL,
       subject_code TEXT NOT NULL,
+      counterpart_subject_code TEXT NOT NULL,
+      entry_direction TEXT NOT NULL CHECK(entry_direction IN ('inflow', 'outflow')),
       cash_flow_item_id INTEGER NOT NULL,
       FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
       FOREIGN KEY (cash_flow_item_id) REFERENCES cash_flow_items(id)
@@ -201,6 +203,7 @@ export function initializeDatabase(): void {
   `)
 
   ensureInitialBalanceSchema(db)
+  ensureCashFlowMappingSchema(db)
 
   // Seed default data
   seedAdminUser(db)
@@ -252,6 +255,47 @@ export function ensureInitialBalanceSchema(db: Database.Database): void {
 
   db.prepare(
     'CREATE INDEX IF NOT EXISTS idx_initial_balances_ledger_period ON initial_balances(ledger_id, period)'
+  ).run()
+}
+
+export function ensureCashFlowMappingSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('cash_flow_mappings')").all() as Array<{
+    name: string
+  }>
+  if (columns.length === 0) return
+
+  const hasCounterpartSubjectCode = columns.some((col) => col.name === 'counterpart_subject_code')
+  const hasEntryDirection = columns.some((col) => col.name === 'entry_direction')
+
+  if (!hasCounterpartSubjectCode) {
+    db.exec(
+      "ALTER TABLE cash_flow_mappings ADD COLUMN counterpart_subject_code TEXT NOT NULL DEFAULT ''"
+    )
+  }
+
+  if (!hasEntryDirection) {
+    db.exec(
+      "ALTER TABLE cash_flow_mappings ADD COLUMN entry_direction TEXT NOT NULL DEFAULT 'inflow'"
+    )
+  }
+
+  if (!hasCounterpartSubjectCode || !hasEntryDirection) {
+    db.prepare(
+      "UPDATE cash_flow_mappings SET counterpart_subject_code = '' WHERE counterpart_subject_code IS NULL"
+    ).run()
+    db.prepare(
+      "UPDATE cash_flow_mappings SET entry_direction = 'inflow' WHERE entry_direction IS NULL OR entry_direction = ''"
+    ).run()
+    // Legacy rows without counterpart information are not usable for auto matching.
+    db.prepare("DELETE FROM cash_flow_mappings WHERE counterpart_subject_code = ''").run()
+  }
+
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_cash_flow_mappings_ledger ON cash_flow_mappings(ledger_id)'
+  ).run()
+  db.prepare(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_flow_mappings_unique
+     ON cash_flow_mappings(ledger_id, subject_code, counterpart_subject_code, entry_direction)`
   ).run()
 }
 

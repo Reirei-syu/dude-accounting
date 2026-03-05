@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import Decimal from 'decimal.js'
 import { getDatabase } from '../database/init'
+import { applyCashFlowMappings } from '../services/cashFlowMapping'
 import { requireAuth, requirePermission } from './session'
 
 interface VoucherEntryInput {
@@ -104,7 +105,7 @@ export function registerVoucherHandlers(): void {
       }
 
       const period = payload.voucherDate.slice(0, 7)
-      const entries = normalizeEntries(payload.entries)
+      let entries = normalizeEntries(payload.entries)
 
       if (entries.length < 2) {
         return { success: false, error: '至少需要两条有效分录' }
@@ -145,11 +146,64 @@ export function registerVoucherHandlers(): void {
           subjectByCode.set(entry.subjectCode, subject)
         }
 
-        if (subject.is_cash_flow === 1) {
-          if (entry.cashFlowItemId === null) {
-            return { success: false, error: `第${index + 1}行为现金流科目，必须指定现金流量项目` }
-          }
+        totalDebit += entry.debitCents
+        totalCredit += entry.creditCents
+      }
 
+      const autoMatched = applyCashFlowMappings(
+        entries.map((entry) => ({
+          subjectCode: entry.subjectCode,
+          debitCents: entry.debitCents,
+          creditCents: entry.creditCents,
+          cashFlowItemId: entry.cashFlowItemId,
+          isCashFlow: (subjectByCode.get(entry.subjectCode)?.is_cash_flow ?? 0) === 1
+        })),
+        (
+          db
+            .prepare(
+              `SELECT
+                 subject_code,
+                 counterpart_subject_code,
+                 entry_direction,
+                 cash_flow_item_id
+               FROM cash_flow_mappings
+               WHERE ledger_id = ?
+                 AND counterpart_subject_code <> ''`
+            )
+            .all(payload.ledgerId) as Array<{
+            subject_code: string
+            counterpart_subject_code: string
+            entry_direction: 'inflow' | 'outflow'
+            cash_flow_item_id: number
+          }>
+        ).map((rule) => ({
+          subjectCode: rule.subject_code,
+          counterpartSubjectCode: rule.counterpart_subject_code,
+          entryDirection: rule.entry_direction,
+          cashFlowItemId: rule.cash_flow_item_id
+        }))
+      )
+
+      if (autoMatched.errors.length > 0) {
+        return { success: false, error: autoMatched.errors[0] }
+      }
+
+      entries = entries.map((entry, index) => ({
+        ...entry,
+        cashFlowItemId: autoMatched.entries[index].cashFlowItemId
+      }))
+
+      for (const [index, entry] of entries.entries()) {
+        const subject = subjectByCode.get(entry.subjectCode)
+        if (!subject) {
+          return { success: false, error: `第${index + 1}行科目不存在：${entry.subjectCode}` }
+        }
+
+        if (subject.is_cash_flow !== 1 && entry.cashFlowItemId !== null) {
+          return { success: false, error: `第${index + 1}行非现金流科目，不应指定现金流量项目` }
+        }
+
+        if (entry.cashFlowItemId !== null) {
           const cashFlowItem = selectCashFlowStmt.get(payload.ledgerId, entry.cashFlowItemId) as
             | { id: number }
             | undefined
@@ -157,9 +211,6 @@ export function registerVoucherHandlers(): void {
             return { success: false, error: `第${index + 1}行现金流量项目无效` }
           }
         }
-
-        totalDebit += entry.debitCents
-        totalCredit += entry.creditCents
       }
 
       if (totalDebit <= 0 || totalCredit <= 0 || totalDebit !== totalCredit) {

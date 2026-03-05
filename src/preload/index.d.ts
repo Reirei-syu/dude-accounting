@@ -206,6 +206,35 @@ interface CashFlowAPI {
       direction: 'inflow' | 'outflow'
     }>
   >
+  getMappings: (ledgerId: number) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      subject_code: string
+      subject_name: string | null
+      counterpart_subject_code: string
+      counterpart_subject_name: string | null
+      entry_direction: 'inflow' | 'outflow'
+      cash_flow_item_id: number
+      cash_flow_item_code: string | null
+      cash_flow_item_name: string | null
+    }>
+  >
+  createMapping: (data: {
+    ledgerId: number
+    subjectCode: string
+    counterpartSubjectCode: string
+    entryDirection: 'inflow' | 'outflow'
+    cashFlowItemId: number
+  }) => Promise<{ success: boolean; error?: string; id?: number }>
+  updateMapping: (data: {
+    id: number
+    subjectCode: string
+    counterpartSubjectCode: string
+    entryDirection: 'inflow' | 'outflow'
+    cashFlowItemId: number
+  }) => Promise<{ success: boolean; error?: string }>
+  deleteMapping: (id: number) => Promise<{ success: boolean; error?: string }>
 }
 
 interface VoucherAPI {

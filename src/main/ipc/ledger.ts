@@ -3,6 +3,7 @@ import { getDatabase } from '../database/init'
 import {
   seedSubjectsForLedger,
   seedCashFlowItemsForLedger,
+  seedCashFlowMappingsForLedger,
   seedPLCarryForwardRulesForLedger,
   getStandardTemplateSummaries
 } from '../database/seed'
@@ -41,6 +42,7 @@ export function registerLedgerHandlers(): void {
         // Seed standard subjects for this ledger
         seedSubjectsForLedger(db, ledgerId, data.standardType)
         seedCashFlowItemsForLedger(db, ledgerId)
+        seedCashFlowMappingsForLedger(db, ledgerId, data.standardType)
         seedPLCarryForwardRulesForLedger(db, ledgerId, data.standardType)
 
         // Create initial period
@@ -162,6 +164,7 @@ export function registerLedgerHandlers(): void {
 
           seedSubjectsForLedger(db, data.ledgerId, data.standardType)
           seedCashFlowItemsForLedger(db, data.ledgerId)
+          seedCashFlowMappingsForLedger(db, data.ledgerId, data.standardType)
           seedPLCarryForwardRulesForLedger(db, data.ledgerId, data.standardType)
         })
 

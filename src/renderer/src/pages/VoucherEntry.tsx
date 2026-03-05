@@ -531,9 +531,6 @@ export default function VoucherEntry({
       if (debit.isZero() && credit.isZero()) {
         return { valid: false, cleanedRows, error: `第${i + 1}行借贷金额不能同时为空` }
       }
-      if (row.isCashFlow && row.cashFlowItemId === null) {
-        return { valid: false, cleanedRows, error: `第${i + 1}行为现金流科目，需指定现金流量项目` }
-      }
     }
 
     if (!balanced) {

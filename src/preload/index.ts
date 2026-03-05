@@ -67,7 +67,23 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('auxiliary:delete', id)
   },
   cashflow: {
-    getItems: (ledgerId: number) => ipcRenderer.invoke('cashflow:getItems', ledgerId)
+    getItems: (ledgerId: number) => ipcRenderer.invoke('cashflow:getItems', ledgerId),
+    getMappings: (ledgerId: number) => ipcRenderer.invoke('cashflow:getMappings', ledgerId),
+    createMapping: (data: {
+      ledgerId: number
+      subjectCode: string
+      counterpartSubjectCode: string
+      entryDirection: 'inflow' | 'outflow'
+      cashFlowItemId: number
+    }) => ipcRenderer.invoke('cashflow:createMapping', data),
+    updateMapping: (data: {
+      id: number
+      subjectCode: string
+      counterpartSubjectCode: string
+      entryDirection: 'inflow' | 'outflow'
+      cashFlowItemId: number
+    }) => ipcRenderer.invoke('cashflow:updateMapping', data),
+    deleteMapping: (id: number) => ipcRenderer.invoke('cashflow:deleteMapping', id)
   },
   voucher: {
     getNextNumber: (ledgerId: number, period: string) =>
