@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent, type JSX } from 'react'
 import Decimal from 'decimal.js'
 import { useLedgerStore } from '../stores/ledgerStore'
+import { useUIStore } from '../stores/uiStore'
 
 interface VoucherRow {
   id: number
@@ -30,6 +31,7 @@ function getDefaultDateRange(): { from: string; to: string } {
 
 export default function VoucherQuery(): JSX.Element {
   const { currentLedger } = useLedgerStore()
+  const openTab = useUIStore((state) => state.openTab)
   const { from, to } = useMemo(getDefaultDateRange, [])
 
   const [dateFrom, setDateFrom] = useState(from)
@@ -69,6 +71,18 @@ export default function VoucherQuery(): JSX.Element {
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     void handleQuery()
+  }
+
+  const openVoucherForView = (row: VoucherRow): void => {
+    openTab({
+      id: 'voucher-entry',
+      title: '凭证录入',
+      componentType: 'VoucherEntry',
+      params: {
+        editVoucherId: row.id,
+        editRequestKey: Date.now()
+      }
+    })
   }
 
   return (
@@ -112,7 +126,7 @@ export default function VoucherQuery(): JSX.Element {
         <input
           id="voucher-keyword"
           className="glass-input px-3 py-2 text-sm min-w-[220px]"
-          placeholder="摘要关键字"
+          placeholder="摘要关键字（模糊查询）"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           aria-label="摘要关键字"
@@ -142,11 +156,12 @@ export default function VoucherQuery(): JSX.Element {
               {rows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-12 py-2 px-3 border-b text-sm"
+                  className="grid grid-cols-12 py-2 px-3 border-b text-sm cursor-pointer"
                   style={{
                     borderColor: 'var(--color-glass-border-light)',
                     color: 'var(--color-text-secondary)'
                   }}
+                  onDoubleClick={() => openVoucherForView(row)}
                 >
                   <div className="col-span-2">{row.voucher_date}</div>
                   <div className="col-span-2">

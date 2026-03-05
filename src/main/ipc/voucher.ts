@@ -83,14 +83,65 @@ function normalizeEntries(entries: VoucherEntryInput[]): NormalizedVoucherEntry[
 
 export function registerVoucherHandlers(): void {
   const db = getDatabase()
+  const selectLedgerPeriodStmt = db.prepare('SELECT current_period FROM ledgers WHERE id = ?')
+
+  const ensureVoucherPeriod = (
+    ledgerId: number,
+    voucherDateOrPeriod: string,
+    mode: 'date' | 'period'
+  ): { ok: true; period: string } | { ok: false; error: string } => {
+    const period = mode === 'date' ? voucherDateOrPeriod.slice(0, 7) : voucherDateOrPeriod
+    const ledger = selectLedgerPeriodStmt.get(ledgerId) as { current_period: string } | undefined
+    if (!ledger) {
+      return { ok: false, error: '账套不存在' }
+    }
+    if (ledger.current_period !== period) {
+      return {
+        ok: false,
+        error: `凭证日期必须在当前会计期间（${ledger.current_period}）内`
+      }
+    }
+    return { ok: true, period }
+  }
+
+  const renumberVoucherSequence = (ledgerId: number, period: string, voucherWord: string): void => {
+    const rows = db
+      .prepare(
+        `SELECT id
+         FROM vouchers
+         WHERE ledger_id = ? AND period = ? AND voucher_word = ?
+         ORDER BY voucher_date ASC, voucher_number ASC, id ASC`
+      )
+      .all(ledgerId, period, voucherWord) as Array<{ id: number }>
+
+    if (rows.length === 0) return
+
+    const updateStmt = db.prepare(
+      `UPDATE vouchers
+       SET voucher_number = ?, updated_at = datetime('now')
+       WHERE id = ?`
+    )
+
+    // Two-phase numbering avoids unique-index conflicts during in-place renumbering.
+    for (let index = 0; index < rows.length; index += 1) {
+      updateStmt.run(-(index + 1), rows[index].id)
+    }
+    for (let index = 0; index < rows.length; index += 1) {
+      updateStmt.run(index + 1, rows[index].id)
+    }
+  }
 
   ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) => {
     requirePermission(event, 'voucher_entry')
+    const periodCheck = ensureVoucherPeriod(ledgerId, period, 'period')
+    if (!periodCheck.ok) {
+      throw new Error(periodCheck.error)
+    }
     const row = db
       .prepare(
         'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ?'
       )
-      .get(ledgerId, period) as { max_num: number }
+      .get(ledgerId, periodCheck.period) as { max_num: number }
     return row.max_num + 1
   })
 
@@ -104,7 +155,11 @@ export function registerVoucherHandlers(): void {
         return { success: false, error: '凭证日期格式不正确' }
       }
 
-      const period = payload.voucherDate.slice(0, 7)
+      const periodCheck = ensureVoucherPeriod(payload.ledgerId, payload.voucherDate, 'date')
+      if (!periodCheck.ok) {
+        return { success: false, error: periodCheck.error }
+      }
+      const period = periodCheck.period
       let entries = normalizeEntries(payload.entries)
 
       if (entries.length < 2) {
@@ -345,7 +400,11 @@ export function registerVoucherHandlers(): void {
         return { success: false, error: '仅未审核凭证可修改' }
       }
 
-      const period = payload.voucherDate.slice(0, 7)
+      const periodCheck = ensureVoucherPeriod(payload.ledgerId, payload.voucherDate, 'date')
+      if (!periodCheck.ok) {
+        return { success: false, error: periodCheck.error }
+      }
+      const period = periodCheck.period
       const entries = normalizeEntries(payload.entries)
       if (entries.length < 2) {
         return { success: false, error: '至少需要两条有效分录' }
@@ -566,14 +625,21 @@ export function registerVoucherHandlers(): void {
 
         const placeholders = payload.voucherIds.map(() => '?').join(',')
         const vouchers = db
-          .prepare(`SELECT id, status FROM vouchers WHERE id IN (${placeholders})`)
-          .all(...payload.voucherIds) as Array<{ id: number; status: number }>
+          .prepare(`SELECT id, status, ledger_id, period, voucher_word FROM vouchers WHERE id IN (${placeholders})`)
+          .all(...payload.voucherIds) as Array<{
+          id: number
+          status: number
+          ledger_id: number
+          period: string
+          voucher_word: string
+        }>
 
         if (vouchers.length !== payload.voucherIds.length) {
           return { success: false, error: '存在无效凭证，操作中止' }
         }
 
         const runTx = db.transaction(() => {
+          const renumberGroups = new Set<string>()
           for (const voucher of vouchers) {
             if (action === 'audit') {
               if (voucher.status !== 0) throw new Error('仅未审核凭证可审核')
@@ -606,6 +672,13 @@ export function registerVoucherHandlers(): void {
             } else if (action === 'delete') {
               if (voucher.status === 2) throw new Error('已记账凭证不可删除')
               db.prepare('DELETE FROM vouchers WHERE id = ?').run(voucher.id)
+              renumberGroups.add(`${voucher.ledger_id}|${voucher.period}|${voucher.voucher_word}`)
+            }
+          }
+          if (action === 'delete') {
+            for (const group of renumberGroups) {
+              const [ledgerIdText, period, voucherWord] = group.split('|')
+              renumberVoucherSequence(Number(ledgerIdText), period, voucherWord)
             }
           }
         })
