@@ -216,7 +216,7 @@ export function initializeDatabase(): void {
   insertSetting.run('wallpaper_path', '')
 }
 
-function ensureInitialBalanceSchema(db: Database.Database): void {
+export function ensureInitialBalanceSchema(db: Database.Database): void {
   const columns = db.prepare("PRAGMA table_info('initial_balances')").all() as Array<{
     name: string
   }>

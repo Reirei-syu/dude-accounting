@@ -110,6 +110,25 @@ const api = {
       }>
     }) => ipcRenderer.invoke('voucher:update', data)
   },
+  initialBalance: {
+    list: (ledgerId: number, period: string) =>
+      ipcRenderer.invoke('initialBalance:list', ledgerId, period),
+    save: (data: {
+      ledgerId: number
+      period: string
+      entries: Array<{
+        subjectCode: string
+        debitAmount: string
+        creditAmount: string
+      }>
+    }) => ipcRenderer.invoke('initialBalance:save', data)
+  },
+  period: {
+    getStatus: (ledgerId: number, period: string) =>
+      ipcRenderer.invoke('period:getStatus', ledgerId, period),
+    close: (data: { ledgerId: number; period: string }) =>
+      ipcRenderer.invoke('period:close', data)
+  },
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     getAll: () => ipcRenderer.invoke('settings:getAll'),

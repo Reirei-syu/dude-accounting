@@ -10,6 +10,8 @@ import { registerAuxiliaryHandlers } from './ipc/auxiliary'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerVoucherHandlers } from './ipc/voucher'
 import { registerCashFlowHandlers } from './ipc/cashflow'
+import { registerInitialBalanceHandlers } from './ipc/initialBalance'
+import { registerPeriodHandlers } from './ipc/period'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -60,6 +62,8 @@ app.whenReady().then(() => {
   registerSettingsHandlers()
   registerVoucherHandlers()
   registerCashFlowHandlers()
+  registerInitialBalanceHandlers()
+  registerPeriodHandlers()
 
   createWindow()
 

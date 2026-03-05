@@ -290,6 +290,48 @@ interface VoucherAPI {
   }>
 }
 
+interface InitialBalanceAPI {
+  list: (ledgerId: number, period: string) => Promise<
+    Array<{
+      subject_code: string
+      subject_name: string
+      balance_direction: number
+      debit_amount: number
+      credit_amount: number
+    }>
+  >
+  save: (data: {
+    ledgerId: number
+    period: string
+    entries: Array<{
+      subjectCode: string
+      debitAmount: string
+      creditAmount: string
+    }>
+  }) => Promise<{ success: boolean; error?: string }>
+}
+
+interface PeriodAPI {
+  getStatus: (
+    ledgerId: number,
+    period: string
+  ) => Promise<{
+    period: string
+    is_closed: number
+    closed_at: string | null
+  }>
+  close: (data: {
+    ledgerId: number
+    period: string
+  }) => Promise<{
+    success: boolean
+    error?: string
+    carriedForward?: boolean
+    nextPeriod?: string
+    carriedCount?: number
+  }>
+}
+
 interface DudeAPI {
   auth: AuthAPI
   ledger: LedgerAPI
@@ -297,6 +339,8 @@ interface DudeAPI {
   auxiliary: AuxiliaryAPI
   cashflow: CashFlowAPI
   voucher: VoucherAPI
+  initialBalance: InitialBalanceAPI
+  period: PeriodAPI
   settings: SettingsAPI
 }
 
