@@ -1,288 +1,367 @@
-
-
-
-
-
-
-这是一份为你及后续AI编程工具（如 Vibe Coding 模式下的 Cline、Cursor 等）准备的 \*\*系统技术架构与实现方案文档（Technical Design Document, TDD）\*\*。
-
-
-
-该文档将 PRD 和 UI 设计转化为具体的代码架构、数据库结构设计及核心难点解决方案。\*\*在财务软件开发中，精度和状态管理是重中之重，我在文档中加入了防踩坑的技术标准。\*\*
-
-
-
----
-
-
-
-\# Dude Accounting - 技术架构与实现文档
-
-
-
-\## 1. 技术栈选型 (Technology Stack)
-
-为了保证跨平台兼容性、极佳的渲染性能以及单机版数据的绝对安全，确立以下技术栈：
-
-\*   \*\*前端框架：\*\* React 18 + TypeScript (严格类型校验，防止财务数据类型隐式转换)。
-
-\*   \*\*桌面端框架：\*\* Electron (使用 `electron-vite` 脚手架构建主进程与渲染进程)。
-
-\*   \*\*UI 样式与组件：\*\* Tailwind CSS (高度契合毛玻璃态定制) + Radix UI (无头组件库，用于构建复杂的 Select、Dialog、ContextMenu，不带默认样式，方便毛玻璃覆盖)。
-
-\*   \*\*本地数据库：\*\* SQLite3 (通过 `better-sqlite3` 或 `Prisma` ORM 在 Electron 主进程中调用)。
-
-\*   \*\*全局状态管理：\*\* Zustand (轻量，适合管理多 Tab 和悬浮状态)。
-
-\*   \*\*财务精度计算：\*\* `decimal.js` 或 `big.js`（\*\*绝对禁止使用原生 JavaScript 的 `Number` 浮点数处理金额\*\*，必须用第三方库或统一转为“分”级整数存储）。
-
-
-
-\## 2. 核心架构与 IPC 通信设计 (Architecture)
-
-
-
-采用 Electron 标准的\*\*主进程 (Main) - 渲染进程 (Renderer) 分离架构\*\*：
-
-\*   \*\*主进程 (Node.js)：\*\* 负责所有 SQLite 数据库的读写、本地文件系统操作（导出 Excel/PDF、本地备份）、网盘 OAuth 验证的回调拦截。
-
-\*   \*\*渲染进程 (React)：\*\* 仅负责 UI 呈现、状态流转、快捷键监听。
-
-\*   \*\*ContextBridge (预加载脚本)：\*\* 封装安全的 IPC API，渲染进程通过 `window.api` 调用，例如：
-
-&nbsp;   ```typescript
-
-&nbsp;   // renderer可以调用的API示例
-
-&nbsp;   window.api.db.queryLedgers()
-
-&nbsp;   window.api.voucher.saveVoucher(voucherData)
-
-&nbsp;   window.api.backup.triggerCloudBackup('gdrive')
-
-&nbsp;   ```
-
-
-
-\## 3. 数据库设计 (SQLite Schema 核心表结构)
-
-
-
-数据模型必须满足“多账套、跨年查询、强追溯”的要求。
-
-
-
-\*   \*\*`users` (用户表)\*\*
-
-&nbsp;   \*   `id`, `username`, `real\_name`, `password\_hash`, `permissions` (JSON字符串或位掩码), `is\_admin` (Boolean)。
-
-\*   \*\*`ledgers` (账套表)\*\*
-
-&nbsp;   \*   `id`, `name`, `standard\_type` (枚举：企业/民非), `current\_period` (YYYY-MM), `created\_at`。
-
-\*   \*\*`subjects` (会计科目表)\*\*
-
-&nbsp;   \*   `id`, `ledger\_id`, `code` (如 1001), `name`, `parent\_code`, `category` (资产/负债/权益/成本/损益), `balance\_direction` (1借 / -1贷)。
-
-\*   \*\*`vouchers` (凭证主表)\*\*
-
-&nbsp;   \*   `id`, `ledger\_id`, `period` (YYYY-MM，用于跨年查询过滤), `voucher\_date` (日期), `voucher\_word` (记字号), `status` (枚举：0未审核, 1已审核, 2已记账), `creator\_id`, `auditor\_id`, `bookkeeper\_id`。
-
-\*   \*\*`voucher\_entries` (凭证分录明细表)\*\*
-
-&nbsp;   \*   `id`, `voucher\_id`, `summary` (摘要), `subject\_code`, `debit\_amount` (借方金额，DECIMAL或整数分), `credit\_amount` (贷方金额), `cash\_flow\_item\_id` (关联现金流映射)。
-
-
-
-\## 4. 核心交互与难点技术实现方案
-
-
-
-\### 4.1 凭证录入：全键盘操作与自动平衡
-
-\*   \*\*网格焦点管理 (Grid Focus Management)：\*\*
-
-&nbsp;   不要使用普通的 `<input>` 默认行为。使用一个二维数组的 React `useRef` 来管理所有单元格的焦点。
-
-&nbsp;   ```typescript
-
-&nbsp;   // 监听全局或表格的 keydown 事件
-
-&nbsp;   const handleKeyDown = (e, rowIndex, colIndex) => {
-
-&nbsp;       if (e.key === 'Enter') {
-
-&nbsp;           e.preventDefault();
-
-&nbsp;           // 逻辑：向右移动，若已经是最后一列，则移动到下一行的第一列；若是最后一行，则触发新增行并聚焦。
-
-&nbsp;           focusNextCell(rowIndex, colIndex);
-
-&nbsp;       }
-
-&nbsp;       if (e.key === '=' \&\& (isDebit(colIndex) || isCredit(colIndex))) {
-
-&nbsp;           e.preventDefault();
-
-&nbsp;           // 逻辑：计算已输入的所有借方总和与贷方总和的差额，填入当前焦点所在的金额框。
-
-&nbsp;           autoBalanceAmount(rowIndex, colIndex);
-
-&nbsp;       }
-
-&nbsp;   }
-
-&nbsp;   ```
-
-
-
-\### 4.2 Z轴图层与悬浮模糊态 (Suspended Blur UI)
-
-\*   \*\*状态树设计：\*\* 在 Zustand 中维护一个 `uiStore`，包含 `isMenuSuspended: boolean`。
-
-\*   \*\*DOM 结构实现：\*\*
-
-&nbsp;   ```jsx
-
-&nbsp;   <div className="app-container layer-0-bg">
-
-&nbsp;      <Sidebar className="layer-1" />
-
-&nbsp;      <div className="main-content layer-1">
-
-&nbsp;          <TopBar />
-
-&nbsp;          <TabBar />
-
-&nbsp;          {/\* 作业区 \*/}
-
-&nbsp;          <div className={`workspace ${isMenuSuspended ? 'blur-md brightness-75 pointer-events-none' : ''}`}>
-
-&nbsp;              <TabContent />
-
-&nbsp;          </div>
-
-&nbsp;          
-
-&nbsp;          {/\* 悬浮遮罩与按钮 (Layer 3) \*/}
-
-&nbsp;          {isMenuSuspended \&\& (
-
-&nbsp;              <div 
-
-&nbsp;                  className="absolute inset-0 z-50 flex items-center justify-center bg-black/10"
-
-&nbsp;                  onClick={() => setMenuSuspended(false)} // 点击外部退出悬浮
-
-&nbsp;              >
-
-&nbsp;                  <SuspendedButtonGroup 
-
-&nbsp;                      onClick={(e) => e.stopPropagation()} // 阻止冒泡
-
-&nbsp;                  />
-
-&nbsp;              </div>
-
-&nbsp;          )}
-
-&nbsp;      </div>
-
-&nbsp;   </div>
-
-&nbsp;   ```
-
-
-
-\### 4.3 动态多 Tab 标签页管理
-
-\*   \*\*状态模型：\*\* 路由不可使用传统的 URL 路由（如 react-router 的单纯路径跳转），需采用 \*\*内存路由 + 数组状态\*\* 管理打开的 Tab。
-
-&nbsp;   ```typescript
-
-&nbsp;   interface TabItem {
-
-&nbsp;     id: string; // 唯一标识，如 'voucher-entry', 'ledger-query-1001'
-
-&nbsp;     title: string; // 显示的标签名
-
-&nbsp;     componentType: string; // 映射到具体的 React 组件
-
-&nbsp;     params?: any; // 携带的参数，如下钻查询时的科目代码和日期范围
-
-&nbsp;   }
-
-&nbsp;   ```
-
-\*   \*\*渲染逻辑：\*\* 遍历 `tabs` 数组，将非 active 的 Tab 通过 `display: none` 或保持组件状态的库（如 `react-activation`）隐藏，确保切换 Tab 时输入的数据不丢失。
-
-
-
-\### 4.4 网盘 OAuth 授权与过期阻断处理
-
-\*   \*\*OAuth 流程 (主进程处理)：\*\* Electron 启动一个本地不可见的 WebContents 或使用系统默认浏览器打开网盘授权页，设置回调地址为 `http://localhost:端口/callback`。主进程启动一个临时的本地 HTTP Server 接收 Auth Code，换取 Token 并加密存入 SQLite。
-
-\*   \*\*Token 拦截器 (Axios Interceptor)：\*\*
-
-&nbsp;   在执行月末结账自动触发备份时，封装的网络请求必须拦截 `HTTP 401 (Unauthorized)` 状态码。
-
-&nbsp;   ```javascript
-
-&nbsp;   // 伪代码逻辑
-
-&nbsp;   try {
-
-&nbsp;       await cloudStorageApi.upload(backupFile);
-
-&nbsp;   } catch (error) {
-
-&nbsp;       if (error.response \&\& error.response.status === 401) {
-
-&nbsp;           // 触发 IPC 事件通知渲染进程弹出警告
-
-&nbsp;           mainWindow.webContents.send('oauth-expired', 'gdrive');
-
-&nbsp;           // 中止结账/备份流程
-
-&nbsp;           throw new Error('授权过期');
-
-&nbsp;       }
-
-&nbsp;   }
-
-&nbsp;   ```
-
-
-
-\### 4.5 自定义壁纸层 (Layer 0 替换机制)
-
-\*   提供一个设置界面允许用户选择本地图片。
-
-\*   Electron 读取图片转换为 Base64，或将图片复制到应用的 `userData` 目录。
-
-\*   前端通过读取本地协议地址（如 `local-file://path/to/image.jpg`）设置到最外层根节点的 `style={{ backgroundImage: ... }}`。
-
-
-
----
-
-
-
-\## 5. 给 AI 编程助手的实施建议 (Prompt Instructions for AI)
-
-
-
-当使用这段文档让 AI 写代码时，建议按以下顺序拆解任务（优先级从高到低）：
-
-
-
-1\.  \*\*Phase 1 (脚手架与 DB)：\*\* 初始化 Electron-Vite (React+TS) 项目。配置好 `better-sqlite3`。实现 `User` 和 `Ledger` 表的创建与 Admin 账号自动注入。
-
-2\.  \*\*Phase 2 (UI 骨架)：\*\* 使用 Tailwind CSS 实现 PRD 和 UI 文档中描述的 Z轴图层逻辑。实现毛玻璃全局 CSS 变量。完成侧边栏、Tab 栏、作业区以及 \*\*悬浮模糊逻辑 (Suspended Blur)\*\*。
-
-3\.  \*\*Phase 3 (凭证核心)：\*\* 建立凭证数据库表。实现高优快捷键表单（Enter移动，=号计算）。接入 `decimal.js` 确保借贷平衡精确到分。
-
-4\.  \*\*Phase 4 (账簿与下钻)：\*\* 实现跨年 SQLite 聚合查询。实现账表 UI 及右键上下文菜单 (Context Menu)，打通“账簿 -> 新建 Tab -> 显示明细”的数据流转。
-
-5\.  \*\*Phase 5 (网盘与结账)：\*\* 实现月末结账的前置条件校验逻辑。编写网盘 OAuth 和 Token 过期阻断弹窗。
-
+# Dude Accounting TDD
+
+## 1. 文档目的
+本文档描述当前项目的实际技术架构，并给出“账套设置模块”中“会计科目设置”和“辅助账设置”的技术设计方案。这里的 TDD 指 Technical Design Document，不是 Test-Driven Development。
+
+## 2. 当前代码基线
+
+### 2.1 技术栈
+- 桌面框架：Electron
+- 前端：React 19 + TypeScript
+- 构建：electron-vite + Vite
+- 状态管理：Zustand
+- 样式：Tailwind CSS + 项目自定义玻璃态样式
+- UI 组件：Radix UI（已用于 Dialog、Context Menu 等）
+- 数据库：SQLite
+- SQLite 驱动：better-sqlite3
+- 金额计算：decimal.js
+- 测试：Vitest
+
+### 2.2 分层结构
+
+#### 主进程
+- 位置：`src/main`
+- 负责数据库访问、IPC Handler 注册、权限校验
+
+#### 预加载层
+- 位置：`src/preload`
+- 负责通过 `contextBridge` 暴露 `window.api`
+
+#### 渲染进程
+- 位置：`src/renderer/src`
+- 负责页面、状态、交互和展示
+
+### 2.3 当前已存在的关键模块
+- 认证与会话：`src/main/ipc/auth.ts`、`src/main/ipc/session.ts`
+- 账套管理：`src/main/ipc/ledger.ts`
+- 科目设置：`src/main/ipc/subject.ts`、`src/renderer/src/pages/SubjectSettings.tsx`
+- 辅助账设置草稿：`src/main/ipc/auxiliary.ts`、`src/renderer/src/pages/AuxiliarySettings.tsx`
+- 凭证：`src/main/ipc/voucher.ts`
+- 系统参数：`src/main/ipc/settings.ts`
+
+## 3. 当前问题
+
+### 3.1 会计科目设置
+- `subject:getAll` 仅返回 `subjects` 表字段，不包含辅助项集合
+- `subject:create` 允许直接传入类别和余额方向，没有强制从上级科目继承
+- `subject:update` 只能改名称、`has_auxiliary`、`is_cash_flow`，不能维护辅助项明细
+- 前端页面只有列表和简单新增，不支持查看详情、编辑、辅助项多选
+
+### 3.2 辅助账设置
+- `AuxiliarySettings.tsx` 页面存在，但工作区组件映射中未注册
+- `registerAuxiliaryHandlers()` 未在 `src/main/index.ts` 中注册
+- `window.api` 与 `index.d.ts` 中未暴露 auxiliary API
+- 因此辅助账功能当前不构成可用闭环
+
+### 3.3 数据模型
+- 现有 `subjects` 表只有 `has_auxiliary` 布尔位，不能表达“一个科目对应多个辅助项类别”
+- 现有 `auxiliary_items` 表可存储档案，但科目与辅助类别之间缺少关系表
+
+## 4. 本轮设计目标
+- 补齐会计科目设置的完整可用链路
+- 补齐辅助账设置的完整可用链路
+- 保持企业会计准则账套对一级科目模板的约束
+- 尽量减少对已稳定模块的影响
+
+## 5. 设计原则
+
+### 5.1 企业会计准则约束
+- `enterprise` 账套继续沿用完整企业会计准则模板
+- 企业一级系统科目编码、名称不可修改
+- 用户只能新增或维护明细科目
+
+### 5.2 最小侵入
+- 不重做现有登录、账套、凭证模块
+- 优先在现有表结构基础上增量补表和补 API
+
+### 5.3 主进程集中校验
+- 业务规则、权限规则、删除校验都放在主进程
+- 渲染进程只负责交互和表单提示
+
+## 6. 数据模型设计
+
+### 6.1 保留现有表
+
+#### `subjects`
+保留当前字段：
+- `id`
+- `ledger_id`
+- `code`
+- `name`
+- `parent_code`
+- `category`
+- `balance_direction`
+- `has_auxiliary`
+- `is_cash_flow`
+- `level`
+- `is_system`
+
+说明：
+- `has_auxiliary` 继续作为快速标记字段
+- 真正的辅助项配置由新增关系表维护
+
+#### `auxiliary_items`
+保留当前字段：
+- `id`
+- `ledger_id`
+- `category`
+- `code`
+- `name`
+
+### 6.2 新增关系表
+
+#### `subject_auxiliary_categories`
+用途：支持一个科目配置多个辅助项类别。
+
+建议结构：
+
+```sql
+CREATE TABLE IF NOT EXISTS subject_auxiliary_categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject_id INTEGER NOT NULL,
+  category TEXT NOT NULL,
+  UNIQUE(subject_id, category),
+  FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+);
+```
+
+### 6.3 辅助项类别枚举
+固定值：
+- `customer`
+- `supplier`
+- `employee`
+- `project`
+- `department`
+- `custom`
+
+## 7. 后端设计
+
+### 7.1 抽取账套设置服务层
+建议新增：
+- `src/main/services/accountSetup.ts`
+
+职责：
+- 校验账套是否存在
+- 校验科目是否存在
+- 规范化辅助项类别
+- 创建科目
+- 更新科目
+- 查询科目及其辅助项类别
+- 创建/修改/删除辅助账
+
+这样可以避免复杂 SQL 和业务规则散落在 IPC 层。
+
+### 7.2 会计科目接口设计
+
+#### `subject:getAll`
+输入：
+- `ledgerId`
+
+输出：
+- 科目基础字段
+- `auxiliary_categories: string[]`
+
+说明：
+- 前端树形展示和详情面板都依赖该结果
+
+#### `subject:create`
+输入建议：
+
+```ts
+{
+  ledgerId: number
+  parentCode: string
+  code: string
+  name: string
+  auxiliaryCategories: string[]
+  isCashFlow: boolean
+}
+```
+
+规则：
+- 必须选择上级科目
+- 从上级科目继承 `category`、`balance_direction`
+- `level = parent.level + 1`
+- `is_system = 0`
+- `has_auxiliary = auxiliaryCategories.length > 0`
+
+#### `subject:update`
+输入建议：
+
+```ts
+{
+  subjectId: number
+  name?: string
+  auxiliaryCategories?: string[]
+  isCashFlow?: boolean
+}
+```
+
+规则：
+- 系统科目不允许改名称
+- 自定义科目允许改名称
+- 每次更新辅助项时，先删后插关系表
+- 同步更新 `subjects.has_auxiliary`
+
+### 7.3 辅助账接口设计
+
+#### `auxiliary:getAll`
+输入：
+- `ledgerId`
+
+输出：
+- 按 `category, code` 排序的辅助账列表
+
+#### `auxiliary:create`
+输入：
+
+```ts
+{
+  ledgerId: number
+  category: string
+  code: string
+  name: string
+}
+```
+
+规则：
+- 类别必须在允许枚举中
+- 同账套同类别下编码唯一
+
+#### `auxiliary:update`
+输入：
+
+```ts
+{
+  id: number
+  code?: string
+  name?: string
+}
+```
+
+#### `auxiliary:delete`
+规则：
+- 若 `voucher_entries.auxiliary_item_id` 已引用，则拒绝删除
+
+## 8. 主进程接线改动
+
+### 8.1 `src/main/index.ts`
+需要补充：
+
+```ts
+import { registerAuxiliaryHandlers } from './ipc/auxiliary'
+```
+
+并在应用启动时注册：
+
+```ts
+registerAuxiliaryHandlers()
+```
+
+### 8.2 `src/preload/index.ts`
+需要新增：
+- `api.auxiliary.getAll`
+- `api.auxiliary.getByCategory`
+- `api.auxiliary.create`
+- `api.auxiliary.update`
+- `api.auxiliary.delete`
+
+### 8.3 `src/preload/index.d.ts`
+需要补充 `AuxiliaryAPI` 类型声明，并将其挂到 `DudeAPI`
+
+## 9. 前端设计
+
+### 9.1 会计科目设置页面
+文件：
+- `src/renderer/src/pages/SubjectSettings.tsx`
+
+改造目标：
+- 左侧展示科目树
+- 右侧展示当前选中科目详情
+- 顶部提供“新增科目”“编辑科目”
+- Dialog 中支持辅助项多选
+
+建议状态：
+
+```ts
+type SubjectForm = {
+  parentCode: string
+  code: string
+  name: string
+  auxiliaryCategories: string[]
+  isCashFlow: boolean
+}
+```
+
+建议交互：
+- 点击系统科目：
+  - 可查看
+  - 可配置辅助项和现金流量标记
+  - 不可编辑名称、编码
+- 点击自定义科目：
+  - 可编辑名称
+  - 可修改辅助项
+  - 编码默认不在本轮开放修改，避免级次和引用复杂度
+
+### 9.2 辅助账设置页面
+文件：
+- `src/renderer/src/pages/AuxiliarySettings.tsx`
+
+当前页面基础结构可复用，主要补齐：
+- 页面接入工作区组件映射
+- 调通 `window.api.auxiliary`
+- 新增/编辑后刷新列表
+- 删除失败时显示阻断原因
+
+### 9.3 工作区接线
+文件：
+- `src/renderer/src/components/Workspace.tsx`
+
+需要补充：
+
+```ts
+import AuxiliarySettings from '../pages/AuxiliarySettings'
+```
+
+并加入 `componentMap`
+
+## 10. 验证策略
+
+### 10.1 单元测试
+建议优先测试服务层，而不是直接测 IPC：
+- 新建明细科目必须有上级科目
+- 新建科目会继承上级类别和余额方向
+- 系统科目不可改名
+- 科目辅助项可以增减替换
+- 已被凭证使用的辅助账不可删除
+
+### 10.2 集成验证
+- 登录管理员账号
+- 新建企业账套
+- 打开“会计科目设置”
+- 为系统科目配置辅助项
+- 新建自定义明细科目并配置多个辅助项
+- 打开“辅助账设置”
+- 新增、修改、删除辅助账
+
+## 11. 风险与处理
+
+### 11.1 风险：科目编码层级不规范
+处理：
+- 新建时强制选择父科目
+- 强制子科目编码以上级编码开头
+
+### 11.2 风险：系统科目被误改
+处理：
+- 后端按 `is_system` 强校验
+- 前端只做禁用展示，不作为唯一防线
+
+### 11.3 风险：辅助项类别与辅助账分类不一致
+处理：
+- 使用统一枚举值
+- 前后端共享相同分类集合
+
+## 12. 本轮交付清单
+- 更新后的 `prds/prd.md`
+- 更新后的 `prds/TDD.md`
+- 账套设置模块后续实现应以本文档为准

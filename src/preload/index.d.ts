@@ -112,6 +112,12 @@ interface SubjectAPI {
       is_cash_flow: number
       level: number
       is_system: number
+      auxiliary_categories: string[]
+      auxiliary_custom_items: Array<{
+        id: number
+        code: string
+        name: string
+      }>
     }>
   >
   search: (
@@ -130,20 +136,57 @@ interface SubjectAPI {
   >
   create: (data: {
     ledgerId: number
+    parentCode: string | null
     code: string
     name: string
-    parentCode: string | null
-    category: string
-    balanceDirection: number
-    hasAuxiliary: boolean
+    auxiliaryCategories: string[]
+    customAuxiliaryItemIds?: number[]
     isCashFlow: boolean
   }) => Promise<{ success: boolean; error?: string }>
   update: (data: {
-    id: number
+    subjectId: number
     name?: string
-    hasAuxiliary?: boolean
+    auxiliaryCategories?: string[]
+    customAuxiliaryItemIds?: number[]
     isCashFlow?: boolean
   }) => Promise<{ success: boolean; error?: string }>
+  delete: (id: number) => Promise<{ success: boolean; error?: string }>
+}
+
+interface AuxiliaryAPI {
+  getAll: (ledgerId: number) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      category: string
+      code: string
+      name: string
+      created_at?: string
+    }>
+  >
+  getByCategory: (
+    ledgerId: number,
+    category: string
+  ) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      category: string
+      code: string
+      name: string
+      created_at?: string
+    }>
+  >
+  create: (data: {
+    ledgerId: number
+    category: string
+    code: string
+    name: string
+  }) => Promise<{ success: boolean; error?: string }>
+  update: (data: { id: number; code?: string; name?: string }) => Promise<{
+    success: boolean
+    error?: string
+  }>
   delete: (id: number) => Promise<{ success: boolean; error?: string }>
 }
 
@@ -251,6 +294,7 @@ interface DudeAPI {
   auth: AuthAPI
   ledger: LedgerAPI
   subject: SubjectAPI
+  auxiliary: AuxiliaryAPI
   cashflow: CashFlowAPI
   voucher: VoucherAPI
   settings: SettingsAPI

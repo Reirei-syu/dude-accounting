@@ -40,17 +40,31 @@ const api = {
       ipcRenderer.invoke('subject:search', ledgerId, keyword),
     create: (data: {
       ledgerId: number
+      parentCode: string | null
       code: string
       name: string
-      parentCode: string | null
-      category: string
-      balanceDirection: number
-      hasAuxiliary: boolean
+      auxiliaryCategories: string[]
+      customAuxiliaryItemIds?: number[]
       isCashFlow: boolean
     }) => ipcRenderer.invoke('subject:create', data),
-    update: (data: { id: number; name?: string; hasAuxiliary?: boolean; isCashFlow?: boolean }) =>
-      ipcRenderer.invoke('subject:update', data),
+    update: (data: {
+      subjectId: number
+      name?: string
+      auxiliaryCategories?: string[]
+      customAuxiliaryItemIds?: number[]
+      isCashFlow?: boolean
+    }) => ipcRenderer.invoke('subject:update', data),
     delete: (id: number) => ipcRenderer.invoke('subject:delete', id)
+  },
+  auxiliary: {
+    getAll: (ledgerId: number) => ipcRenderer.invoke('auxiliary:getAll', ledgerId),
+    getByCategory: (ledgerId: number, category: string) =>
+      ipcRenderer.invoke('auxiliary:getByCategory', ledgerId, category),
+    create: (data: { ledgerId: number; category: string; code: string; name: string }) =>
+      ipcRenderer.invoke('auxiliary:create', data),
+    update: (data: { id: number; code?: string; name?: string }) =>
+      ipcRenderer.invoke('auxiliary:update', data),
+    delete: (id: number) => ipcRenderer.invoke('auxiliary:delete', id)
   },
   cashflow: {
     getItems: (ledgerId: number) => ipcRenderer.invoke('cashflow:getItems', ledgerId)

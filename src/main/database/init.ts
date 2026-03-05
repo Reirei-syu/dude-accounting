@@ -69,6 +69,25 @@ export function initializeDatabase(): void {
       FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
     );
 
+    -- 科目辅助项类别关联表
+    CREATE TABLE IF NOT EXISTS subject_auxiliary_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject_id INTEGER NOT NULL,
+      category TEXT NOT NULL,
+      UNIQUE(subject_id, category),
+      FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+    );
+
+    -- 科目与自定义辅助项明细关联表
+    CREATE TABLE IF NOT EXISTS subject_auxiliary_custom_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subject_id INTEGER NOT NULL,
+      auxiliary_item_id INTEGER NOT NULL,
+      UNIQUE(subject_id, auxiliary_item_id),
+      FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+      FOREIGN KEY (auxiliary_item_id) REFERENCES auxiliary_items(id) ON DELETE RESTRICT
+    );
+
     -- 凭证主表
     CREATE TABLE IF NOT EXISTS vouchers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -171,6 +190,9 @@ export function initializeDatabase(): void {
 
     -- 创建索引
     CREATE INDEX IF NOT EXISTS idx_subjects_ledger ON subjects(ledger_id);
+    CREATE INDEX IF NOT EXISTS idx_subject_aux_categories_subject ON subject_auxiliary_categories(subject_id);
+    CREATE INDEX IF NOT EXISTS idx_subject_aux_custom_items_subject ON subject_auxiliary_custom_items(subject_id);
+    CREATE INDEX IF NOT EXISTS idx_subject_aux_custom_items_aux_item ON subject_auxiliary_custom_items(auxiliary_item_id);
     CREATE INDEX IF NOT EXISTS idx_vouchers_ledger_period ON vouchers(ledger_id, period);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_number
       ON vouchers(ledger_id, period, voucher_word, voucher_number);

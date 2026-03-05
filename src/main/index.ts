@@ -6,6 +6,7 @@ import { initializeDatabase, closeDatabase } from './database/init'
 import { registerAuthHandlers } from './ipc/auth'
 import { registerLedgerHandlers } from './ipc/ledger'
 import { registerSubjectHandlers } from './ipc/subject'
+import { registerAuxiliaryHandlers } from './ipc/auxiliary'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerVoucherHandlers } from './ipc/voucher'
 import { registerCashFlowHandlers } from './ipc/cashflow'
@@ -55,6 +56,7 @@ app.whenReady().then(() => {
   registerAuthHandlers()
   registerLedgerHandlers()
   registerSubjectHandlers()
+  registerAuxiliaryHandlers()
   registerSettingsHandlers()
   registerVoucherHandlers()
   registerCashFlowHandlers()

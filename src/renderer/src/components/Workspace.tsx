@@ -4,6 +4,7 @@ import VoucherEntry from '../pages/VoucherEntry'
 import VoucherList from '../pages/VoucherList'
 import VoucherQuery from '../pages/VoucherQuery'
 import SubjectSettings from '../pages/SubjectSettings'
+import AuxiliarySettings from '../pages/AuxiliarySettings'
 import SystemParams from '../pages/SystemParams'
 import UserManagement from '../pages/UserManagement'
 import AccountingStandard from '../pages/AccountingStandard'
@@ -20,6 +21,7 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   VoucherList: VoucherList as React.ComponentType<WorkspaceComponentProps>,
   VoucherQuery: VoucherQuery as React.ComponentType<WorkspaceComponentProps>,
   SubjectSettings: SubjectSettings as React.ComponentType<WorkspaceComponentProps>,
+  AuxiliarySettings: AuxiliarySettings as React.ComponentType<WorkspaceComponentProps>,
   SystemParams: SystemParams as React.ComponentType<WorkspaceComponentProps>,
   UserManagement: UserManagement as React.ComponentType<WorkspaceComponentProps>,
   AccountingStandard: AccountingStandard as React.ComponentType<WorkspaceComponentProps>
