@@ -113,6 +113,26 @@ interface SignatureRow {
   isCashFlow: boolean
 }
 
+interface PeriodStatusSummary {
+  period: string
+  is_closed: number
+  closed_at: string | null
+  pending_audit_vouchers: Array<{
+    id: number
+    voucher_number: number
+    voucher_word: string
+    status: 0 | 1 | 2
+    voucher_label: string
+  }>
+  pending_bookkeep_vouchers: Array<{
+    id: number
+    voucher_number: number
+    voucher_word: string
+    status: 0 | 1 | 2
+    voucher_label: string
+  }>
+}
+
 const createEmptyRow = (): VoucherRow => ({
   id: Math.random().toString(36).substring(7),
   summary: '',
@@ -389,6 +409,9 @@ const buildEditRequestToken = (voucherId: number | null, requestKey?: number): s
 
 const PERIOD_PATTERN = /^\d{4}-\d{2}$/
 
+const buildClosedPeriodEditMessage = (period: string): string =>
+  `当前会计期间（${period}）已结账，本期凭证不能新增或编辑；未审核、未记账凭证仅可删除，如需继续编辑请先反结账。`
+
 const getPeriodDateRange = (period: string): { min: string; max: string } | null => {
   if (!PERIOD_PATTERN.test(period)) return null
 
@@ -475,6 +498,7 @@ export default function VoucherEntry({
   const [cashFlowDraft, setCashFlowDraft] = useState<Record<string, CashFlowDraft>>({})
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [periodStatus, setPeriodStatus] = useState<PeriodStatusSummary | null>(null)
   const [editingVoucherId, setEditingVoucherId] = useState<number | null>(null)
   const [currentVoucherStatus, setCurrentVoucherStatus] = useState<0 | 1 | 2 | null>(null)
   const [navigableVouchers, setNavigableVouchers] = useState<VoucherListItem[]>([])
@@ -581,6 +605,35 @@ export default function VoucherEntry({
   }, [currentLedger])
 
   useEffect(() => {
+    if (!currentLedger || !activePeriod || !window.electron) {
+      setPeriodStatus(null)
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const result = (await window.api.period.getStatus(
+          currentLedger.id,
+          activePeriod
+        )) as PeriodStatusSummary
+        if (!cancelled) {
+          setPeriodStatus(result)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('load period status failed', error)
+          setPeriodStatus(null)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activePeriod, activeTabId, currentLedger])
+
+  useEffect(() => {
     if (editingVoucherId !== null) return
     if (!activePeriod) return
     const nextDate = `${activePeriod}-01`
@@ -592,6 +645,7 @@ export default function VoucherEntry({
 
   useEffect(() => {
     if (editingVoucherId !== null) return
+    if (periodStatus?.is_closed === 1) return
     if (!currentLedger || !activePeriod || !date || date.length < 7) return
     if (!date.startsWith(activePeriod)) return
     if (!window.electron) return
@@ -614,7 +668,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [currentLedger, date, editingVoucherId, activePeriod])
+  }, [currentLedger, date, editingVoucherId, activePeriod, periodStatus])
 
   const updateRow = (
     index: number,
@@ -711,10 +765,12 @@ export default function VoucherEntry({
   const hasPrevVoucher = currentEditableIndex > 0
   const hasNextVoucher =
     currentEditableIndex >= 0 && currentEditableIndex < navigableVouchers.length - 1
+  const isClosedPeriod = periodStatus?.is_closed === 1
   const isSavedVoucher = editingVoucherId !== null
-  const isEditableSavedVoucher = isSavedVoucher && currentVoucherStatus === 0
-  const isReadonlyVoucher = isSavedVoucher && !isEditMode
+  const isEditableSavedVoucher = isSavedVoucher && currentVoucherStatus === 0 && !isClosedPeriod
+  const isReadonlyVoucher = isClosedPeriod || (isSavedVoucher && !isEditMode)
   const canEditFields = !isReadonlyVoucher && !saving && !loadingVoucher
+  const closedPeriodMessage = activePeriod ? buildClosedPeriodEditMessage(activePeriod) : ''
   const hasUnsavedChanges =
     editingVoucherId !== null &&
     isEditMode &&
@@ -1113,6 +1169,14 @@ export default function VoucherEntry({
       }
 
       const period = activePeriod || targetDate.slice(0, 7)
+      if (periodStatus?.is_closed === 1) {
+        setMessage({
+          type: 'error',
+          text: buildClosedPeriodEditMessage(period)
+        })
+        return
+      }
+
       try {
         const next = await window.api.voucher.getNextNumber(currentLedger.id, period)
         setVoucherNumber(next)
@@ -1126,11 +1190,15 @@ export default function VoucherEntry({
         })
       }
     },
-    [activePeriod, currentEditRequestToken, currentLedger, date, resetVoucher]
+    [activePeriod, currentEditRequestToken, currentLedger, date, periodStatus, resetVoucher]
   )
 
   const handleNewVoucher = async (): Promise<void> => {
     setMessage(null)
+    if (isClosedPeriod) {
+      setMessage({ type: 'error', text: closedPeriodMessage })
+      return
+    }
     await prepareNewVoucherState()
   }
 
@@ -1178,6 +1246,10 @@ export default function VoucherEntry({
         type: 'error',
         text: '浏览器预览模式不支持保存凭证，请在 Electron 客户端中操作'
       })
+      return false
+    }
+    if (isClosedPeriod) {
+      setMessage({ type: 'error', text: closedPeriodMessage })
       return false
     }
 
@@ -1251,6 +1323,10 @@ export default function VoucherEntry({
 
   const handleEnableEdit = (): void => {
     if (editingVoucherId === null) return
+    if (isClosedPeriod) {
+      setMessage({ type: 'error', text: closedPeriodMessage })
+      return
+    }
     if (currentVoucherStatus !== 0) {
       setMessage({ type: 'error', text: '仅未审核凭证可修改，当前凭证为只读。' })
       return
@@ -1275,6 +1351,10 @@ export default function VoucherEntry({
   }
 
   const handleSave = async (): Promise<void> => {
+    if (isClosedPeriod) {
+      setMessage({ type: 'error', text: closedPeriodMessage })
+      return
+    }
     if (isReadonlyVoucher) {
       setMessage({
         type: 'error',
@@ -1331,7 +1411,7 @@ export default function VoucherEntry({
                 : 'rgba(22, 163, 74, 0.35)'
             }}
           >
-            {isReadonlyVoucher ? '查看中' : '编辑中'}
+            {isClosedPeriod ? '闭账只读' : isReadonlyVoucher ? '查看中' : '编辑中'}
           </span>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -1349,7 +1429,12 @@ export default function VoucherEntry({
           >
             下一张
           </button>
-          <button className="glass-btn-secondary" onClick={() => void handleNewVoucher()}>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void handleNewVoucher()}
+            disabled={isClosedPeriod || saving || loadingVoucher}
+            title={isClosedPeriod ? '当前期间已结账，不能新建凭证' : '新建凭证'}
+          >
             新建
           </button>
           {isSavedVoucher && (
@@ -1358,7 +1443,9 @@ export default function VoucherEntry({
               onClick={handleEnableEdit}
               disabled={!isEditableSavedVoucher || isEditMode || saving || loadingVoucher}
               title={
-                !isEditableSavedVoucher
+                isClosedPeriod
+                  ? '当前期间已结账，如需编辑请先反结账'
+                  : !isEditableSavedVoucher
                   ? '仅未审核凭证可修改'
                   : isEditMode
                     ? '当前凭证已处于修改状态'
@@ -1378,6 +1465,15 @@ export default function VoucherEntry({
           </button>
         </div>
       </div>
+
+      {isClosedPeriod && (
+        <div
+          className="glass-panel-light mb-3 px-4 py-3 text-sm"
+          style={{ color: 'var(--color-danger)' }}
+        >
+          {closedPeriodMessage}
+        </div>
+      )}
 
       {/* 表头区 */}
       <div

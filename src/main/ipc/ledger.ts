@@ -72,6 +72,10 @@ export function registerLedgerHandlers(): void {
             data.currentPeriod,
             data.id
           )
+          db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
+            data.id,
+            data.currentPeriod
+          )
         }
         return { success: true }
       } catch (err) {

@@ -417,6 +417,20 @@ interface PeriodAPI {
     period: string
     is_closed: number
     closed_at: string | null
+    pending_audit_vouchers: Array<{
+      id: number
+      voucher_number: number
+      voucher_word: string
+      status: 0 | 1 | 2
+      voucher_label: string
+    }>
+    pending_bookkeep_vouchers: Array<{
+      id: number
+      voucher_number: number
+      voucher_word: string
+      status: 0 | 1 | 2
+      voucher_label: string
+    }>
   }>
   close: (data: { ledgerId: number; period: string }) => Promise<{
     success: boolean
@@ -424,6 +438,10 @@ interface PeriodAPI {
     carriedForward?: boolean
     nextPeriod?: string
     carriedCount?: number
+  }>
+  reopen: (data: { ledgerId: number; period: string }) => Promise<{
+    success: boolean
+    error?: string
   }>
 }
 

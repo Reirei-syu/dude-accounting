@@ -14,6 +14,26 @@ interface VoucherRow {
   total_credit: number
 }
 
+interface PeriodStatusSummary {
+  period: string
+  is_closed: number
+  closed_at: string | null
+  pending_audit_vouchers: Array<{
+    id: number
+    voucher_number: number
+    voucher_word: string
+    status: 0 | 1 | 2
+    voucher_label: string
+  }>
+  pending_bookkeep_vouchers: Array<{
+    id: number
+    voucher_number: number
+    voucher_word: string
+    status: 0 | 1 | 2
+    voucher_label: string
+  }>
+}
+
 type BatchAction = 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
 
 const STATUS_TEXT: Record<0 | 1 | 2, string> = {
@@ -49,6 +69,9 @@ const formatClockTime = (date: Date): string =>
   `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(
     date.getSeconds()
   ).padStart(2, '0')}`
+
+const buildClosedPeriodEditMessage = (period: string): string =>
+  `当前会计期间（${period}）已结账，本期凭证不能新增或编辑；未审核、未记账凭证仅可删除，如需继续编辑请先反结账。`
 
 const buildBatchActionMessage = (
   action: BatchAction,
@@ -121,16 +144,34 @@ const buildRefreshSummary = (
 export default function VoucherList(): JSX.Element {
   const { currentLedger, currentPeriod } = useLedgerStore()
   const openTab = useUIStore((state) => state.openTab)
+  const activeTabId = useUIStore((state) => state.activeTabId)
   const [rows, setRows] = useState<VoucherRow[]>([])
   const [selected, setSelected] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [periodStatus, setPeriodStatus] = useState<PeriodStatusSummary | null>(null)
   const [refreshSummary, setRefreshSummary] = useState('')
   const [lastRefreshAt, setLastRefreshAt] = useState('')
   const previousRowsRef = useRef<Map<number, VoucherRow> | null>(null)
   const selectAllRef = useRef<HTMLInputElement | null>(null)
 
   const canOperate = Boolean(window.electron && currentLedger)
+  const isClosedPeriod = periodStatus?.is_closed === 1
+  const closedPeriodMessage =
+    currentPeriod && currentPeriod.trim() !== '' ? buildClosedPeriodEditMessage(currentPeriod) : ''
+
+  const loadPeriodStatus = useCallback(async (): Promise<void> => {
+    if (!currentLedger || !currentPeriod || !window.electron) {
+      setPeriodStatus(null)
+      return
+    }
+
+    const result = (await window.api.period.getStatus(
+      currentLedger.id,
+      currentPeriod
+    )) as PeriodStatusSummary
+    setPeriodStatus(result)
+  }, [currentLedger, currentPeriod])
 
   const loadRows = useCallback(
     async (options?: { trackDiff?: boolean }): Promise<void> => {
@@ -178,7 +219,28 @@ export default function VoucherList(): JSX.Element {
       void loadRows()
     })
     return () => window.cancelAnimationFrame(frameId)
-  }, [loadRows])
+  }, [activeTabId, loadRows])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        await loadPeriodStatus()
+        if (!cancelled) {
+          // no-op, state updated in callback
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('load voucher list period status failed', error)
+          setPeriodStatus(null)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTabId, loadPeriodStatus])
 
   const totals = useMemo(() => {
     let debit = new Decimal(0)
@@ -249,6 +311,7 @@ export default function VoucherList(): JSX.Element {
         text: buildBatchActionMessage(action, result.processedCount ?? 0, result.skippedCount ?? 0)
       })
       await loadRows()
+      await loadPeriodStatus()
     } catch (err) {
       setMessage({
         type: 'error',
@@ -324,6 +387,11 @@ export default function VoucherList(): JSX.Element {
   const handleEditSelected = (): void => {
     setMessage(null)
 
+    if (isClosedPeriod) {
+      setMessage({ type: 'error', text: closedPeriodMessage })
+      return
+    }
+
     if (selected.length === 0) {
       setMessage({ type: 'error', text: '\u8bf7\u5148\u52fe\u9009\u4e00\u5f20\u51ed\u8bc1' })
       return
@@ -343,6 +411,7 @@ export default function VoucherList(): JSX.Element {
   const handleRefresh = async (): Promise<void> => {
     setMessage(null)
     await loadRows({ trackDiff: true })
+    await loadPeriodStatus()
   }
 
   return (
@@ -355,7 +424,12 @@ export default function VoucherList(): JSX.Element {
           <button className="glass-btn-secondary" onClick={() => void handleRefresh()}>
             {'\u5237\u65b0'}
           </button>
-          <button className="glass-btn-secondary" onClick={handleEditSelected}>
+          <button
+            className="glass-btn-secondary"
+            onClick={handleEditSelected}
+            disabled={isClosedPeriod}
+            title={isClosedPeriod ? '当前期间已结账，如需编辑请先反结账' : '修改选中凭证'}
+          >
             {'\u4fee\u6539'}
           </button>
           <button
@@ -382,6 +456,15 @@ export default function VoucherList(): JSX.Element {
           </button>
         </div>
       </div>
+
+      {isClosedPeriod && (
+        <div
+          className="glass-panel-light px-4 py-3 text-sm"
+          style={{ color: 'var(--color-danger)' }}
+        >
+          {closedPeriodMessage}
+        </div>
+      )}
 
       {refreshSummary && (
         <div className="text-xs px-1" style={{ color: 'var(--color-text-secondary)' }}>

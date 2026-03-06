@@ -16,6 +16,7 @@ interface LedgerState {
   setLedgers: (ledgers: Ledger[]) => void
   setCurrentLedger: (ledger: Ledger | null) => void
   setCurrentPeriod: (period: string) => void
+  updateCurrentLedgerPeriod: (period: string) => void
 }
 
 export const useLedgerStore = create<LedgerState>((set) => ({
@@ -25,5 +26,20 @@ export const useLedgerStore = create<LedgerState>((set) => ({
   setLedgers: (ledgers) => set({ ledgers }),
   setCurrentLedger: (ledger) =>
     set({ currentLedger: ledger, currentPeriod: ledger?.current_period || '' }),
-  setCurrentPeriod: (period) => set({ currentPeriod: period })
+  setCurrentPeriod: (period) => set({ currentPeriod: period }),
+  updateCurrentLedgerPeriod: (period) =>
+    set((state) => {
+      if (!state.currentLedger) {
+        return { currentPeriod: period }
+      }
+
+      const currentLedger = { ...state.currentLedger, current_period: period }
+      return {
+        currentPeriod: period,
+        currentLedger,
+        ledgers: state.ledgers.map((ledger) =>
+          ledger.id === currentLedger.id ? { ...ledger, current_period: period } : ledger
+        )
+      }
+    })
 }))

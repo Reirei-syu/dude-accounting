@@ -19,8 +19,14 @@ const generateRandomString = (length = 10): string => {
 
 export default function MainLayout(): JSX.Element {
   const { isMenuSuspended } = useUIStore()
-  const { ledgers, currentLedger, currentPeriod, setLedgers, setCurrentLedger, setCurrentPeriod } =
-    useLedgerStore()
+  const {
+    ledgers,
+    currentLedger,
+    currentPeriod,
+    setLedgers,
+    setCurrentLedger,
+    updateCurrentLedgerPeriod
+  } = useLedgerStore()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const userDisplayName = user?.realName || user?.username || '当前用户'
@@ -54,7 +60,7 @@ export default function MainLayout(): JSX.Element {
 
   const handleSwitchPeriod = async (period: string): Promise<void> => {
     if (!currentLedger) return
-    setCurrentPeriod(period)
+    updateCurrentLedgerPeriod(period)
     if (!window.electron) return
     try {
       const result = await window.api.ledger.update({ id: currentLedger.id, currentPeriod: period })

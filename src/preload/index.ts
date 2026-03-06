@@ -151,7 +151,9 @@ const api = {
   period: {
     getStatus: (ledgerId: number, period: string) =>
       ipcRenderer.invoke('period:getStatus', ledgerId, period),
-    close: (data: { ledgerId: number; period: string }) => ipcRenderer.invoke('period:close', data)
+    close: (data: { ledgerId: number; period: string }) => ipcRenderer.invoke('period:close', data),
+    reopen: (data: { ledgerId: number; period: string }) =>
+      ipcRenderer.invoke('period:reopen', data)
   },
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),

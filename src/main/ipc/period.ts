@@ -1,6 +1,11 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import { assertPLCarryForwardCompleted } from '../services/plCarryForward'
+import {
+  assertPeriodReopenAllowed,
+  getNextPeriod,
+  getPeriodStatusSummary
+} from '../services/periodState'
 import { requireAuth, requirePermission } from './session'
 
 function getPeriodParts(period: string): { year: number; month: number } {
@@ -126,18 +131,16 @@ export function registerPeriodHandlers(): void {
   ipcMain.handle('period:getStatus', (event, ledgerId: number, period: string) => {
     requireAuth(event)
     if (!ledgerId || !period) {
-      return { period, is_closed: 0, closed_at: null }
+      return {
+        period,
+        is_closed: 0,
+        closed_at: null,
+        pending_audit_vouchers: [],
+        pending_bookkeep_vouchers: []
+      }
     }
 
-    const row = db
-      .prepare('SELECT is_closed, closed_at FROM periods WHERE ledger_id = ? AND period = ?')
-      .get(ledgerId, period) as { is_closed: number; closed_at: string | null } | undefined
-
-    if (!row) {
-      return { period, is_closed: 0, closed_at: null }
-    }
-
-    return { period, is_closed: row.is_closed, closed_at: row.closed_at }
+    return getPeriodStatusSummary(db, ledgerId, period)
   })
 
   ipcMain.handle('period:close', (event, payload: { ledgerId: number; period: string }) => {
@@ -150,6 +153,7 @@ export function registerPeriodHandlers(): void {
       }
 
       const { year, month } = getPeriodParts(period)
+      const nextPeriod = getNextPeriod(period)
 
       const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(ledgerId) as
         | { start_period: string }
@@ -161,13 +165,16 @@ export function registerPeriodHandlers(): void {
       assertPLCarryForwardCompleted(db, { ledgerId, period })
 
       let carriedForward = false
-      let nextPeriod: string | undefined
       let carriedCount = 0
 
       const closeTx = db.transaction(() => {
         db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
           ledgerId,
           period
+        )
+        db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
+          ledgerId,
+          nextPeriod
         )
         const status = db
           .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
@@ -186,7 +193,6 @@ export function registerPeriodHandlers(): void {
         if (month === 12) {
           const result = carryForwardYear(db, ledgerId, ledger.start_period, year)
           carriedForward = true
-          nextPeriod = result.nextPeriod
           carriedCount = result.carriedCount
         }
       })
@@ -203,6 +209,33 @@ export function registerPeriodHandlers(): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : '结账失败'
+      }
+    }
+  })
+
+  ipcMain.handle('period:reopen', (event, payload: { ledgerId: number; period: string }) => {
+    try {
+      requirePermission(event, 'bookkeeping')
+      const { ledgerId, period } = payload
+
+      if (!ledgerId) {
+        return { success: false, error: '请选择账套' }
+      }
+
+      getPeriodParts(period)
+      assertPeriodReopenAllowed(db, ledgerId, period)
+
+      db.prepare(
+        `UPDATE periods
+           SET is_closed = 0, closed_at = NULL
+         WHERE ledger_id = ? AND period = ?`
+      ).run(ledgerId, period)
+
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '反结账失败'
       }
     }
   })

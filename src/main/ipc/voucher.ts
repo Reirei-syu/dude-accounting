@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import Decimal from 'decimal.js'
 import { getDatabase } from '../database/init'
 import { applyCashFlowMappings } from '../services/cashFlowMapping'
+import { assertPeriodWritable } from '../services/periodState'
 import { requireAuth, requirePermission } from './session'
 import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
 import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
@@ -127,6 +128,14 @@ export function registerVoucherHandlers(): void {
       return {
         ok: false,
         error: `凭证日期必须在当前会计期间（${ledger.current_period}）内`
+      }
+    }
+    try {
+      assertPeriodWritable(db, ledgerId, period)
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : '当前期间已结账'
       }
     }
     return { ok: true, period }
