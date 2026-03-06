@@ -1,4 +1,5 @@
 ﻿import { useState, useRef, useEffect, useMemo, type KeyboardEvent, type JSX } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
 import Decimal from 'decimal.js'
@@ -15,11 +16,39 @@ interface VoucherRow {
   isCashFlow: boolean
 }
 
-interface SubjectItem {
+interface VoucherSubject {
   id: number
   code: string
   name: string
+  parent_code: string | null
+  category: string
+  level: number
   is_cash_flow: number
+}
+
+type SubjectTreeRow =
+  | {
+      kind: 'category'
+      id: string
+      code: string
+      name: string
+      logicalParent: null
+      logicalLevel: 0
+    }
+  | {
+      kind: 'subject'
+      id: number
+      code: string
+      name: string
+      logicalParent: string
+      logicalLevel: number
+      row: VoucherSubject
+    }
+
+interface SubjectHierarchy {
+  logicalParentByCode: Map<string, string | null>
+  logicalLevelByCode: Map<string, number>
+  hasChildrenCodes: Set<string>
 }
 
 interface CashFlowItem {
@@ -84,6 +113,215 @@ const createEmptyRow = (): VoucherRow => ({
 
 const DEFAULT_ROWS = 4
 const AMOUNT_PATTERN = /^\d+(\.\d{0,2})?$/
+const NUMERIC_SUBJECT_KEYWORD_PATTERN = /^\d+$/
+const SUBJECT_CATEGORY_ORDER = ['asset', 'liability', 'common', 'equity', 'cost', 'profit_loss']
+
+const getSubjectIndentWidth = (level: number): string => `${Math.max(0, level - 1) * 2}ch`
+
+const renderSubjectIndent = (level: number): JSX.Element | null => {
+  if (level <= 1) {
+    return null
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block shrink-0"
+      style={{ width: getSubjectIndentWidth(level) }}
+    />
+  )
+}
+
+const getSubjectCategoryLabel = (category: string, standardType?: 'enterprise' | 'npo'): string => {
+  const labels: Record<string, string> = {
+    asset: '资产类',
+    liability: '负债类',
+    common: '共同类',
+    equity: standardType === 'npo' ? '净资产类' : '所有者权益类',
+    cost: '成本类',
+    profit_loss: '损益类'
+  }
+
+  return labels[category] ?? category
+}
+
+const getSubjectCategoryNodeCode = (category: string): string => `__category__${category}`
+
+const buildSubjectHierarchy = (subjects: VoucherSubject[]): SubjectHierarchy => {
+  const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
+  const subjectCodesByCategory = new Map<string, string[]>()
+
+  for (const subject of subjects) {
+    const currentCodes = subjectCodesByCategory.get(subject.category) ?? []
+    currentCodes.push(subject.code)
+    subjectCodesByCategory.set(subject.category, currentCodes)
+  }
+
+  const logicalParentByCode = new Map<string, string | null>()
+
+  for (const subject of subjects) {
+    const explicitParentCode =
+      subject.parent_code &&
+      subject.parent_code !== subject.code &&
+      subject.code.startsWith(subject.parent_code) &&
+      subjectByCode.has(subject.parent_code)
+        ? subject.parent_code
+        : null
+
+    if (explicitParentCode) {
+      logicalParentByCode.set(subject.code, explicitParentCode)
+      continue
+    }
+
+    let inferredParentCode: string | null = null
+    for (const candidateCode of subjectCodesByCategory.get(subject.category) ?? []) {
+      if (candidateCode === subject.code) {
+        continue
+      }
+      if (!subject.code.startsWith(candidateCode)) {
+        continue
+      }
+      if (!inferredParentCode || candidateCode.length > inferredParentCode.length) {
+        inferredParentCode = candidateCode
+      }
+    }
+
+    logicalParentByCode.set(subject.code, inferredParentCode)
+  }
+
+  const logicalLevelByCode = new Map<string, number>()
+  const resolveLogicalLevel = (code: string, visited = new Set<string>()): number => {
+    if (logicalLevelByCode.has(code)) {
+      return logicalLevelByCode.get(code) ?? 1
+    }
+
+    if (visited.has(code)) {
+      return 1
+    }
+
+    visited.add(code)
+    const parentCode = logicalParentByCode.get(code) ?? null
+    const level = parentCode ? resolveLogicalLevel(parentCode, visited) + 1 : 1
+    logicalLevelByCode.set(code, level)
+    visited.delete(code)
+    return level
+  }
+
+  for (const subject of subjects) {
+    resolveLogicalLevel(subject.code)
+  }
+
+  const hasChildrenCodes = new Set<string>()
+  for (const parentCode of logicalParentByCode.values()) {
+    if (parentCode) {
+      hasChildrenCodes.add(parentCode)
+    }
+  }
+
+  return {
+    logicalParentByCode,
+    logicalLevelByCode,
+    hasChildrenCodes
+  }
+}
+
+const buildSubjectTreeRows = (
+  subjects: VoucherSubject[],
+  hierarchy: SubjectHierarchy,
+  standardType?: 'enterprise' | 'npo'
+): SubjectTreeRow[] => {
+  const treeRows: SubjectTreeRow[] = []
+
+  for (const category of SUBJECT_CATEGORY_ORDER) {
+    const categorySubjects = subjects.filter((subject) => subject.category === category)
+    if (categorySubjects.length === 0) {
+      continue
+    }
+
+    treeRows.push({
+      kind: 'category',
+      id: getSubjectCategoryNodeCode(category),
+      code: getSubjectCategoryNodeCode(category),
+      name: getSubjectCategoryLabel(category, standardType),
+      logicalParent: null,
+      logicalLevel: 0
+    })
+
+    for (const subject of categorySubjects) {
+      const logicalParentCode = hierarchy.logicalParentByCode.get(subject.code) ?? null
+      treeRows.push({
+        kind: 'subject',
+        id: subject.id,
+        code: subject.code,
+        name: subject.name,
+        logicalParent: logicalParentCode ?? getSubjectCategoryNodeCode(category),
+        logicalLevel: hierarchy.logicalLevelByCode.get(subject.code) ?? 1,
+        row: subject
+      })
+    }
+  }
+
+  return treeRows
+}
+
+const filterSubjectsByKeyword = (subjects: VoucherSubject[], keyword: string): VoucherSubject[] => {
+  const normalizedKeyword = keyword.trim()
+  if (!normalizedKeyword) {
+    return []
+  }
+
+  const isNumericKeyword = NUMERIC_SUBJECT_KEYWORD_PATTERN.test(normalizedKeyword)
+  const filtered = subjects.filter((subject) => {
+    if (isNumericKeyword) {
+      return (
+        subject.code.startsWith(normalizedKeyword) || subject.name.startsWith(normalizedKeyword)
+      )
+    }
+
+    return subject.code.startsWith(normalizedKeyword) || subject.name.includes(normalizedKeyword)
+  })
+
+  return filtered.sort((left, right) => left.code.localeCompare(right.code)).slice(0, 20)
+}
+
+const findFirstLeafSubject = (
+  subjects: VoucherSubject[],
+  hasChildrenCodes: Set<string>
+): VoucherSubject | undefined => subjects.find((subject) => !hasChildrenCodes.has(subject.code))
+
+function ChevronRight(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  )
+}
+
+function ChevronDown(): JSX.Element {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  )
+}
 
 const toAmountText = (cents: number): string => new Decimal(cents).div(100).toFixed(2)
 
@@ -160,7 +398,11 @@ const isOppositeDirection = (left: VoucherRow, right: VoucherRow): boolean => {
   )
 }
 
-const shouldShowPendingCashFlowHint = (rows: VoucherRow[], index: number, row: VoucherRow): boolean => {
+const shouldShowPendingCashFlowHint = (
+  rows: VoucherRow[],
+  index: number,
+  row: VoucherRow
+): boolean => {
   if (!row.isCashFlow || row.cashFlowItemId !== null || !row.subjectCode) return false
 
   const counterparts = rows.filter((candidate, candidateIndex) => {
@@ -191,9 +433,12 @@ export default function VoucherEntry({
   const [rows, setRows] = useState<VoucherRow[]>(
     Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow())
   )
-  const [subjectOptions, setSubjectOptions] = useState<Record<string, SubjectItem[]>>({})
+  const [allSubjects, setAllSubjects] = useState<VoucherSubject[]>([])
+  const [subjectOptions, setSubjectOptions] = useState<Record<string, VoucherSubject[]>>({})
   const [cashFlowItems, setCashFlowItems] = useState<CashFlowItem[]>([])
   const [activeSubjectRowId, setActiveSubjectRowId] = useState<string | null>(null)
+  const [manualSubjectRowId, setManualSubjectRowId] = useState<string | null>(null)
+  const [manualTreeExpandedCodes, setManualTreeExpandedCodes] = useState<Set<string>>(new Set())
   const [cashFlowDialogOpen, setCashFlowDialogOpen] = useState(false)
   const [cashFlowDraft, setCashFlowDraft] = useState<Record<string, CashFlowDraft>>({})
   const [saving, setSaving] = useState(false)
@@ -208,6 +453,76 @@ export default function VoucherEntry({
   // Matrix of refs for keyboard navigation: row x col
   // col 0: summary, 1: subject, 2: debit, 3: credit
   const inputRefs = useRef<(HTMLInputElement | null)[][]>([])
+  const subjectHierarchy = useMemo(() => buildSubjectHierarchy(allSubjects), [allSubjects])
+  const manualTreeRows = useMemo(
+    () => buildSubjectTreeRows(allSubjects, subjectHierarchy, currentLedger?.standard_type),
+    [allSubjects, currentLedger?.standard_type, subjectHierarchy]
+  )
+  const manualTreeNodeByCode = useMemo(
+    () => new Map(manualTreeRows.map((row) => [row.code, row])),
+    [manualTreeRows]
+  )
+  const manualTreeHasChildren = useMemo(() => {
+    const codes = new Set<string>()
+    for (const row of manualTreeRows) {
+      if (row.logicalParent) {
+        codes.add(row.logicalParent)
+      }
+    }
+    return codes
+  }, [manualTreeRows])
+  const manualVisibleTreeRows = useMemo(
+    () =>
+      manualTreeRows.filter((row) => {
+        if (row.kind === 'category') {
+          return true
+        }
+
+        let currentParent: string | null = row.logicalParent
+        while (currentParent) {
+          if (!manualTreeExpandedCodes.has(currentParent)) {
+            return false
+          }
+          const parentNode = manualTreeNodeByCode.get(currentParent)
+          currentParent = parentNode?.logicalParent ?? null
+        }
+        return true
+      }),
+    [manualTreeExpandedCodes, manualTreeNodeByCode, manualTreeRows]
+  )
+
+  useEffect(() => {
+    if (!currentLedger || !window.electron) {
+      setAllSubjects([])
+      setSubjectOptions({})
+      setActiveSubjectRowId(null)
+      setManualSubjectRowId(null)
+      setManualTreeExpandedCodes(new Set())
+      return
+    }
+
+    const ledgerId = currentLedger.id
+    let cancelled = false
+    async function loadSubjects(): Promise<void> {
+      try {
+        const subjects = (await window.api.subject.getAll(ledgerId)) as VoucherSubject[]
+        if (!cancelled) {
+          setAllSubjects(subjects)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setAllSubjects([])
+          setSubjectOptions({})
+          console.error('load subjects failed', error)
+        }
+      }
+    }
+
+    void loadSubjects()
+    return () => {
+      cancelled = true
+    }
+  }, [currentLedger])
 
   useEffect(() => {
     if (!currentLedger || !window.electron) return
@@ -353,7 +668,8 @@ export default function VoucherEntry({
     return editableVouchers.findIndex((voucher) => String(voucher.id) === String(editingVoucherId))
   }, [editingVoucherId, editableVouchers])
   const hasPrevVoucher = currentEditableIndex > 0
-  const hasNextVoucher = currentEditableIndex >= 0 && currentEditableIndex < editableVouchers.length - 1
+  const hasNextVoucher =
+    currentEditableIndex >= 0 && currentEditableIndex < editableVouchers.length - 1
   const isSavedVoucher = editingVoucherId !== null
   const isEditableSavedVoucher = isSavedVoucher && currentVoucherStatus === 0
   const isReadonlyVoucher = isSavedVoucher && !isEditMode
@@ -372,18 +688,11 @@ export default function VoucherEntry({
       inputRefs.current[r][c] = el
     }
 
-  const searchSubject = async (rowId: string, keyword: string): Promise<void> => {
-    if (!currentLedger || !keyword.trim() || !window.electron) {
-      setSubjectOptions((prev) => ({ ...prev, [rowId]: [] }))
-      return
-    }
-    try {
-      const result = await window.api.subject.search(currentLedger.id, keyword.trim())
-      setSubjectOptions((prev) => ({ ...prev, [rowId]: result }))
-    } catch (error) {
-      setSubjectOptions((prev) => ({ ...prev, [rowId]: [] }))
-      console.error('search subject failed', error)
-    }
+  const updateSubjectOptions = (rowId: string, keyword: string): void => {
+    setSubjectOptions((prev) => ({
+      ...prev,
+      [rowId]: filterSubjectsByKeyword(allSubjects, keyword)
+    }))
   }
 
   const handleSubjectInput = (rowIdx: number, value: string): void => {
@@ -399,10 +708,10 @@ export default function VoucherEntry({
     }
     setRows(newRows)
     setActiveSubjectRowId(row.id)
-    void searchSubject(row.id, value)
+    updateSubjectOptions(row.id, value)
   }
 
-  const selectSubject = (rowIdx: number, subject: SubjectItem): void => {
+  const selectSubject = (rowIdx: number, subject: VoucherSubject, focusNext = false): void => {
     const row = rows[rowIdx]
     const newRows = [...rows]
     newRows[rowIdx] = {
@@ -416,6 +725,74 @@ export default function VoucherEntry({
     setRows(newRows)
     setSubjectOptions((prev) => ({ ...prev, [row.id]: [] }))
     setActiveSubjectRowId(null)
+    if (focusNext) {
+      window.setTimeout(() => focusCell(rowIdx, 2), 0)
+    }
+  }
+
+  const handleSubjectInputKeyDown = (
+    event: KeyboardEvent<HTMLInputElement>,
+    rowIdx: number
+  ): void => {
+    const row = rows[rowIdx]
+    const firstLeafOption = findFirstLeafSubject(
+      subjectOptions[row.id] ?? [],
+      subjectHierarchy.hasChildrenCodes
+    )
+
+    if (event.key === 'Enter' && !row.subjectCode && firstLeafOption) {
+      event.preventDefault()
+      selectSubject(rowIdx, firstLeafOption, true)
+      return
+    }
+
+    handleKeyDown(event, rowIdx, 1)
+  }
+
+  const openManualSubjectDialog = (rowId: string): void => {
+    if (!canEditFields) {
+      return
+    }
+    if (allSubjects.length === 0) {
+      setMessage({ type: 'error', text: '当前账套暂无可选会计科目' })
+      return
+    }
+
+    setActiveSubjectRowId(null)
+    setManualTreeExpandedCodes(new Set())
+    setManualSubjectRowId(rowId)
+  }
+
+  const closeManualSubjectDialog = (): void => {
+    setManualSubjectRowId(null)
+    setManualTreeExpandedCodes(new Set())
+  }
+
+  const toggleManualTreeNode = (code: string): void => {
+    setManualTreeExpandedCodes((current) => {
+      const next = new Set(current)
+      if (next.has(code)) {
+        next.delete(code)
+      } else {
+        next.add(code)
+      }
+      return next
+    })
+  }
+
+  const selectSubjectFromDialog = (subject: VoucherSubject): void => {
+    if (!manualSubjectRowId) {
+      return
+    }
+
+    const rowIdx = rows.findIndex((row) => row.id === manualSubjectRowId)
+    if (rowIdx < 0) {
+      closeManualSubjectDialog()
+      return
+    }
+
+    selectSubject(rowIdx, subject, true)
+    closeManualSubjectDialog()
   }
 
   const cashFlowCandidateRows = rows
@@ -488,7 +865,9 @@ export default function VoucherEntry({
     period?: string
   ): Promise<VoucherListItem[]> => {
     const allList = await window.api.voucher.list({ ledgerId, period })
-    return sortVoucherRowsAsc((allList as VoucherListItem[]).filter((voucher) => voucher.status === 0))
+    return sortVoucherRowsAsc(
+      (allList as VoucherListItem[]).filter((voucher) => voucher.status === 0)
+    )
   }
 
   const loadAllVoucherRows = async (ledgerId: number): Promise<VoucherListItem[]> => {
@@ -557,12 +936,19 @@ export default function VoucherEntry({
         return false
       }
 
-      const [entries, subjects] = await Promise.all([
+      const [entries, subjectsFromApi] = await Promise.all([
         window.api.voucher.getEntries(normalizedVoucherId),
-        window.api.subject.getAll(currentLedger.id)
+        allSubjects.length > 0
+          ? Promise.resolve(allSubjects)
+          : (window.api.subject.getAll(currentLedger.id) as Promise<VoucherSubject[]>)
       ])
+      if (allSubjects.length === 0) {
+        setAllSubjects(subjectsFromApi)
+      }
       const cashFlowSubjectCodeSet = new Set(
-        subjects.filter((subject) => subject.is_cash_flow === 1).map((subject) => subject.code)
+        subjectsFromApi
+          .filter((subject) => subject.is_cash_flow === 1)
+          .map((subject) => subject.code)
       )
 
       const mappedRows = (entries as VoucherEntryFromApi[]).map((entry) => {
@@ -589,6 +975,7 @@ export default function VoucherEntry({
       setCurrentVoucherStatus(targetVoucher.status)
       setSubjectOptions({})
       setActiveSubjectRowId(null)
+      closeManualSubjectDialog()
       setCashFlowDialogOpen(false)
       setCashFlowDraft({})
       setBaselineSignature(buildDraftSignature(targetVoucher.voucher_date, finalRows))
@@ -605,10 +992,13 @@ export default function VoucherEntry({
     }
   }
 
+  const loadVoucherForEditRef = useRef(loadVoucherForEdit)
+  loadVoucherForEditRef.current = loadVoucherForEdit
+
   useEffect(() => {
     if (!currentLedger || !window.electron) return
     if (!normalizedEditVoucherId) return
-    void loadVoucherForEdit(normalizedEditVoucherId)
+    void loadVoucherForEditRef.current(normalizedEditVoucherId)
   }, [currentLedger, normalizedEditVoucherId, editRequestKey, activePeriod])
 
   const validateAndCleanRows = (): {
@@ -665,6 +1055,7 @@ export default function VoucherEntry({
     setRows(nextRows)
     setSubjectOptions({})
     setActiveSubjectRowId(null)
+    closeManualSubjectDialog()
     setCashFlowDialogOpen(false)
     setCashFlowDraft({})
     setEditingVoucherId(null)
@@ -961,124 +1352,176 @@ export default function VoucherEntry({
             const showAssignedCashFlowHint = row.isCashFlow && row.cashFlowItemId !== null
             const showPendingCashFlowHint = shouldShowPendingCashFlowHint(rows, rIdx, row)
             return (
-            <div
-              key={row.id}
-              className="grid grid-cols-12 border-b group relative"
-              style={{ borderColor: 'var(--color-glass-border-light)' }}
-            >
               <div
-                className="col-span-3 border-r"
+                key={row.id}
+                className="grid grid-cols-12 border-b group relative"
                 style={{ borderColor: 'var(--color-glass-border-light)' }}
               >
-                <input
-                  ref={setRef(rIdx, 0)}
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none focus:bg-white/10 transition-colors"
-                  value={row.summary}
-                  onChange={(e) => updateRow(rIdx, 'summary', e.target.value)}
-                  onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
-                  placeholder="摘要"
-                  disabled={!canEditFields}
-                  aria-label="voucher-row-summary"
-                />
-              </div>
-              <div
-                className="col-span-5 border-r relative"
-                style={{ borderColor: 'var(--color-glass-border-light)' }}
-              >
-                <input
-                  ref={setRef(rIdx, 1)}
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none focus:bg-white/10 transition-colors"
-                  value={row.subjectInput}
-                  onChange={(e) => handleSubjectInput(rIdx, e.target.value)}
-                  onKeyDown={(e) => handleKeyDown(e, rIdx, 1)}
-                  onFocus={() => setActiveSubjectRowId(row.id)}
-                  onBlur={() => {
-                    setTimeout(() => {
-                      setActiveSubjectRowId((prev) => (prev === row.id ? null : prev))
-                    }, 100)
-                  }}
-                  placeholder="输入科目代码或名称"
-                  disabled={!canEditFields}
-                  aria-label="voucher-row-subject"
-                />
-                {activeSubjectRowId === row.id && (subjectOptions[row.id] || []).length > 0 && (
-                  <div className="absolute z-30 left-0 right-0 top-full mt-1 glass-panel-light max-h-48 overflow-y-auto">
-                    {(subjectOptions[row.id] || []).map((subject) => (
-                      <button
-                        key={subject.id}
-                        type="button"
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-white/20"
-                        style={{ color: 'var(--color-text-primary)' }}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => selectSubject(rIdx, subject)}
-                      >
-                        {subject.code} {subject.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div
-                className="col-span-2 border-r"
-                style={{ borderColor: 'var(--color-glass-border-light)' }}
-              >
-                <input
-                  ref={setRef(rIdx, 2)}
-                  type="text"
-                  inputMode="decimal"
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
-                  value={row.debit}
-                  onChange={(e) => {
-                    if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
-                    const newRows = [...rows]
-                    newRows[rIdx] = {
-                      ...row,
-                      debit: e.target.value,
-                      credit: e.target.value ? '' : row.credit
-                    }
-                    setRows(newRows)
-                  }}
-                  onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
-                  disabled={!canEditFields}
-                  aria-label="voucher-row-debit"
-                />
-              </div>
-              <div className="col-span-2 relative">
-                <input
-                  ref={setRef(rIdx, 3)}
-                  type="text"
-                  inputMode="decimal"
-                  className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
-                  value={row.credit}
-                  onChange={(e) => {
-                    if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
-                    const newRows = [...rows]
-                    newRows[rIdx] = {
-                      ...row,
-                      credit: e.target.value,
-                      debit: e.target.value ? '' : row.debit
-                    }
-                    setRows(newRows)
-                  }}
-                  onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
-                  disabled={!canEditFields}
-                  aria-label="voucher-row-credit"
-                />
-                {(showAssignedCashFlowHint || showPendingCashFlowHint) && (
-                  <span
-                    className="absolute left-2 bottom-1 text-[11px] pointer-events-none"
-                    style={{
-                      color: showAssignedCashFlowHint
-                        ? 'var(--color-success)'
-                        : 'var(--color-danger)'
+                <div
+                  className="col-span-3 border-r"
+                  style={{ borderColor: 'var(--color-glass-border-light)' }}
+                >
+                  <input
+                    ref={setRef(rIdx, 0)}
+                    className="w-full h-full bg-transparent px-3 py-3 outline-none focus:bg-white/10 transition-colors"
+                    value={row.summary}
+                    onChange={(e) => updateRow(rIdx, 'summary', e.target.value)}
+                    onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
+                    placeholder="摘要"
+                    disabled={!canEditFields}
+                    aria-label="voucher-row-summary"
+                  />
+                </div>
+                <div
+                  className="col-span-5 border-r relative"
+                  style={{ borderColor: 'var(--color-glass-border-light)' }}
+                >
+                  <input
+                    ref={setRef(rIdx, 1)}
+                    className="w-full h-full bg-transparent px-3 py-3 pr-14 outline-none focus:bg-white/10 transition-colors"
+                    value={row.subjectInput}
+                    onChange={(e) => handleSubjectInput(rIdx, e.target.value)}
+                    onKeyDown={(e) => handleSubjectInputKeyDown(e, rIdx)}
+                    onFocus={() => {
+                      setActiveSubjectRowId(row.id)
+                      if (row.subjectInput.trim()) {
+                        updateSubjectOptions(row.id, row.subjectInput)
+                      }
                     }}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setActiveSubjectRowId((prev) => (prev === row.id ? null : prev))
+                      }, 100)
+                    }}
+                    placeholder="输入末级科目代码或名称"
+                    disabled={!canEditFields}
+                    aria-label="voucher-row-subject"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-sm font-semibold cursor-pointer transition-colors hover:bg-white/95"
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.84)',
+                      border: '1px solid rgba(148, 163, 184, 0.28)',
+                      boxShadow: '0 10px 24px rgba(15, 23, 42, 0.14)',
+                      color: 'var(--color-text-primary)',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => openManualSubjectDialog(row.id)}
+                    disabled={!canEditFields}
+                    aria-label="voucher-row-subject-picker"
+                    title="手动选择科目"
                   >
-                    {showAssignedCashFlowHint ? '已分配现金流' : '待分配现金流'}
-                  </span>
-                )}
+                    +
+                  </button>
+                  {activeSubjectRowId === row.id && (subjectOptions[row.id] || []).length > 0 && (
+                    <div className="absolute z-30 left-0 right-0 top-full mt-1 glass-panel-light max-h-48 overflow-y-auto">
+                      {(subjectOptions[row.id] || []).map((subject) => {
+                        const subjectLogicalLevel =
+                          subjectHierarchy.logicalLevelByCode.get(subject.code) ?? 1
+                        const isLeafSubject = !subjectHierarchy.hasChildrenCodes.has(subject.code)
+
+                        return (
+                          <button
+                            key={subject.id}
+                            type="button"
+                            className={`w-full text-left px-3 py-2 text-sm ${
+                              isLeafSubject
+                                ? 'hover:bg-white/20 cursor-pointer'
+                                : 'cursor-not-allowed bg-white/5'
+                            }`}
+                            style={{
+                              color: isLeafSubject
+                                ? 'var(--color-text-primary)'
+                                : 'var(--color-text-secondary)'
+                            }}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              if (!isLeafSubject) {
+                                return
+                              }
+                              selectSubject(rIdx, subject, true)
+                            }}
+                            disabled={!isLeafSubject}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              {renderSubjectIndent(subjectLogicalLevel)}
+                              <span className="truncate flex-1">
+                                {subject.code} {subject.name}
+                              </span>
+                              <span className="shrink-0 text-[11px]">
+                                {isLeafSubject ? '末级' : '上级'}
+                              </span>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div
+                  className="col-span-2 border-r"
+                  style={{ borderColor: 'var(--color-glass-border-light)' }}
+                >
+                  <input
+                    ref={setRef(rIdx, 2)}
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
+                    value={row.debit}
+                    onChange={(e) => {
+                      if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
+                      const newRows = [...rows]
+                      newRows[rIdx] = {
+                        ...row,
+                        debit: e.target.value,
+                        credit: e.target.value ? '' : row.credit
+                      }
+                      setRows(newRows)
+                    }}
+                    onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
+                    disabled={!canEditFields}
+                    aria-label="voucher-row-debit"
+                  />
+                </div>
+                <div className="col-span-2 relative">
+                  <input
+                    ref={setRef(rIdx, 3)}
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
+                    value={row.credit}
+                    onChange={(e) => {
+                      if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
+                      const newRows = [...rows]
+                      newRows[rIdx] = {
+                        ...row,
+                        credit: e.target.value,
+                        debit: e.target.value ? '' : row.debit
+                      }
+                      setRows(newRows)
+                    }}
+                    onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
+                    disabled={!canEditFields}
+                    aria-label="voucher-row-credit"
+                  />
+                  {(showAssignedCashFlowHint || showPendingCashFlowHint) && (
+                    <span
+                      className="absolute left-2 bottom-1 text-[11px] pointer-events-none"
+                      style={{
+                        color: showAssignedCashFlowHint
+                          ? 'var(--color-success)'
+                          : 'var(--color-danger)'
+                      }}
+                    >
+                      {showAssignedCashFlowHint ? '已分配现金流' : '待分配现金流'}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          )})}
+            )
+          })}
         </div>
 
         {/* 合计行 */}
@@ -1096,6 +1539,140 @@ export default function VoucherEntry({
           <div className="col-span-2 text-right pr-3 font-bold">{totalCredit}</div>
         </div>
       </div>
+
+      <Dialog.Root
+        open={manualSubjectRowId !== null}
+        onOpenChange={(open) => !open && closeManualSubjectDialog()}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40" />
+          <Dialog.Content
+            className="glass-panel fixed top-1/2 left-1/2 z-50 w-[min(820px,calc(100vw-32px))] max-h-[85vh] -translate-x-1/2 -translate-y-1/2 overflow-hidden p-6 focus:outline-none"
+            style={{ backgroundColor: 'rgba(255, 255, 255, 0.9)' }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Dialog.Title
+                  className="text-lg font-bold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  手动选择会计科目
+                </Dialog.Title>
+                <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  仅允许选择末级科目。科目树默认收起，可按层级展开后选择。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="glass-btn-secondary text-sm px-3 py-1.5"
+                onClick={closeManualSubjectDialog}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div
+              className="mt-4 overflow-auto rounded-md border max-h-[60vh]"
+              style={{ borderColor: 'var(--color-glass-border-light)' }}
+            >
+              <div
+                className="grid grid-cols-[140px_minmax(0,1fr)_88px] gap-3 px-4 py-3 text-sm font-semibold border-b"
+                style={{
+                  borderColor: 'var(--color-glass-border-light)',
+                  color: 'var(--color-text-primary)'
+                }}
+              >
+                <div>科目编码</div>
+                <div>科目名称</div>
+                <div className="text-right">类型</div>
+              </div>
+
+              {manualVisibleTreeRows.length === 0 ? (
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  当前账套暂无可选科目
+                </div>
+              ) : (
+                manualVisibleTreeRows.map((treeRow) => {
+                  const hasChildren = manualTreeHasChildren.has(treeRow.code)
+                  const isLeaf = treeRow.kind === 'subject' && !hasChildren
+                  const isCategory = treeRow.kind === 'category'
+                  const subjectLogicalLevel = treeRow.kind === 'subject' ? treeRow.logicalLevel : 0
+
+                  return (
+                    <div
+                      key={treeRow.id}
+                      className="grid grid-cols-[140px_minmax(0,1fr)_88px] gap-3 px-3 py-2 text-sm items-center border-b last:border-b-0"
+                      style={{
+                        borderColor: 'var(--color-glass-border-light)',
+                        color: 'var(--color-text-primary)'
+                      }}
+                    >
+                      <div className="flex min-w-0 items-center">
+                        {!isCategory && renderSubjectIndent(subjectLogicalLevel)}
+                        <span className="truncate">{isCategory ? '' : treeRow.row.code}</span>
+                      </div>
+                      <div className="flex items-center gap-1 min-w-0">
+                        {!isCategory && renderSubjectIndent(subjectLogicalLevel)}
+                        {hasChildren ? (
+                          <button
+                            type="button"
+                            className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-slate-800 hover:bg-black/5 shrink-0"
+                            onClick={() => toggleManualTreeNode(treeRow.code)}
+                            aria-label={manualTreeExpandedCodes.has(treeRow.code) ? '折叠' : '展开'}
+                          >
+                            {manualTreeExpandedCodes.has(treeRow.code) ? (
+                              <ChevronDown />
+                            ) : (
+                              <ChevronRight />
+                            )}
+                          </button>
+                        ) : (
+                          <span className="w-5 h-5 shrink-0" />
+                        )}
+
+                        {isCategory ? (
+                          <button
+                            type="button"
+                            className="truncate text-left font-semibold"
+                            onClick={() => toggleManualTreeNode(treeRow.code)}
+                          >
+                            {treeRow.name}
+                          </button>
+                        ) : isLeaf ? (
+                          <button
+                            type="button"
+                            className="truncate text-left hover:text-slate-950"
+                            onClick={() => selectSubjectFromDialog(treeRow.row)}
+                          >
+                            {treeRow.row.name}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="truncate text-left text-slate-600 hover:text-slate-950"
+                            onClick={() => toggleManualTreeNode(treeRow.code)}
+                          >
+                            {treeRow.row.name}
+                          </button>
+                        )}
+                      </div>
+                      <div
+                        className="text-right text-xs"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
+                        {isCategory ? '' : isLeaf ? '末级' : '上级'}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {cashFlowDialogOpen && (
         <div
@@ -1249,5 +1826,3 @@ export default function VoucherEntry({
     </div>
   )
 }
-
-

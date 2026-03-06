@@ -35,6 +35,12 @@ interface NormalizedVoucherEntry {
   cashFlowItemId: number | null
 }
 
+interface VoucherSubjectMeta {
+  code: string
+  is_cash_flow: number
+  has_children: number
+}
+
 function isVoucherNumberConflictError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   return error.message.includes('UNIQUE constraint failed') && error.message.includes('vouchers')
@@ -84,6 +90,23 @@ function normalizeEntries(entries: VoucherEntryInput[]): NormalizedVoucherEntry[
 export function registerVoucherHandlers(): void {
   const db = getDatabase()
   const selectLedgerPeriodStmt = db.prepare('SELECT current_period FROM ledgers WHERE id = ?')
+  const selectSubjectMetaStmt = db.prepare(
+    `SELECT
+       s.code,
+       s.is_cash_flow,
+       EXISTS (
+         SELECT 1
+           FROM subjects child
+          WHERE child.ledger_id = s.ledger_id
+            AND child.code <> s.code
+            AND (child.parent_code = s.code OR child.code LIKE s.code || '%')
+       ) AS has_children
+     FROM subjects s
+     WHERE s.ledger_id = ? AND s.code = ?`
+  )
+  const selectCashFlowStmt = db.prepare(
+    'SELECT id FROM cash_flow_items WHERE ledger_id = ? AND id = ?'
+  )
 
   const ensureVoucherPeriod = (
     ledgerId: number,
@@ -169,13 +192,7 @@ export function registerVoucherHandlers(): void {
       let totalDebit = 0
       let totalCredit = 0
 
-      const subjectByCode = new Map<string, { is_cash_flow: number }>()
-      const selectSubjectStmt = db.prepare(
-        'SELECT code, is_cash_flow FROM subjects WHERE ledger_id = ? AND code = ?'
-      )
-      const selectCashFlowStmt = db.prepare(
-        'SELECT id FROM cash_flow_items WHERE ledger_id = ? AND id = ?'
-      )
+      const subjectByCode = new Map<string, VoucherSubjectMeta>()
 
       for (const [index, entry] of entries.entries()) {
         if (!entry.subjectCode) {
@@ -192,13 +209,20 @@ export function registerVoucherHandlers(): void {
 
         let subject = subjectByCode.get(entry.subjectCode)
         if (!subject) {
-          subject = selectSubjectStmt.get(payload.ledgerId, entry.subjectCode) as
-            | { code: string; is_cash_flow: number }
+          subject = selectSubjectMetaStmt.get(payload.ledgerId, entry.subjectCode) as
+            | VoucherSubjectMeta
             | undefined
           if (!subject) {
             return { success: false, error: `第${index + 1}行科目不存在：${entry.subjectCode}` }
           }
           subjectByCode.set(entry.subjectCode, subject)
+        }
+
+        if (subject.has_children === 1) {
+          return {
+            success: false,
+            error: `第${index + 1}行必须使用末级科目：${entry.subjectCode}`
+          }
         }
 
         totalDebit += entry.debitCents
@@ -412,13 +436,7 @@ export function registerVoucherHandlers(): void {
 
       let totalDebit = 0
       let totalCredit = 0
-      const subjectByCode = new Map<string, { is_cash_flow: number }>()
-      const selectSubjectStmt = db.prepare(
-        'SELECT code, is_cash_flow FROM subjects WHERE ledger_id = ? AND code = ?'
-      )
-      const selectCashFlowStmt = db.prepare(
-        'SELECT id FROM cash_flow_items WHERE ledger_id = ? AND id = ?'
-      )
+      const subjectByCode = new Map<string, VoucherSubjectMeta>()
 
       for (const [index, entry] of entries.entries()) {
         if (!entry.subjectCode) {
@@ -435,13 +453,20 @@ export function registerVoucherHandlers(): void {
 
         let subject = subjectByCode.get(entry.subjectCode)
         if (!subject) {
-          subject = selectSubjectStmt.get(payload.ledgerId, entry.subjectCode) as
-            | { code: string; is_cash_flow: number }
+          subject = selectSubjectMetaStmt.get(payload.ledgerId, entry.subjectCode) as
+            | VoucherSubjectMeta
             | undefined
           if (!subject) {
             return { success: false, error: `第${index + 1}行科目不存在：${entry.subjectCode}` }
           }
           subjectByCode.set(entry.subjectCode, subject)
+        }
+
+        if (subject.has_children === 1) {
+          return {
+            success: false,
+            error: `第${index + 1}行必须使用末级科目：${entry.subjectCode}`
+          }
         }
 
         if (subject.is_cash_flow === 1) {
@@ -625,7 +650,9 @@ export function registerVoucherHandlers(): void {
 
         const placeholders = payload.voucherIds.map(() => '?').join(',')
         const vouchers = db
-          .prepare(`SELECT id, status, ledger_id, period, voucher_word FROM vouchers WHERE id IN (${placeholders})`)
+          .prepare(
+            `SELECT id, status, ledger_id, period, voucher_word FROM vouchers WHERE id IN (${placeholders})`
+          )
           .all(...payload.voucherIds) as Array<{
           id: number
           status: number

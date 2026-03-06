@@ -13,13 +13,32 @@ export function registerSubjectHandlers(): void {
 
   ipcMain.handle('subject:search', (event, ledgerId: number, keyword: string) => {
     requireAuth(event)
+    const normalizedKeyword = keyword.trim()
+    if (!normalizedKeyword) {
+      return []
+    }
+
+    const isNumericKeyword = /^\d+$/.test(normalizedKeyword)
+    const codePattern = `${normalizedKeyword}%`
+    const namePattern = isNumericKeyword ? `${normalizedKeyword}%` : `%${normalizedKeyword}%`
+
     return db
       .prepare(
-        `SELECT * FROM subjects WHERE ledger_id = ?
-           AND (code LIKE ? OR name LIKE ?)
-           ORDER BY code LIMIT 20`
+        `SELECT s.*
+           FROM subjects s
+          WHERE s.ledger_id = ?
+            AND (s.code LIKE ? OR s.name LIKE ?)
+            AND NOT EXISTS (
+              SELECT 1
+                FROM subjects child
+               WHERE child.ledger_id = s.ledger_id
+                 AND child.code <> s.code
+                 AND (child.parent_code = s.code OR child.code LIKE s.code || '%')
+            )
+          ORDER BY s.code
+          LIMIT 20`
       )
-      .all(ledgerId, `%${keyword}%`, `%${keyword}%`)
+      .all(ledgerId, codePattern, namePattern)
   })
 
   ipcMain.handle(
