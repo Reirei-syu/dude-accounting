@@ -89,7 +89,7 @@ interface VoucherListItem {
   voucher_date: string
   voucher_number: number
   voucher_word: string
-  status: 0 | 1 | 2
+  status: 0 | 1 | 2 | 3
 }
 
 interface VoucherEntryFromApi {
@@ -500,7 +500,7 @@ export default function VoucherEntry({
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
   const [periodStatus, setPeriodStatus] = useState<PeriodStatusSummary | null>(null)
   const [editingVoucherId, setEditingVoucherId] = useState<number | null>(null)
-  const [currentVoucherStatus, setCurrentVoucherStatus] = useState<0 | 1 | 2 | null>(null)
+  const [currentVoucherStatus, setCurrentVoucherStatus] = useState<0 | 1 | 2 | 3 | null>(null)
   const [navigableVouchers, setNavigableVouchers] = useState<VoucherListItem[]>([])
   const [loadingVoucher, setLoadingVoucher] = useState(false)
   const [dismissedEditRequestToken, setDismissedEditRequestToken] = useState<string | null>(null)
@@ -1057,7 +1057,7 @@ export default function VoucherEntry({
       setVoucherNumber(targetVoucher.voucher_number)
       setEditingVoucherId(normalizedVoucherId)
       setDismissedEditRequestToken(null)
-      setCurrentVoucherStatus(targetVoucher.status)
+          setCurrentVoucherStatus(targetVoucher.status)
       setSubjectOptions({})
       setActiveSubjectRowId(null)
       closeManualSubjectDialog()
@@ -1306,7 +1306,7 @@ export default function VoucherEntry({
         })
         setRows(normalizedRows)
         setBaselineSignature(buildDraftSignature(date, normalizedRows))
-        setCurrentVoucherStatus((result.status as 0 | 1 | 2) ?? 0)
+          setCurrentVoucherStatus((result.status as 0 | 1 | 2 | 3) ?? 0)
         setIsEditMode(false)
       }
       return true

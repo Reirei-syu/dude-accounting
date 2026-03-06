@@ -138,16 +138,16 @@ Dependencies:
 ### VoucherModule
 
 Responsibility:
-凭证录入、修改、列表查询、审核/记账状态流转与分录查询；并受会计期间闭账状态约束。
+凭证录入、修改、列表查询、审核/记账/删除状态流转与分录查询；并受会计期间闭账状态约束。
 
 Functions:
 
 - `voucher:getNextNumber`
 - `voucher:save`
 - `voucher:update`
-- `voucher:list`
+- `voucher:list`（支持全部/未审核/已审核/已记账/已删除状态筛选）
 - `voucher:getEntries`
-- `voucher:batchAction` (`audit/bookkeep/unbookkeep/unaudit/delete`)
+- `voucher:batchAction` (`audit/bookkeep/unbookkeep/unaudit/delete/restoreDelete/purgeDelete`)
 
 Dependencies:
 
@@ -284,7 +284,8 @@ Voucher (`vouchers`)
 - voucher_date
 - voucher_number
 - voucher_word
-- status
+- status（`0=未审核` / `1=已审核` / `2=已记账` / `3=已删除`）
+- deleted_from_status（软删除前状态，供“撤回删除”恢复）
 - creator_id / auditor_id / bookkeeper_id
 - is_carry_forward
 - created_at / updated_at
@@ -461,7 +462,9 @@ Renderer:
 - 自动生成的损益结转凭证标记 `is_carry_forward = 1`；同一期间已存在未审核损益结转凭证时允许删除后重建，已审核或已记账时禁止重跑。
 - 期间结账前必须完成当前期间损益结转；若当前期间无可结转金额，则允许直接结账。
 - 期末结账按期间闭账，12 月结账会自动结转生成下一年度 1 月期初余额。
-- 期间已结账时，当前期间凭证禁止新增与编辑；未审核、已审核未记账凭证仅允许删除，不允许继续编辑；如需恢复编辑，必须先反结账。
+- 凭证删除采用软删除：未审核、已审核未记账凭证执行“删除”后进入 `已删除` 状态并保留原凭证号；“撤回删除”恢复到删除前状态；“彻底删除”才执行物理删除。
+- `voucher:list` 默认返回未删除凭证；凭证管理“全部”标签通过显式状态参数查看全部状态，`已删除` 标签仅查看软删除凭证。
+- 期间已结账时，当前期间凭证禁止新增与编辑；未审核、已审核未记账凭证仅允许删除（软删除），不允许继续编辑；如需恢复编辑，必须先反结账。
 - `period:getStatus` 需返回当前期间闭账状态以及未审核、已审核未记账凭证提示信息，用于前端展示“结账后如需继续编辑请先反结账”的文案。
 - 结账完成后前端需提示是否进入下一会计期间；是否切换期间不影响当前期间闭账结果。
 - 金额按“分”存储（整数），输入允许两位小数。

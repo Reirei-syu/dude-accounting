@@ -101,10 +101,18 @@ const api = {
       dateFrom?: string
       dateTo?: string
       keyword?: string
+      status?: 'all' | 0 | 1 | 2 | 3
     }) => ipcRenderer.invoke('voucher:list', query),
     getEntries: (voucherId: number) => ipcRenderer.invoke('voucher:getEntries', voucherId),
     batchAction: (payload: {
-      action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
+      action:
+        | 'audit'
+        | 'bookkeep'
+        | 'unbookkeep'
+        | 'unaudit'
+        | 'delete'
+        | 'restoreDelete'
+        | 'purgeDelete'
       voucherIds: number[]
     }) => ipcRenderer.invoke('voucher:batchAction', payload),
     swapPositions: (payload: { voucherIds: [number, number] | number[] }) =>

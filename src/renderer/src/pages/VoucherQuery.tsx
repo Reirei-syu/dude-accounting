@@ -9,7 +9,7 @@ interface VoucherRow {
   voucher_date: string
   voucher_number: number
   voucher_word: string
-  status: 0 | 1 | 2
+  status: 0 | 1 | 2 | 3
   total_debit: number
   total_credit: number
 }
@@ -17,7 +17,8 @@ interface VoucherRow {
 const STATUS_TEXT: Record<number, string> = {
   0: '未审核',
   1: '已审核',
-  2: '已记账'
+  2: '已记账',
+  3: '已删除'
 }
 
 function formatDate(date: Date): string {

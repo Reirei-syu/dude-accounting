@@ -1,4 +1,11 @@
-export type VoucherBatchAction = 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
+export type VoucherBatchAction =
+  | 'audit'
+  | 'bookkeep'
+  | 'unbookkeep'
+  | 'unaudit'
+  | 'delete'
+  | 'restoreDelete'
+  | 'purgeDelete'
 
 export interface VoucherBatchTarget {
   status: number
@@ -18,7 +25,11 @@ export function isVoucherEligibleForBatchAction(
     case 'unaudit':
       return status === 1
     case 'delete':
-      return status !== 2
+      return status === 0 || status === 1
+    case 'restoreDelete':
+      return status === 3
+    case 'purgeDelete':
+      return status === 3
     default:
       return false
   }

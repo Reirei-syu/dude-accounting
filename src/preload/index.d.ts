@@ -300,6 +300,7 @@ interface VoucherAPI {
     dateFrom?: string
     dateTo?: string
     keyword?: string
+    status?: 'all' | 0 | 1 | 2 | 3
   }) => Promise<
     Array<{
       id: number
@@ -308,7 +309,8 @@ interface VoucherAPI {
       voucher_date: string
       voucher_number: number
       voucher_word: string
-      status: 0 | 1 | 2
+      status: 0 | 1 | 2 | 3
+      first_summary: string
       creator_id: number | null
       auditor_id: number | null
       bookkeeper_id: number | null
@@ -332,7 +334,14 @@ interface VoucherAPI {
     }>
   >
   batchAction: (payload: {
-    action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
+    action:
+      | 'audit'
+      | 'bookkeep'
+      | 'unbookkeep'
+      | 'unaudit'
+      | 'delete'
+      | 'restoreDelete'
+      | 'purgeDelete'
     voucherIds: number[]
   }) => Promise<{
     success: boolean

@@ -96,7 +96,8 @@ export function initializeDatabase(): void {
       voucher_date TEXT NOT NULL,
       voucher_number INTEGER NOT NULL,
       voucher_word TEXT NOT NULL DEFAULT '记',
-      status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0, 1, 2)),
+      status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0, 1, 2, 3)),
+      deleted_from_status INTEGER DEFAULT NULL CHECK(deleted_from_status IS NULL OR deleted_from_status IN (0, 1, 2)),
       creator_id INTEGER,
       auditor_id INTEGER,
       bookkeeper_id INTEGER,
@@ -202,6 +203,7 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
   `)
 
+  ensureVoucherSchema(db)
   ensureInitialBalanceSchema(db)
   ensureCashFlowMappingSchema(db)
 
@@ -256,6 +258,106 @@ export function ensureInitialBalanceSchema(db: Database.Database): void {
   db.prepare(
     'CREATE INDEX IF NOT EXISTS idx_initial_balances_ledger_period ON initial_balances(ledger_id, period)'
   ).run()
+}
+
+export function ensureVoucherSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('vouchers')").all() as Array<{ name: string }>
+  if (columns.length === 0) return
+
+  const hasDeletedFromStatus = columns.some((col) => col.name === 'deleted_from_status')
+  const voucherTableSql = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vouchers'")
+    .get() as { sql: string } | undefined
+  const supportsDeletedStatus = voucherTableSql?.sql.includes('status IN (0, 1, 2, 3)') ?? false
+
+  if (!hasDeletedFromStatus || !supportsDeletedStatus) {
+    const deletedFromStatusProjection = hasDeletedFromStatus
+      ? 'deleted_from_status'
+      : 'NULL AS deleted_from_status'
+    const foreignKeysEnabled = (db.pragma('foreign_keys', { simple: true }) as number) === 1
+
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE vouchers_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ledger_id INTEGER NOT NULL,
+          period TEXT NOT NULL,
+          voucher_date TEXT NOT NULL,
+          voucher_number INTEGER NOT NULL,
+          voucher_word TEXT NOT NULL DEFAULT '记',
+          status INTEGER NOT NULL DEFAULT 0 CHECK(status IN (0, 1, 2, 3)),
+          deleted_from_status INTEGER DEFAULT NULL CHECK(deleted_from_status IS NULL OR deleted_from_status IN (0, 1, 2)),
+          creator_id INTEGER,
+          auditor_id INTEGER,
+          bookkeeper_id INTEGER,
+          attachment_count INTEGER NOT NULL DEFAULT 0,
+          is_carry_forward INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+          FOREIGN KEY (creator_id) REFERENCES users(id),
+          FOREIGN KEY (auditor_id) REFERENCES users(id),
+          FOREIGN KEY (bookkeeper_id) REFERENCES users(id)
+        );
+      `)
+      db.exec(`
+        INSERT INTO vouchers_new (
+          id,
+          ledger_id,
+          period,
+          voucher_date,
+          voucher_number,
+          voucher_word,
+          status,
+          deleted_from_status,
+          creator_id,
+          auditor_id,
+          bookkeeper_id,
+          attachment_count,
+          is_carry_forward,
+          created_at,
+          updated_at
+        )
+        SELECT
+          id,
+          ledger_id,
+          period,
+          voucher_date,
+          voucher_number,
+          voucher_word,
+          status,
+          ${deletedFromStatusProjection},
+          creator_id,
+          auditor_id,
+          bookkeeper_id,
+          attachment_count,
+          is_carry_forward,
+          created_at,
+          updated_at
+        FROM vouchers;
+      `)
+      db.exec('DROP TABLE vouchers;')
+      db.exec('ALTER TABLE vouchers_new RENAME TO vouchers;')
+    })
+
+    db.pragma('foreign_keys = OFF')
+    try {
+      migrate()
+    } finally {
+      db.pragma(`foreign_keys = ${foreignKeysEnabled ? 'ON' : 'OFF'}`)
+    }
+
+    const foreignKeyIssues = db.pragma('foreign_key_check') as Array<unknown>
+    if (foreignKeyIssues.length > 0) {
+      throw new Error('凭证表迁移后外键校验失败')
+    }
+  }
+
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_vouchers_ledger_period ON vouchers(ledger_id, period)').run()
+  db.prepare(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_number ON vouchers(ledger_id, period, voucher_word, voucher_number)'
+  ).run()
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date)').run()
 }
 
 export function ensureCashFlowMappingSchema(db: Database.Database): void {

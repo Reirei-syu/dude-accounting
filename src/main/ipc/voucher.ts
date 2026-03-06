@@ -34,6 +34,8 @@ interface SwapVoucherPositionsInput {
   voucherIds: number[]
 }
 
+type VoucherListStatusFilter = 'all' | 0 | 1 | 2 | 3
+
 interface NormalizedVoucherEntry {
   summary: string
   subjectCode: string
@@ -139,33 +141,6 @@ export function registerVoucherHandlers(): void {
       }
     }
     return { ok: true, period }
-  }
-
-  const renumberVoucherSequence = (ledgerId: number, period: string, voucherWord: string): void => {
-    const rows = db
-      .prepare(
-        `SELECT id
-         FROM vouchers
-         WHERE ledger_id = ? AND period = ? AND voucher_word = ?
-         ORDER BY voucher_date ASC, voucher_number ASC, id ASC`
-      )
-      .all(ledgerId, period, voucherWord) as Array<{ id: number }>
-
-    if (rows.length === 0) return
-
-    const updateStmt = db.prepare(
-      `UPDATE vouchers
-       SET voucher_number = ?, updated_at = datetime('now')
-       WHERE id = ?`
-    )
-
-    // Two-phase numbering avoids unique-index conflicts during in-place renumbering.
-    for (let index = 0; index < rows.length; index += 1) {
-      updateStmt.run(-(index + 1), rows[index].id)
-    }
-    for (let index = 0; index < rows.length; index += 1) {
-      updateStmt.run(index + 1, rows[index].id)
-    }
   }
 
   ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) => {
@@ -565,12 +540,22 @@ export function registerVoucherHandlers(): void {
         dateFrom?: string
         dateTo?: string
         keyword?: string
+        status?: VoucherListStatusFilter
       }
     ) => {
       requireAuth(event)
 
       const whereClauses = ['v.ledger_id = ?']
       const params: Array<string | number> = [query.ledgerId]
+
+      if (query.status === 'all') {
+        // Explicitly include all voucher states, including deleted.
+      } else if (typeof query.status === 'number') {
+        whereClauses.push('v.status = ?')
+        params.push(query.status)
+      } else {
+        whereClauses.push('v.status IN (0, 1, 2)')
+      }
 
       if (query.period) {
         whereClauses.push('v.period = ?')
@@ -603,6 +588,16 @@ export function registerVoucherHandlers(): void {
                     v.voucher_number,
                     v.voucher_word,
                     v.status,
+                    COALESCE(
+                      (
+                        SELECT ve_first.summary
+                        FROM voucher_entries ve_first
+                        WHERE ve_first.voucher_id = v.id
+                        ORDER BY ve_first.row_order ASC, ve_first.id ASC
+                        LIMIT 1
+                      ),
+                      ''
+                    ) AS first_summary,
                     v.creator_id,
                     v.auditor_id,
                     v.bookkeeper_id,
@@ -898,14 +893,27 @@ export function registerVoucherHandlers(): void {
         const placeholders = payload.voucherIds.map(() => '?').join(',')
         const vouchers = db
           .prepare(
-            `SELECT id, status, ledger_id, period, voucher_word FROM vouchers WHERE id IN (${placeholders})`
+            `SELECT
+               id,
+               status,
+               deleted_from_status,
+               ledger_id,
+               period,
+               voucher_word,
+               auditor_id,
+               bookkeeper_id
+             FROM vouchers
+             WHERE id IN (${placeholders})`
           )
           .all(...payload.voucherIds) as Array<{
           id: number
           status: number
+          deleted_from_status: number | null
           ledger_id: number
           period: string
           voucher_word: string
+          auditor_id: number | null
+          bookkeeper_id: number | null
         }>
 
         if (vouchers.length !== payload.voucherIds.length) {
@@ -915,12 +923,7 @@ export function registerVoucherHandlers(): void {
         const { applicable: applicableVouchers, skipped: skippedVouchers } =
           splitVouchersByBatchAction(action, vouchers)
 
-        if (action === 'delete' && skippedVouchers.length > 0) {
-          return { success: false, error: '\u5df2\u8bb0\u8d26\u51ed\u8bc1\u4e0d\u53ef\u5220\u9664' }
-        }
-
         const runTx = db.transaction(() => {
-          const renumberGroups = new Set<string>()
           for (const voucher of applicableVouchers) {
             if (action === 'audit') {
               if (voucher.status !== 0) continue
@@ -955,16 +958,47 @@ export function registerVoucherHandlers(): void {
                                  WHERE id = ?`
               ).run(voucher.id)
             } else if (action === 'delete') {
-              if (voucher.status === 2) continue
-              if (voucher.status === 2) throw new Error('已记账凭证不可删除')
+              if (voucher.status !== 0 && voucher.status !== 1) continue
+              db.prepare(
+                `UPDATE vouchers
+                 SET status = 3, deleted_from_status = status, updated_at = datetime('now')
+                 WHERE id = ?`
+              ).run(voucher.id)
+            } else if (action === 'restoreDelete') {
+              if (voucher.status !== 3) continue
+
+              const restoredStatus = voucher.deleted_from_status ?? 0
+              if (restoredStatus === 0) {
+                db.prepare(
+                  `UPDATE vouchers
+                   SET status = 0,
+                       deleted_from_status = NULL,
+                       auditor_id = NULL,
+                       bookkeeper_id = NULL,
+                       updated_at = datetime('now')
+                   WHERE id = ?`
+                ).run(voucher.id)
+              } else if (restoredStatus === 1) {
+                db.prepare(
+                  `UPDATE vouchers
+                   SET status = 1,
+                       deleted_from_status = NULL,
+                       bookkeeper_id = NULL,
+                       updated_at = datetime('now')
+                   WHERE id = ?`
+                ).run(voucher.id)
+              } else {
+                db.prepare(
+                  `UPDATE vouchers
+                   SET status = ?,
+                       deleted_from_status = NULL,
+                       updated_at = datetime('now')
+                   WHERE id = ?`
+                ).run(restoredStatus, voucher.id)
+              }
+            } else if (action === 'purgeDelete') {
+              if (voucher.status !== 3) continue
               db.prepare('DELETE FROM vouchers WHERE id = ?').run(voucher.id)
-              renumberGroups.add(`${voucher.ledger_id}|${voucher.period}|${voucher.voucher_word}`)
-            }
-          }
-          if (action === 'delete') {
-            for (const group of renumberGroups) {
-              const [ledgerIdText, period, voucherWord] = group.split('|')
-              renumberVoucherSequence(Number(ledgerIdText), period, voucherWord)
             }
           }
         })

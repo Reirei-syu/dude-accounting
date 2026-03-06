@@ -3,6 +3,9 @@ import type { JSX } from 'react'
 
 export default function TabBar(): JSX.Element {
   const { tabs, activeTabId, setActiveTab, closeTab, addBlankTab } = useUIStore()
+  const handleCloseTab = (tabId: string): void => {
+    closeTab(tabId)
+  }
 
   return (
     <div className="main-tab-row" role="tablist" aria-label="工作标签">
@@ -11,6 +14,7 @@ export default function TabBar(): JSX.Element {
           key={tab.id}
           className={`tab-btn ${activeTabId === tab.id ? 'active' : ''}`}
           onClick={() => setActiveTab(tab.id)}
+          onDoubleClick={() => handleCloseTab(tab.id)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
@@ -22,6 +26,7 @@ export default function TabBar(): JSX.Element {
           aria-selected={activeTabId === tab.id}
           aria-controls={`workspace-tab-${tab.id}`}
           id={`workspace-tab-button-${tab.id}`}
+          title={`${tab.title}（双击可关闭）`}
         >
           <span className="tab-title">{tab.title}</span>
           <button
@@ -29,7 +34,10 @@ export default function TabBar(): JSX.Element {
             className="tab-close-btn"
             onClick={(e) => {
               e.stopPropagation()
-              closeTab(tab.id)
+              handleCloseTab(tab.id)
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation()
             }}
             aria-label={`关闭${tab.title}`}
           >
