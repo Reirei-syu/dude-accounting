@@ -12,6 +12,7 @@ import { registerVoucherHandlers } from './ipc/voucher'
 import { registerCashFlowHandlers } from './ipc/cashflow'
 import { registerInitialBalanceHandlers } from './ipc/initialBalance'
 import { registerPeriodHandlers } from './ipc/period'
+import { registerPLCarryForwardHandlers } from './ipc/plCarryForward'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -63,6 +64,7 @@ app.whenReady().then(() => {
   registerVoucherHandlers()
   registerCashFlowHandlers()
   registerInitialBalanceHandlers()
+  registerPLCarryForwardHandlers()
   registerPeriodHandlers()
 
   createWindow()

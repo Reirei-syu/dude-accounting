@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
+import { assertPLCarryForwardCompleted } from '../services/plCarryForward'
 import { requireAuth, requirePermission } from './session'
 
 function getPeriodParts(period: string): { year: number; month: number } {
@@ -47,7 +48,10 @@ function carryForwardYear(
   }>
 
   const openingMap = new Map(
-    openingRows.map((row) => [row.subject_code, { debit: row.debit_amount, credit: row.credit_amount }])
+    openingRows.map((row) => [
+      row.subject_code,
+      { debit: row.debit_amount, credit: row.credit_amount }
+    ])
   )
 
   const movementRows = db
@@ -136,71 +140,70 @@ export function registerPeriodHandlers(): void {
     return { period, is_closed: row.is_closed, closed_at: row.closed_at }
   })
 
-  ipcMain.handle(
-    'period:close',
-    (event, payload: { ledgerId: number; period: string }) => {
-      try {
-        requirePermission(event, 'bookkeeping')
-        const { ledgerId, period } = payload
+  ipcMain.handle('period:close', (event, payload: { ledgerId: number; period: string }) => {
+    try {
+      requirePermission(event, 'bookkeeping')
+      const { ledgerId, period } = payload
 
-        if (!ledgerId) {
-          return { success: false, error: '请选择账套' }
+      if (!ledgerId) {
+        return { success: false, error: '请选择账套' }
+      }
+
+      const { year, month } = getPeriodParts(period)
+
+      const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(ledgerId) as
+        | { start_period: string }
+        | undefined
+      if (!ledger) {
+        return { success: false, error: '账套不存在' }
+      }
+
+      assertPLCarryForwardCompleted(db, { ledgerId, period })
+
+      let carriedForward = false
+      let nextPeriod: string | undefined
+      let carriedCount = 0
+
+      const closeTx = db.transaction(() => {
+        db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
+          ledgerId,
+          period
+        )
+        const status = db
+          .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
+          .get(ledgerId, period) as { is_closed: number }
+
+        if (status?.is_closed === 1) {
+          return
         }
 
-        const { year, month } = getPeriodParts(period)
-
-        const ledger = db
-          .prepare('SELECT start_period FROM ledgers WHERE id = ?')
-          .get(ledgerId) as { start_period: string } | undefined
-        if (!ledger) {
-          return { success: false, error: '账套不存在' }
-        }
-
-        let carriedForward = false
-        let nextPeriod: string | undefined
-        let carriedCount = 0
-
-        const closeTx = db.transaction(() => {
-          db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
-            ledgerId,
-            period
-          )
-          const status = db
-            .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
-            .get(ledgerId, period) as { is_closed: number }
-
-          if (status?.is_closed === 1) {
-            return
-          }
-
-          db.prepare(
-            `UPDATE periods
+        db.prepare(
+          `UPDATE periods
              SET is_closed = 1, closed_at = datetime('now')
              WHERE ledger_id = ? AND period = ?`
-          ).run(ledgerId, period)
+        ).run(ledgerId, period)
 
-          if (month === 12) {
-            const result = carryForwardYear(db, ledgerId, ledger.start_period, year)
-            carriedForward = true
-            nextPeriod = result.nextPeriod
-            carriedCount = result.carriedCount
-          }
-        })
-
-        closeTx()
-
-        return {
-          success: true,
-          carriedForward,
-          nextPeriod,
-          carriedCount
+        if (month === 12) {
+          const result = carryForwardYear(db, ledgerId, ledger.start_period, year)
+          carriedForward = true
+          nextPeriod = result.nextPeriod
+          carriedCount = result.carriedCount
         }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : '结账失败'
-        }
+      })
+
+      closeTx()
+
+      return {
+        success: true,
+        carriedForward,
+        nextPeriod,
+        carriedCount
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '结账失败'
       }
     }
-  )
+  })
 }

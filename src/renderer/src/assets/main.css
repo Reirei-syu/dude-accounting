@@ -14,6 +14,7 @@
   --color-focus-ring: rgba(30, 58, 138, 0.35);
   --color-danger: #b91c1c;
   --color-success: #166534;
+  --color-warning: #b45309;
 }
 
 :root {
@@ -21,8 +22,8 @@
     'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
     monospace;
   --font-body:
-    'Fira Sans', 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei',
-    'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    'Fira Sans', 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI',
+    -apple-system, BlinkMacSystemFont, sans-serif;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
   --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 18px 40px rgba(15, 23, 42, 0.12);
@@ -600,7 +601,7 @@ button {
   width: 100%;
 }
 
-.login-dialog-section+.login-dialog-section {
+.login-dialog-section + .login-dialog-section {
   margin-top: 14px;
 }
 
@@ -614,9 +615,17 @@ button {
 
 .login-field-shell {
   border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, rgba(56, 189, 248, 0.85), rgba(129, 140, 248, 0.85), rgba(192, 132, 252, 0.85), rgba(244, 114, 182, 0.85));
+  background: linear-gradient(
+    135deg,
+    rgba(56, 189, 248, 0.85),
+    rgba(129, 140, 248, 0.85),
+    rgba(192, 132, 252, 0.85),
+    rgba(244, 114, 182, 0.85)
+  );
   padding: 1.5px;
-  transition: opacity 0.3s ease, filter 0.3s ease;
+  transition:
+    opacity 0.3s ease,
+    filter 0.3s ease;
   opacity: 0.8;
 }
 
@@ -806,7 +815,6 @@ button {
 }
 
 @media (prefers-reduced-motion: reduce) {
-
   *,
   *::before,
   *::after {

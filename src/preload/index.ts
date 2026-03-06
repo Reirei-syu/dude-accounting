@@ -85,6 +85,13 @@ const api = {
     }) => ipcRenderer.invoke('cashflow:updateMapping', data),
     deleteMapping: (id: number) => ipcRenderer.invoke('cashflow:deleteMapping', id)
   },
+  plCarryForward: {
+    listRules: (ledgerId: number) => ipcRenderer.invoke('plCarryForward:listRules', ledgerId),
+    preview: (data: { ledgerId: number; period: string }) =>
+      ipcRenderer.invoke('plCarryForward:preview', data),
+    execute: (data: { ledgerId: number; period: string }) =>
+      ipcRenderer.invoke('plCarryForward:execute', data)
+  },
   voucher: {
     getNextNumber: (ledgerId: number, period: string) =>
       ipcRenderer.invoke('voucher:getNextNumber', ledgerId, period),
@@ -142,8 +149,7 @@ const api = {
   period: {
     getStatus: (ledgerId: number, period: string) =>
       ipcRenderer.invoke('period:getStatus', ledgerId, period),
-    close: (data: { ledgerId: number; period: string }) =>
-      ipcRenderer.invoke('period:close', data)
+    close: (data: { ledgerId: number; period: string }) => ipcRenderer.invoke('period:close', data)
   },
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),

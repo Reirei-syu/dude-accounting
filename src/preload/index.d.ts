@@ -237,6 +237,52 @@ interface CashFlowAPI {
   deleteMapping: (id: number) => Promise<{ success: boolean; error?: string }>
 }
 
+interface PLCarryForwardAPI {
+  listRules: (ledgerId: number) => Promise<
+    Array<{
+      id: number
+      fromSubjectCode: string
+      fromSubjectName: string
+      toSubjectCode: string
+      toSubjectName: string
+    }>
+  >
+  preview: (data: { ledgerId: number; period: string }) => Promise<{
+    period: string
+    voucherDate: string
+    summary: string
+    voucherWord: string
+    required: boolean
+    canExecute: boolean
+    blockedReason?: string
+    totalDebit: number
+    totalCredit: number
+    entries: Array<{
+      summary: string
+      subjectCode: string
+      subjectName: string
+      debitAmount: number
+      creditAmount: number
+    }>
+    existingVouchers: Array<{
+      id: number
+      voucherNumber: number
+      voucherDate: string
+      status: number
+    }>
+    draftVoucherIds: number[]
+  }>
+  execute: (data: { ledgerId: number; period: string }) => Promise<{
+    success: boolean
+    error?: string
+    voucherId?: number
+    voucherNumber?: number
+    status?: number
+    voucherDate?: string
+    removedDraftVoucherIds?: number[]
+  }>
+}
+
 interface VoucherAPI {
   getNextNumber: (ledgerId: number, period: string) => Promise<number>
   list: (query: {
@@ -320,7 +366,10 @@ interface VoucherAPI {
 }
 
 interface InitialBalanceAPI {
-  list: (ledgerId: number, period: string) => Promise<
+  list: (
+    ledgerId: number,
+    period: string
+  ) => Promise<
     Array<{
       subject_code: string
       subject_name: string
@@ -349,10 +398,7 @@ interface PeriodAPI {
     is_closed: number
     closed_at: string | null
   }>
-  close: (data: {
-    ledgerId: number
-    period: string
-  }) => Promise<{
+  close: (data: { ledgerId: number; period: string }) => Promise<{
     success: boolean
     error?: string
     carriedForward?: boolean
@@ -367,6 +413,7 @@ interface DudeAPI {
   subject: SubjectAPI
   auxiliary: AuxiliaryAPI
   cashflow: CashFlowAPI
+  plCarryForward: PLCarryForwardAPI
   voucher: VoucherAPI
   initialBalance: InitialBalanceAPI
   period: PeriodAPI

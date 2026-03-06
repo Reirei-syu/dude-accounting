@@ -11,6 +11,8 @@ import SystemParams from '../pages/SystemParams'
 import UserManagement from '../pages/UserManagement'
 import AccountingStandard from '../pages/AccountingStandard'
 import PeriodClose from '../pages/PeriodClose'
+import PLCarryForward from '../pages/PLCarryForward'
+import PLSettle from '../pages/PLSettle'
 import type React from 'react'
 import type { JSX } from 'react'
 
@@ -30,7 +32,9 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   SystemParams: SystemParams as React.ComponentType<WorkspaceComponentProps>,
   UserManagement: UserManagement as React.ComponentType<WorkspaceComponentProps>,
   AccountingStandard: AccountingStandard as React.ComponentType<WorkspaceComponentProps>,
-  PeriodClose: PeriodClose as React.ComponentType<WorkspaceComponentProps>
+  PeriodClose: PeriodClose as React.ComponentType<WorkspaceComponentProps>,
+  PLCarryForward: PLCarryForward as React.ComponentType<WorkspaceComponentProps>,
+  PLSettle: PLSettle as React.ComponentType<WorkspaceComponentProps>
 }
 
 export default function Workspace(): JSX.Element {
@@ -49,7 +53,7 @@ export default function Workspace(): JSX.Element {
           return (
             <div
               key={tab.id}
-              className="workspace-page absolute inset-0 p-4"
+              className="workspace-page absolute inset-0 overflow-y-auto overflow-x-hidden p-4"
               style={{ display: isActive ? 'block' : 'none' }}
               role="tabpanel"
               id={`workspace-tab-${tab.id}`}
@@ -65,7 +69,7 @@ export default function Workspace(): JSX.Element {
         return (
           <div
             key={tab.id}
-            className="workspace-page absolute inset-0 p-4"
+            className="workspace-page absolute inset-0 overflow-y-auto overflow-x-hidden p-4"
             style={{ display: isActive ? 'block' : 'none' }}
             role="tabpanel"
             id={`workspace-tab-${tab.id}`}
