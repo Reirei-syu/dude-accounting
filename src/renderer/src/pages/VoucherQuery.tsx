@@ -20,13 +20,29 @@ const STATUS_TEXT: Record<number, string> = {
   2: '已记账'
 }
 
+function formatDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function getDefaultDateRange(): { from: string; to: string } {
   const now = new Date()
   const year = now.getFullYear()
   const month = String(now.getMonth() + 1).padStart(2, '0')
-  const from = `${year}-${month}-01`
-  const to = new Date(year, now.getMonth() + 1, 0).toISOString().slice(0, 10)
-  return { from, to }
+  return {
+    from: `${year}-${month}-01`,
+    to: formatDate(now)
+  }
+}
+
+function getCurrentYearDateRange(): { from: string; to: string } {
+  const year = new Date().getFullYear()
+  return {
+    from: `${year}-01-01`,
+    to: `${year}-12-31`
+  }
 }
 
 export default function VoucherQuery(): JSX.Element {
@@ -71,6 +87,13 @@ export default function VoucherQuery(): JSX.Element {
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     void handleQuery()
+  }
+
+  const handleSelectCurrentYear = (): void => {
+    const range = getCurrentYearDateRange()
+    setDateFrom(range.from)
+    setDateTo(range.to)
+    setError('')
   }
 
   const openVoucherForView = (row: VoucherRow): void => {
@@ -123,6 +146,14 @@ export default function VoucherQuery(): JSX.Element {
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
         />
+        <button
+          type="button"
+          className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+          onClick={handleSelectCurrentYear}
+          title="将日期范围切换为本年 1 月 1 日到 12 月 31 日"
+        >
+          本年
+        </button>
         <input
           id="voucher-keyword"
           className="glass-input px-3 py-2 text-sm min-w-[220px]"

@@ -198,10 +198,6 @@ export default function VoucherList(): JSX.Element {
       setMessage({ type: 'error', text: '凭证不存在' })
       return
     }
-    if (row.status !== 0) {
-      setMessage({ type: 'error', text: '仅未审核凭证可修改' })
-      return
-    }
 
     openTab({
       id: 'voucher-entry',
@@ -322,7 +318,10 @@ export default function VoucherList(): JSX.Element {
                 </div>
               ))}
               {rows.length === 0 && !loading && (
-                <div className="py-10 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                <div
+                  className="py-10 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
                   当前期间暂无凭证
                 </div>
               )}

@@ -346,6 +346,14 @@ const padRows = (rows: VoucherRow[]): VoucherRow[] => {
   return [...rows, ...Array.from({ length: DEFAULT_ROWS - rows.length }, () => createEmptyRow())]
 }
 
+const hasDraftRowContent = (row: VoucherRow): boolean =>
+  row.summary.trim() !== '' ||
+  row.subjectCode.trim() !== '' ||
+  row.subjectInput.trim() !== '' ||
+  row.debit.trim() !== '' ||
+  row.credit.trim() !== '' ||
+  row.cashFlowItemId !== null
+
 const sortVoucherRowsAsc = (rows: VoucherListItem[]): VoucherListItem[] =>
   [...rows].sort((left, right) => {
     if (left.voucher_date !== right.voucher_date) {
@@ -445,7 +453,7 @@ export default function VoucherEntry({
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
   const [editingVoucherId, setEditingVoucherId] = useState<number | null>(null)
   const [currentVoucherStatus, setCurrentVoucherStatus] = useState<0 | 1 | 2 | null>(null)
-  const [editableVouchers, setEditableVouchers] = useState<VoucherListItem[]>([])
+  const [navigableVouchers, setNavigableVouchers] = useState<VoucherListItem[]>([])
   const [loadingVoucher, setLoadingVoucher] = useState(false)
   const [baselineSignature, setBaselineSignature] = useState<string>('')
   const [isEditMode, setIsEditMode] = useState(true)
@@ -662,14 +670,14 @@ export default function VoucherEntry({
 
   const { debit: totalDebit, credit: totalCredit, balanced } = computeTotals()
   const currentEditableIndex = useMemo(() => {
-    if (editingVoucherId === null) return editableVouchers.length
-    const exactIndex = editableVouchers.findIndex((voucher) => voucher.id === editingVoucherId)
+    if (editingVoucherId === null) return navigableVouchers.length
+    const exactIndex = navigableVouchers.findIndex((voucher) => voucher.id === editingVoucherId)
     if (exactIndex >= 0) return exactIndex
-    return editableVouchers.findIndex((voucher) => String(voucher.id) === String(editingVoucherId))
-  }, [editingVoucherId, editableVouchers])
+    return navigableVouchers.findIndex((voucher) => String(voucher.id) === String(editingVoucherId))
+  }, [editingVoucherId, navigableVouchers])
   const hasPrevVoucher = currentEditableIndex > 0
   const hasNextVoucher =
-    currentEditableIndex >= 0 && currentEditableIndex < editableVouchers.length - 1
+    currentEditableIndex >= 0 && currentEditableIndex < navigableVouchers.length - 1
   const isSavedVoucher = editingVoucherId !== null
   const isEditableSavedVoucher = isSavedVoucher && currentVoucherStatus === 0
   const isReadonlyVoucher = isSavedVoucher && !isEditMode
@@ -679,6 +687,7 @@ export default function VoucherEntry({
     isEditMode &&
     baselineSignature !== '' &&
     buildDraftSignature(date, rows) !== baselineSignature
+  const hasNewVoucherDraft = editingVoucherId === null && rows.some(hasDraftRowContent)
 
   // Dynamic set ref helper
   const setRef =
@@ -860,32 +869,19 @@ export default function VoucherEntry({
     setMessage({ type: 'success', text: '现金流量分配已更新' })
   }
 
-  const loadEditableVoucherRows = async (
-    ledgerId: number,
-    period?: string
-  ): Promise<VoucherListItem[]> => {
-    const allList = await window.api.voucher.list({ ledgerId, period })
-    return sortVoucherRowsAsc(
-      (allList as VoucherListItem[]).filter((voucher) => voucher.status === 0)
-    )
-  }
-
-  const loadAllVoucherRows = async (ledgerId: number): Promise<VoucherListItem[]> => {
+  const loadNavigableVoucherRows = async (ledgerId: number): Promise<VoucherListItem[]> => {
     const allList = await window.api.voucher.list({ ledgerId })
     return sortVoucherRowsAsc(allList as VoucherListItem[])
   }
 
-  const refreshEditableVouchers = async (
-    ledgerId: number,
-    period?: string
-  ): Promise<VoucherListItem[]> => {
+  const refreshNavigableVouchers = async (ledgerId: number): Promise<VoucherListItem[]> => {
     try {
-      const list = await loadEditableVoucherRows(ledgerId, period)
-      setEditableVouchers(list)
+      const list = await loadNavigableVoucherRows(ledgerId)
+      setNavigableVouchers(list)
       return list
     } catch (error) {
-      console.error('load editable vouchers failed', error)
-      setEditableVouchers([])
+      console.error('load navigable vouchers failed', error)
+      setNavigableVouchers([])
       return []
     }
   }
@@ -893,21 +889,21 @@ export default function VoucherEntry({
   useEffect(() => {
     const ledgerId = currentLedger?.id
     if (!ledgerId || !window.electron) {
-      setEditableVouchers([])
+      setNavigableVouchers([])
       return
     }
 
     let cancelled = false
     void (async () => {
       try {
-        const list = await loadEditableVoucherRows(ledgerId, activePeriod || undefined)
+        const list = await loadNavigableVoucherRows(ledgerId)
         if (!cancelled) {
-          setEditableVouchers(list)
+          setNavigableVouchers(list)
         }
       } catch (error) {
         if (!cancelled) {
-          console.error('load editable vouchers failed', error)
-          setEditableVouchers([])
+          console.error('load navigable vouchers failed', error)
+          setNavigableVouchers([])
         }
       }
     })()
@@ -915,7 +911,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [currentLedger?.id, activePeriod])
+  }, [currentLedger?.id])
 
   const loadVoucherForEdit = async (voucherId: number): Promise<boolean> => {
     if (!currentLedger || !window.electron) return false
@@ -928,8 +924,7 @@ export default function VoucherEntry({
     setLoadingVoucher(true)
     setMessage(null)
     try {
-      void refreshEditableVouchers(currentLedger.id, activePeriod || undefined)
-      const allVouchers = await loadAllVoucherRows(currentLedger.id)
+      const allVouchers = await refreshNavigableVouchers(currentLedger.id)
       const targetVoucher = allVouchers.find((voucher) => voucher.id === normalizedVoucherId)
       if (!targetVoucher) {
         setMessage({ type: 'error', text: '凭证不存在或已被删除' })
@@ -1135,7 +1130,7 @@ export default function VoucherEntry({
         return false
       }
 
-      await refreshEditableVouchers(currentLedger.id, activePeriod || undefined)
+      await refreshNavigableVouchers(currentLedger.id)
       if (editingVoucherId === null) {
         setMessage({
           type: 'success',
@@ -1168,7 +1163,7 @@ export default function VoucherEntry({
   const handleEnableEdit = (): void => {
     if (editingVoucherId === null) return
     if (currentVoucherStatus !== 0) {
-      setMessage({ type: 'error', text: '仅未审核凭证可编辑，当前凭证为只读。' })
+      setMessage({ type: 'error', text: '仅未审核凭证可修改，当前凭证为只读。' })
       return
     }
     setIsEditMode(true)
@@ -1195,8 +1190,8 @@ export default function VoucherEntry({
       setMessage({
         type: 'error',
         text: isEditableSavedVoucher
-          ? '当前凭证为已保存状态，请先点击“编辑”后再修改。'
-          : '仅未审核凭证可编辑，当前凭证为只读。'
+          ? '当前凭证为已保存状态，请先点击“修改”后再编辑。'
+          : '仅未审核凭证可修改，当前凭证为只读。'
       })
       return
     }
@@ -1206,18 +1201,21 @@ export default function VoucherEntry({
 
   const handleSwitchVoucher = async (direction: 'prev' | 'next'): Promise<void> => {
     if (loadingVoucher || saving) return
-    if (editableVouchers.length === 0) return
+    if (navigableVouchers.length === 0) return
     if (currentEditableIndex < 0) {
-      setMessage({ type: 'error', text: '凭证导航序列已过期，请返回凭证管理重新打开' })
+      setMessage({ type: 'error', text: '凭证导航序列已过期，请刷新后重试' })
       return
     }
 
     const targetIndex = direction === 'prev' ? currentEditableIndex - 1 : currentEditableIndex + 1
-    const targetVoucher = editableVouchers[targetIndex]
+    const targetVoucher = navigableVouchers[targetIndex]
     if (!targetVoucher) return
 
     setMessage(null)
-    if (hasUnsavedChanges) {
+    if (hasNewVoucherDraft) {
+      const shouldDiscard = window.confirm('当前新凭证尚未保存，切换后将丢失输入内容。是否继续？')
+      if (!shouldDiscard) return
+    } else if (hasUnsavedChanges) {
       const shouldSaveFirst = window.confirm('当前凭证未保存，是否先保存后再切换？')
       if (!shouldSaveFirst) return
       const saved = await saveVoucher('stay')
@@ -1233,7 +1231,7 @@ export default function VoucherEntry({
       <div className="flex justify-between items-center gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-            {editingVoucherId ? '记账凭证（编辑）' : '记账凭证'}
+            {editingVoucherId ? (isEditMode ? '记账凭证（修改）' : '记账凭证（查看）') : '记账凭证'}
           </h2>
           <span
             className="px-2 py-1 rounded-md text-xs border"
@@ -1244,7 +1242,7 @@ export default function VoucherEntry({
                 : 'rgba(22, 163, 74, 0.35)'
             }}
           >
-            {isReadonlyVoucher ? '已保存' : '编辑中'}
+            {isReadonlyVoucher ? '查看中' : '编辑中'}
           </span>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -1265,13 +1263,20 @@ export default function VoucherEntry({
           <button className="glass-btn-secondary" onClick={() => void handleNewVoucher()}>
             新建
           </button>
-          {isEditableSavedVoucher && (
+          {isSavedVoucher && (
             <button
               className="glass-btn-secondary"
               onClick={handleEnableEdit}
-              disabled={isEditMode || saving || loadingVoucher}
+              disabled={!isEditableSavedVoucher || isEditMode || saving || loadingVoucher}
+              title={
+                !isEditableSavedVoucher
+                  ? '仅未审核凭证可修改'
+                  : isEditMode
+                    ? '当前凭证已处于修改状态'
+                    : '进入修改状态'
+              }
             >
-              编辑
+              修改
             </button>
           )}
           <button
