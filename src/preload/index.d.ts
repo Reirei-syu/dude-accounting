@@ -325,7 +325,18 @@ interface VoucherAPI {
   batchAction: (payload: {
     action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
     voucherIds: number[]
-  }) => Promise<{ success: boolean; error?: string }>
+  }) => Promise<{
+    success: boolean
+    error?: string
+    processedCount?: number
+    skippedCount?: number
+    requestedCount?: number
+  }>
+  swapPositions: (payload: { voucherIds: [number, number] | number[] }) => Promise<{
+    success: boolean
+    error?: string
+    voucherIds?: number[]
+  }>
   save: (data: {
     ledgerId: number
     voucherDate: string

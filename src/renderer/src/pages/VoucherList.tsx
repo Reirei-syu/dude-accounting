@@ -17,11 +17,20 @@ interface VoucherRow {
 type BatchAction = 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
 
 const STATUS_TEXT: Record<0 | 1 | 2, string> = {
-  0: '未审核',
-  1: '已审核',
-  2: '已记账'
+  0: '\u672a\u5ba1\u6838',
+  1: '\u5df2\u5ba1\u6838',
+  2: '\u5df2\u8bb0\u8d26'
 }
+
 const STATUS_ORDER: Array<0 | 1 | 2> = [0, 1, 2]
+
+const BATCH_ACTION_TEXT: Record<BatchAction, { completed: string; available: string }> = {
+  audit: { completed: '\u5df2\u5ba1\u6838', available: '\u53ef\u5ba1\u6838' },
+  bookkeep: { completed: '\u5df2\u8bb0\u8d26', available: '\u53ef\u8bb0\u8d26' },
+  unbookkeep: { completed: '\u5df2\u53cd\u8bb0\u8d26', available: '\u53ef\u53cd\u8bb0\u8d26' },
+  unaudit: { completed: '\u5df2\u53cd\u5ba1\u6838', available: '\u53ef\u53cd\u5ba1\u6838' },
+  delete: { completed: '\u5df2\u5220\u9664', available: '\u53ef\u5220\u9664' }
+}
 
 const buildStatusCounter = (rows: VoucherRow[]): Record<0 | 1 | 2, number> => {
   const counters: Record<0 | 1 | 2, number> = { 0: 0, 1: 0, 2: 0 }
@@ -41,14 +50,32 @@ const formatClockTime = (date: Date): string =>
     date.getSeconds()
   ).padStart(2, '0')}`
 
+const buildBatchActionMessage = (
+  action: BatchAction,
+  processedCount: number,
+  skippedCount: number
+): string => {
+  if (action === 'delete') {
+    return `${BATCH_ACTION_TEXT[action].completed} ${processedCount} \u5f20\u51ed\u8bc1`
+  }
+  if (processedCount === 0 && skippedCount > 0) {
+    return `\u6ca1\u6709${BATCH_ACTION_TEXT[action].available}\u7684\u51ed\u8bc1\uff0c\u5df2\u8df3\u8fc7 ${skippedCount} \u5f20`
+  }
+  if (skippedCount > 0) {
+    return `${BATCH_ACTION_TEXT[action].completed} ${processedCount} \u5f20\u51ed\u8bc1\uff0c\u8df3\u8fc7 ${skippedCount} \u5f20\u4e0d\u7b26\u5408\u6761\u4ef6\u7684\u51ed\u8bc1`
+  }
+  return `${BATCH_ACTION_TEXT[action].completed} ${processedCount} \u5f20\u51ed\u8bc1`
+}
+
 const buildRefreshSummary = (
   previousMap: Map<number, VoucherRow> | null,
   nextRows: VoucherRow[]
 ): string => {
   const nextMap = new Map<number, VoucherRow>(nextRows.map((row) => [row.id, row]))
+
   if (!previousMap) {
     const currentCount = buildStatusCounter(nextRows)
-    return `首次刷新：共 ${nextRows.length} 张，未审核 ${currentCount[0]}，已审核 ${currentCount[1]}，已记账 ${currentCount[2]}`
+    return `\u9996\u6b21\u5237\u65b0\uff1a\u5171 ${nextRows.length} \u5f20\uff0c${STATUS_TEXT[0]} ${currentCount[0]}\uff0c${STATUS_TEXT[1]} ${currentCount[1]}\uff0c${STATUS_TEXT[2]} ${currentCount[2]}`
   }
 
   const added: VoucherRow[] = []
@@ -77,14 +104,18 @@ const buildRefreshSummary = (
   const statusDeltaText = STATUS_ORDER.map((status) => {
     const delta = currentCount[status] - previousCount[status]
     return `${STATUS_TEXT[status]} ${formatSignedDelta(delta)}`
-  }).join('，')
+  }).join('\uff0c')
 
   const addedPreview =
-    added.length > 0 ? `；新增：${added.slice(0, 3).map(formatVoucherTag).join('、')}` : ''
+    added.length > 0
+      ? `\uff1b\u65b0\u589e\uff1a${added.slice(0, 3).map(formatVoucherTag).join('\u3001')}`
+      : ''
   const removedPreview =
-    removed.length > 0 ? `；减少：${removed.slice(0, 3).map(formatVoucherTag).join('、')}` : ''
+    removed.length > 0
+      ? `\uff1b\u51cf\u5c11\uff1a${removed.slice(0, 3).map(formatVoucherTag).join('\u3001')}`
+      : ''
 
-  return `刷新变动：新增 ${added.length} 张，减少 ${removed.length} 张，状态变更 ${statusChanged} 张（${statusDeltaText}）${addedPreview}${removedPreview}`
+  return `\u5237\u65b0\u53d8\u52a8\uff1a\u65b0\u589e ${added.length} \u5f20\uff0c\u51cf\u5c11 ${removed.length} \u5f20\uff0c\u72b6\u6001\u53d8\u66f4 ${statusChanged} \u5f20\uff08${statusDeltaText}\uff09${addedPreview}${removedPreview}`
 }
 
 export default function VoucherList(): JSX.Element {
@@ -97,6 +128,7 @@ export default function VoucherList(): JSX.Element {
   const [refreshSummary, setRefreshSummary] = useState('')
   const [lastRefreshAt, setLastRefreshAt] = useState('')
   const previousRowsRef = useRef<Map<number, VoucherRow> | null>(null)
+  const selectAllRef = useRef<HTMLInputElement | null>(null)
 
   const canOperate = Boolean(window.electron && currentLedger)
 
@@ -132,7 +164,7 @@ export default function VoucherList(): JSX.Element {
         setRows([])
         setMessage({
           type: 'error',
-          text: err instanceof Error ? err.message : '加载凭证失败'
+          text: err instanceof Error ? err.message : '\u52a0\u8f7d\u51ed\u8bc1\u5931\u8d25'
         })
       } finally {
         setLoading(false)
@@ -151,12 +183,29 @@ export default function VoucherList(): JSX.Element {
   const totals = useMemo(() => {
     let debit = new Decimal(0)
     let credit = new Decimal(0)
+
     for (const row of rows) {
       debit = debit.plus(new Decimal(row.total_debit).div(100))
       credit = credit.plus(new Decimal(row.total_credit).div(100))
     }
+
     return { debit: debit.toFixed(2), credit: credit.toFixed(2) }
   }, [rows])
+
+  const visibleVoucherIds = useMemo(() => rows.map((row) => row.id), [rows])
+  const selectedIdSet = useMemo(() => new Set(selected), [selected])
+  const canSwapSelected = selected.length === 2
+  const allVisibleSelected =
+    visibleVoucherIds.length > 0 &&
+    visibleVoucherIds.every((voucherId) => selectedIdSet.has(voucherId))
+  const partiallyVisibleSelected =
+    visibleVoucherIds.some((voucherId) => selectedIdSet.has(voucherId)) && !allVisibleSelected
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = partiallyVisibleSelected
+    }
+  }, [partiallyVisibleSelected])
 
   const toggleSelection = (voucherId: number): void => {
     setSelected((prev) =>
@@ -164,14 +213,23 @@ export default function VoucherList(): JSX.Element {
     )
   }
 
+  const toggleSelectAll = (): void => {
+    setSelected(allVisibleSelected ? [] : visibleVoucherIds)
+  }
+
   const runBatchAction = async (action: BatchAction): Promise<void> => {
     setMessage(null)
+
     if (!canOperate) {
-      setMessage({ type: 'error', text: '当前环境不支持该操作' })
+      setMessage({
+        type: 'error',
+        text: '\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u8be5\u64cd\u4f5c'
+      })
       return
     }
+
     if (selected.length === 0) {
-      setMessage({ type: 'error', text: '请先勾选凭证' })
+      setMessage({ type: 'error', text: '\u8bf7\u5148\u52fe\u9009\u51ed\u8bc1' })
       return
     }
 
@@ -180,28 +238,81 @@ export default function VoucherList(): JSX.Element {
         action,
         voucherIds: selected
       })
+
       if (!result.success) {
-        setMessage({ type: 'error', text: result.error || '批量操作失败' })
+        setMessage({ type: 'error', text: result.error || '\u6279\u91cf\u64cd\u4f5c\u5931\u8d25' })
         return
       }
-      setMessage({ type: 'success', text: '操作成功' })
-      setSelected([])
+
+      setMessage({
+        type: 'success',
+        text: buildBatchActionMessage(action, result.processedCount ?? 0, result.skippedCount ?? 0)
+      })
       await loadRows()
     } catch (err) {
-      setMessage({ type: 'error', text: err instanceof Error ? err.message : '批量操作失败' })
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : '\u6279\u91cf\u64cd\u4f5c\u5931\u8d25'
+      })
+    }
+  }
+
+  const handleSwapPositions = async (): Promise<void> => {
+    setMessage(null)
+
+    if (!canOperate) {
+      setMessage({
+        type: 'error',
+        text: '\u5f53\u524d\u73af\u5883\u4e0d\u652f\u6301\u8be5\u64cd\u4f5c'
+      })
+      return
+    }
+
+    if (!canSwapSelected) {
+      setMessage({
+        type: 'error',
+        text: '\u4ec5\u9009\u62e9 2 \u5f20\u51ed\u8bc1\u65f6\u624d\u53ef\u4ea4\u6362\u4f4d\u7f6e'
+      })
+      return
+    }
+
+    try {
+      const result = await window.api.voucher.swapPositions({
+        voucherIds: [selected[0], selected[1]]
+      })
+
+      if (!result.success) {
+        setMessage({
+          type: 'error',
+          text: result.error || '\u4ea4\u6362\u51ed\u8bc1\u4f4d\u7f6e\u5931\u8d25'
+        })
+        return
+      }
+
+      setMessage({
+        type: 'success',
+        text: '\u5df2\u4ea4\u6362 2 \u5f20\u51ed\u8bc1\u7684\u4f4d\u7f6e'
+      })
+      await loadRows()
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text:
+          err instanceof Error ? err.message : '\u4ea4\u6362\u51ed\u8bc1\u4f4d\u7f6e\u5931\u8d25'
+      })
     }
   }
 
   const openVoucherForEdit = (voucherId: number): void => {
     const row = rows.find((item) => item.id === voucherId)
     if (!row) {
-      setMessage({ type: 'error', text: '凭证不存在' })
+      setMessage({ type: 'error', text: '\u51ed\u8bc1\u4e0d\u5b58\u5728' })
       return
     }
 
     openTab({
       id: 'voucher-entry',
-      title: '凭证录入',
+      title: '\u51ed\u8bc1\u5f55\u5165',
       componentType: 'VoucherEntry',
       params: {
         editVoucherId: row.id,
@@ -212,14 +323,20 @@ export default function VoucherList(): JSX.Element {
 
   const handleEditSelected = (): void => {
     setMessage(null)
+
     if (selected.length === 0) {
-      setMessage({ type: 'error', text: '请先勾选一张凭证' })
+      setMessage({ type: 'error', text: '\u8bf7\u5148\u52fe\u9009\u4e00\u5f20\u51ed\u8bc1' })
       return
     }
+
     if (selected.length > 1) {
-      setMessage({ type: 'error', text: '一次只能修改一张凭证' })
+      setMessage({
+        type: 'error',
+        text: '\u4e00\u6b21\u53ea\u80fd\u4fee\u6539\u4e00\u5f20\u51ed\u8bc1'
+      })
       return
     }
+
     openVoucherForEdit(selected[0])
   }
 
@@ -232,36 +349,43 @@ export default function VoucherList(): JSX.Element {
     <div className="h-full flex flex-col p-4 gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          凭证管理
+          {'\u51ed\u8bc1\u7ba1\u7406'}
         </h2>
         <div className="flex gap-2 flex-wrap">
           <button className="glass-btn-secondary" onClick={() => void handleRefresh()}>
-            刷新
+            {'\u5237\u65b0'}
           </button>
           <button className="glass-btn-secondary" onClick={handleEditSelected}>
-            修改
+            {'\u4fee\u6539'}
+          </button>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void handleSwapPositions()}
+            disabled={!canSwapSelected || !canOperate}
+          >
+            {'\u4ea4\u6362\u4f4d\u7f6e'}
           </button>
           <button className="glass-btn-secondary" onClick={() => void runBatchAction('audit')}>
-            审核
+            {'\u5ba1\u6838'}
           </button>
           <button className="glass-btn-secondary" onClick={() => void runBatchAction('bookkeep')}>
-            记账
+            {'\u8bb0\u8d26'}
           </button>
           <button className="glass-btn-secondary" onClick={() => void runBatchAction('unbookkeep')}>
-            反记账
+            {'\u53cd\u8bb0\u8d26'}
           </button>
           <button className="glass-btn-secondary" onClick={() => void runBatchAction('unaudit')}>
-            反审核
+            {'\u53cd\u5ba1\u6838'}
           </button>
           <button className="glass-btn-secondary" onClick={() => void runBatchAction('delete')}>
-            删除
+            {'\u5220\u9664'}
           </button>
         </div>
       </div>
 
       {refreshSummary && (
         <div className="text-xs px-1" style={{ color: 'var(--color-text-secondary)' }}>
-          <span>{lastRefreshAt ? `最近刷新 ${lastRefreshAt}：` : ''}</span>
+          <span>{lastRefreshAt ? `\u6700\u8fd1\u5237\u65b0\uff1a${lastRefreshAt}\uff1b` : ''}</span>
           <span>{refreshSummary}</span>
         </div>
       )}
@@ -276,14 +400,26 @@ export default function VoucherList(): JSX.Element {
                 color: 'var(--color-text-primary)'
               }}
             >
-              <div className="col-span-1">选择</div>
-              <div className="col-span-2">日期</div>
-              <div className="col-span-2">凭证号</div>
-              <div className="col-span-2">状态</div>
-              <div className="col-span-2 text-right">借方合计</div>
-              <div className="col-span-2 text-right">贷方合计</div>
-              <div className="col-span-1 text-right">期间</div>
+              <div className="col-span-1 flex items-center gap-2">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  className="h-5 w-5 shrink-0"
+                  checked={allVisibleSelected}
+                  onChange={toggleSelectAll}
+                  disabled={rows.length === 0}
+                  aria-label="\u5168\u9009\u5f53\u524d\u5217\u8868\u51ed\u8bc1"
+                />
+                <span>{'\u9009\u62e9'}</span>
+              </div>
+              <div className="col-span-2">{'\u65e5\u671f'}</div>
+              <div className="col-span-2">{'\u51ed\u8bc1\u53f7'}</div>
+              <div className="col-span-2">{'\u72b6\u6001'}</div>
+              <div className="col-span-2 text-right">{'\u501f\u65b9\u5408\u8ba1'}</div>
+              <div className="col-span-2 text-right">{'\u8d37\u65b9\u5408\u8ba1'}</div>
+              <div className="col-span-1 text-right">{'\u671f\u95f4'}</div>
             </div>
+
             <div className="overflow-y-auto h-[calc(100%-78px)]">
               {rows.map((row) => (
                 <div
@@ -295,12 +431,13 @@ export default function VoucherList(): JSX.Element {
                   }}
                   onDoubleClick={() => openVoucherForEdit(row.id)}
                 >
-                  <div className="col-span-1">
+                  <div className="col-span-1 flex items-center">
                     <input
                       type="checkbox"
+                      className="h-5 w-5 shrink-0"
                       checked={selected.includes(row.id)}
                       onChange={() => toggleSelection(row.id)}
-                      aria-label={`选择凭证 ${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`}
+                      aria-label={`\u9009\u62e9\u51ed\u8bc1 ${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`}
                     />
                   </div>
                   <div className="col-span-2">{row.voucher_date}</div>
@@ -317,15 +454,17 @@ export default function VoucherList(): JSX.Element {
                   <div className="col-span-1 text-right">{row.period}</div>
                 </div>
               ))}
+
               {rows.length === 0 && !loading && (
                 <div
                   className="py-10 text-center text-sm"
                   style={{ color: 'var(--color-text-muted)' }}
                 >
-                  当前期间暂无凭证
+                  {'\u5f53\u524d\u671f\u95f4\u6682\u65e0\u51ed\u8bc1'}
                 </div>
               )}
             </div>
+
             <div
               className="flex justify-end gap-6 px-4 py-2 border-t text-sm"
               style={{
@@ -333,8 +472,8 @@ export default function VoucherList(): JSX.Element {
                 color: 'var(--color-text-secondary)'
               }}
             >
-              <span>借方合计：{totals.debit}</span>
-              <span>贷方合计：{totals.credit}</span>
+              <span>{`\u501f\u65b9\u5408\u8ba1\uff1a${totals.debit}`}</span>
+              <span>{`\u8d37\u65b9\u5408\u8ba1\uff1a${totals.credit}`}</span>
             </div>
           </div>
         </div>

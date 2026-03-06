@@ -107,6 +107,8 @@ const api = {
       action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
       voucherIds: number[]
     }) => ipcRenderer.invoke('voucher:batchAction', payload),
+    swapPositions: (payload: { voucherIds: [number, number] | number[] }) =>
+      ipcRenderer.invoke('voucher:swapPositions', payload),
     save: (data: {
       ledgerId: number
       voucherDate: string

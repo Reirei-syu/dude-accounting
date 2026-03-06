@@ -3,6 +3,8 @@ import Decimal from 'decimal.js'
 import { getDatabase } from '../database/init'
 import { applyCashFlowMappings } from '../services/cashFlowMapping'
 import { requireAuth, requirePermission } from './session'
+import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
+import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
 
 interface VoucherEntryInput {
   summary: string
@@ -25,6 +27,10 @@ interface UpdateVoucherInput {
   ledgerId: number
   voucherDate: string
   entries: VoucherEntryInput[]
+}
+
+interface SwapVoucherPositionsInput {
+  voucherIds: number[]
 }
 
 interface NormalizedVoucherEntry {
@@ -626,12 +632,245 @@ export function registerVoucherHandlers(): void {
       .all(voucherId)
   })
 
+  ipcMain.handle('voucher:swapPositions', (event, payload: SwapVoucherPositionsInput) => {
+    try {
+      requirePermission(event, 'voucher_entry')
+
+      if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length !== 2) {
+        return {
+          success: false,
+          error: '\u4ec5\u9009\u62e9 2 \u5f20\u51ed\u8bc1\u65f6\u624d\u53ef\u4ea4\u6362\u4f4d\u7f6e'
+        }
+      }
+
+      const voucherIds = Array.from(new Set(payload.voucherIds))
+      if (voucherIds.length !== 2) {
+        return {
+          success: false,
+          error: '\u8bf7\u9009\u62e9\u4e24\u5f20\u4e0d\u540c\u7684\u51ed\u8bc1'
+        }
+      }
+
+      const placeholders = voucherIds.map(() => '?').join(',')
+      const voucherRows = db
+        .prepare(
+          `SELECT
+             id,
+             ledger_id,
+             period,
+             voucher_date,
+             status,
+             creator_id,
+             auditor_id,
+             bookkeeper_id,
+             attachment_count,
+             is_carry_forward
+           FROM vouchers
+           WHERE id IN (${placeholders})`
+        )
+        .all(...voucherIds) as Array<{
+        id: number
+        ledger_id: number
+        period: string
+        voucher_date: string
+        status: number
+        creator_id: number | null
+        auditor_id: number | null
+        bookkeeper_id: number | null
+        attachment_count: number
+        is_carry_forward: number
+      }>
+
+      if (voucherRows.length !== 2) {
+        return {
+          success: false,
+          error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
+        }
+      }
+
+      const vouchersById = new Map<number, VoucherSwapVoucher>(
+        voucherRows.map((voucher) => [
+          voucher.id,
+          {
+            id: voucher.id,
+            ledgerId: voucher.ledger_id,
+            period: voucher.period,
+            voucherDate: voucher.voucher_date,
+            status: voucher.status,
+            creatorId: voucher.creator_id,
+            auditorId: voucher.auditor_id,
+            bookkeeperId: voucher.bookkeeper_id,
+            attachmentCount: voucher.attachment_count,
+            isCarryForward: voucher.is_carry_forward
+          }
+        ])
+      )
+
+      const firstVoucher = vouchersById.get(voucherIds[0])
+      const secondVoucher = vouchersById.get(voucherIds[1])
+
+      if (!firstVoucher || !secondVoucher) {
+        return {
+          success: false,
+          error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
+        }
+      }
+
+      if (
+        firstVoucher.ledgerId !== secondVoucher.ledgerId ||
+        firstVoucher.period !== secondVoucher.period
+      ) {
+        return {
+          success: false,
+          error:
+            '\u4ec5\u652f\u6301\u540c\u4e00\u8d26\u5957\u3001\u540c\u4e00\u671f\u95f4\u7684\u4e24\u5f20\u51ed\u8bc1\u4ea4\u6362\u4f4d\u7f6e'
+        }
+      }
+
+      const entryRows = db
+        .prepare(
+          `SELECT
+             voucher_id,
+             row_order,
+             summary,
+             subject_code,
+             debit_amount,
+             credit_amount,
+             auxiliary_item_id,
+             cash_flow_item_id
+           FROM voucher_entries
+           WHERE voucher_id IN (${placeholders})
+           ORDER BY voucher_id ASC, row_order ASC, id ASC`
+        )
+        .all(...voucherIds) as Array<{
+        voucher_id: number
+        row_order: number
+        summary: string
+        subject_code: string
+        debit_amount: number
+        credit_amount: number
+        auxiliary_item_id: number | null
+        cash_flow_item_id: number | null
+      }>
+
+      const buildEntriesForVoucher = (voucherId: number): VoucherSwapEntry[] =>
+        entryRows
+          .filter((entry) => entry.voucher_id === voucherId)
+          .map((entry) => ({
+            rowOrder: entry.row_order,
+            summary: entry.summary,
+            subjectCode: entry.subject_code,
+            debitAmount: entry.debit_amount,
+            creditAmount: entry.credit_amount,
+            auxiliaryItemId: entry.auxiliary_item_id,
+            cashFlowItemId: entry.cash_flow_item_id
+          }))
+
+      const plan = buildVoucherSwapPlan(
+        firstVoucher,
+        secondVoucher,
+        buildEntriesForVoucher(firstVoucher.id),
+        buildEntriesForVoucher(secondVoucher.id)
+      )
+
+      const updateVoucherStmt = db.prepare(
+        `UPDATE vouchers
+         SET voucher_date = ?,
+             status = ?,
+             creator_id = ?,
+             auditor_id = ?,
+             bookkeeper_id = ?,
+             attachment_count = ?,
+             is_carry_forward = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      const deleteEntriesStmt = db.prepare('DELETE FROM voucher_entries WHERE voucher_id = ?')
+      const insertEntryStmt = db.prepare(
+        `INSERT INTO voucher_entries (
+           voucher_id,
+           row_order,
+           summary,
+           subject_code,
+           debit_amount,
+           credit_amount,
+           auxiliary_item_id,
+           cash_flow_item_id
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+
+      const swapTx = db.transaction(() => {
+        updateVoucherStmt.run(
+          plan.firstVoucherUpdate.voucherDate,
+          plan.firstVoucherUpdate.status,
+          plan.firstVoucherUpdate.creatorId,
+          plan.firstVoucherUpdate.auditorId,
+          plan.firstVoucherUpdate.bookkeeperId,
+          plan.firstVoucherUpdate.attachmentCount,
+          plan.firstVoucherUpdate.isCarryForward,
+          plan.firstVoucherId
+        )
+        updateVoucherStmt.run(
+          plan.secondVoucherUpdate.voucherDate,
+          plan.secondVoucherUpdate.status,
+          plan.secondVoucherUpdate.creatorId,
+          plan.secondVoucherUpdate.auditorId,
+          plan.secondVoucherUpdate.bookkeeperId,
+          plan.secondVoucherUpdate.attachmentCount,
+          plan.secondVoucherUpdate.isCarryForward,
+          plan.secondVoucherId
+        )
+
+        deleteEntriesStmt.run(plan.firstVoucherId)
+        deleteEntriesStmt.run(plan.secondVoucherId)
+
+        for (const entry of plan.firstVoucherEntries) {
+          insertEntryStmt.run(
+            plan.firstVoucherId,
+            entry.rowOrder,
+            entry.summary,
+            entry.subjectCode,
+            entry.debitAmount,
+            entry.creditAmount,
+            entry.auxiliaryItemId,
+            entry.cashFlowItemId
+          )
+        }
+
+        for (const entry of plan.secondVoucherEntries) {
+          insertEntryStmt.run(
+            plan.secondVoucherId,
+            entry.rowOrder,
+            entry.summary,
+            entry.subjectCode,
+            entry.debitAmount,
+            entry.creditAmount,
+            entry.auxiliaryItemId,
+            entry.cashFlowItemId
+          )
+        }
+      })
+
+      swapTx()
+
+      return { success: true, voucherIds }
+    } catch (error) {
+      return {
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : '\u4ea4\u6362\u51ed\u8bc1\u4f4d\u7f6e\u5931\u8d25'
+      }
+    }
+  })
+
   ipcMain.handle(
     'voucher:batchAction',
     (
       event,
       payload: {
-        action: 'audit' | 'bookkeep' | 'unbookkeep' | 'unaudit' | 'delete'
+        action: VoucherBatchAction
         voucherIds: number[]
       }
     ) => {
@@ -665,10 +904,18 @@ export function registerVoucherHandlers(): void {
           return { success: false, error: '存在无效凭证，操作中止' }
         }
 
+        const { applicable: applicableVouchers, skipped: skippedVouchers } =
+          splitVouchersByBatchAction(action, vouchers)
+
+        if (action === 'delete' && skippedVouchers.length > 0) {
+          return { success: false, error: '\u5df2\u8bb0\u8d26\u51ed\u8bc1\u4e0d\u53ef\u5220\u9664' }
+        }
+
         const runTx = db.transaction(() => {
           const renumberGroups = new Set<string>()
-          for (const voucher of vouchers) {
+          for (const voucher of applicableVouchers) {
             if (action === 'audit') {
+              if (voucher.status !== 0) continue
               if (voucher.status !== 0) throw new Error('仅未审核凭证可审核')
               db.prepare(
                 `UPDATE vouchers
@@ -676,6 +923,7 @@ export function registerVoucherHandlers(): void {
                                  WHERE id = ?`
               ).run(user.id, voucher.id)
             } else if (action === 'bookkeep') {
+              if (voucher.status !== 1) continue
               if (voucher.status !== 1) throw new Error('仅已审核凭证可记账')
               db.prepare(
                 `UPDATE vouchers
@@ -683,6 +931,7 @@ export function registerVoucherHandlers(): void {
                                  WHERE id = ?`
               ).run(user.id, voucher.id)
             } else if (action === 'unbookkeep') {
+              if (voucher.status !== 2) continue
               if (voucher.status !== 2) throw new Error('仅已记账凭证可反记账')
               db.prepare(
                 `UPDATE vouchers
@@ -690,6 +939,7 @@ export function registerVoucherHandlers(): void {
                                  WHERE id = ?`
               ).run(voucher.id)
             } else if (action === 'unaudit') {
+              if (voucher.status !== 1) continue
               if (voucher.status !== 1) throw new Error('仅已审核凭证可反审核')
               db.prepare(
                 `UPDATE vouchers
@@ -697,6 +947,7 @@ export function registerVoucherHandlers(): void {
                                  WHERE id = ?`
               ).run(voucher.id)
             } else if (action === 'delete') {
+              if (voucher.status === 2) continue
               if (voucher.status === 2) throw new Error('已记账凭证不可删除')
               db.prepare('DELETE FROM vouchers WHERE id = ?').run(voucher.id)
               renumberGroups.add(`${voucher.ledger_id}|${voucher.period}|${voucher.voucher_word}`)
@@ -711,7 +962,12 @@ export function registerVoucherHandlers(): void {
         })
 
         runTx()
-        return { success: true }
+        return {
+          success: true,
+          processedCount: applicableVouchers.length,
+          skippedCount: skippedVouchers.length,
+          requestedCount: vouchers.length
+        }
       } catch (error) {
         return {
           success: false,
