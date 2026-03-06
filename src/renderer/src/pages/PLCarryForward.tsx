@@ -100,7 +100,7 @@ export default function PLCarryForward(): JSX.Element {
                 color: 'var(--color-text-muted)'
               }}
             >
-              执行损益结转时，系统按下列映射归集当前会计期间已记账损益类科目发生额，并自动生成结转凭证。
+              执行损益结转时，系统默认按下列映射归集当前会计期间已记账损益类科目发生额；在结转页面勾选“未记账凭证”后，可扩大到全部状态凭证。
             </div>
 
             <div className="flex-1 overflow-auto p-2">

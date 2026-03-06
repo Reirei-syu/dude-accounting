@@ -142,6 +142,16 @@ button {
   border-color: var(--color-secondary);
 }
 
+.voucher-grid-input {
+  box-shadow: inset 0 0 0 0 transparent;
+}
+
+.voucher-grid-input:focus,
+.voucher-grid-input:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.9);
+}
+
 .glass-btn,
 .glass-btn-secondary,
 .login-submit-btn {

@@ -17,7 +17,7 @@ export function registerPLCarryForwardHandlers(): void {
 
   ipcMain.handle(
     'plCarryForward:preview',
-    (event, payload: { ledgerId: number; period: string }) => {
+    (event, payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) => {
       requireAuth(event)
       return previewPLCarryForward(db, payload)
     }
@@ -25,13 +25,14 @@ export function registerPLCarryForwardHandlers(): void {
 
   ipcMain.handle(
     'plCarryForward:execute',
-    (event, payload: { ledgerId: number; period: string }) => {
+    (event, payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) => {
       try {
         const user = requirePermission(event, 'bookkeeping')
         const result = executePLCarryForward(db, {
           ledgerId: payload.ledgerId,
           period: payload.period,
-          operatorId: user.id
+          operatorId: user.id,
+          includeUnpostedVouchers: payload.includeUnpostedVouchers
         })
         return {
           success: true,

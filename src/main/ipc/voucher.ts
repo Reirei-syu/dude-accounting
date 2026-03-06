@@ -78,8 +78,7 @@ function normalizeEntries(entries: VoucherEntryInput[]): NormalizedVoucherEntry[
     const debitCents = parseAmountToCents(entry.debitAmount, '借方金额')
     const creditCents = parseAmountToCents(entry.creditAmount, '贷方金额')
 
-    const isEmpty = summary === '' && subjectCode === '' && debitCents === 0 && creditCents === 0
-    if (isEmpty) continue
+    if (debitCents === 0 && creditCents === 0) continue
 
     normalized.push({
       summary,

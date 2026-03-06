@@ -247,11 +247,16 @@ interface PLCarryForwardAPI {
       toSubjectName: string
     }>
   >
-  preview: (data: { ledgerId: number; period: string }) => Promise<{
+  preview: (data: {
+    ledgerId: number
+    period: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<{
     period: string
     voucherDate: string
     summary: string
     voucherWord: string
+    includeUnpostedVouchers: boolean
     required: boolean
     canExecute: boolean
     blockedReason?: string
@@ -272,7 +277,11 @@ interface PLCarryForwardAPI {
     }>
     draftVoucherIds: number[]
   }>
-  execute: (data: { ledgerId: number; period: string }) => Promise<{
+  execute: (data: {
+    ledgerId: number
+    period: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<{
     success: boolean
     error?: string
     voucherId?: number

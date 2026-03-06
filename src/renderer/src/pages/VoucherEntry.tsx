@@ -1,8 +1,22 @@
-﻿import { useState, useRef, useEffect, useMemo, type KeyboardEvent, type JSX } from 'react'
+﻿import {
+  useState,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+  type KeyboardEvent,
+  type JSX
+} from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
+import { useUIStore } from '../stores/uiStore'
 import Decimal from 'decimal.js'
+import {
+  buildNextVoucherEntryRow,
+  filterVoucherRowsForSave,
+  inheritSummaryFromPreviousRow
+} from './voucherEntryRowUtils'
 
 interface VoucherRow {
   id: string
@@ -368,6 +382,11 @@ const toPositiveInt = (value: unknown): number | null => {
   return parsed
 }
 
+const buildEditRequestToken = (voucherId: number | null, requestKey?: number): string | null => {
+  if (voucherId === null) return null
+  return `${voucherId}:${requestKey ?? 'default'}`
+}
+
 const PERIOD_PATTERN = /^\d{4}-\d{2}$/
 
 const getPeriodDateRange = (period: string): { min: string; max: string } | null => {
@@ -428,12 +447,17 @@ export default function VoucherEntry({
 }: VoucherEntryProps): JSX.Element {
   const { currentLedger, currentPeriod } = useLedgerStore()
   const currentUser = useAuthStore((s) => s.user)
+  const activeTabId = useUIStore((state) => state.activeTabId)
   const activePeriod = useMemo(
     () => (currentPeriod && PERIOD_PATTERN.test(currentPeriod) ? currentPeriod : ''),
     [currentPeriod]
   )
   const periodDateRange = useMemo(() => getPeriodDateRange(activePeriod), [activePeriod])
   const normalizedEditVoucherId = useMemo(() => toPositiveInt(editVoucherId), [editVoucherId])
+  const currentEditRequestToken = useMemo(
+    () => buildEditRequestToken(normalizedEditVoucherId, editRequestKey),
+    [normalizedEditVoucherId, editRequestKey]
+  )
   const [date, setDate] = useState(
     currentPeriod ? `${currentPeriod}-01` : new Date().toISOString().split('T')[0]
   )
@@ -455,6 +479,7 @@ export default function VoucherEntry({
   const [currentVoucherStatus, setCurrentVoucherStatus] = useState<0 | 1 | 2 | null>(null)
   const [navigableVouchers, setNavigableVouchers] = useState<VoucherListItem[]>([])
   const [loadingVoucher, setLoadingVoucher] = useState(false)
+  const [dismissedEditRequestToken, setDismissedEditRequestToken] = useState<string | null>(null)
   const [baselineSignature, setBaselineSignature] = useState<string>('')
   const [isEditMode, setIsEditMode] = useState(true)
 
@@ -601,6 +626,10 @@ export default function VoucherEntry({
     setRows(newRows)
   }
 
+  const carrySummaryToRow = (rowIdx: number): void => {
+    setRows((prev) => inheritSummaryFromPreviousRow(prev, rowIdx))
+  }
+
   const handleKeyDown = (
     e: KeyboardEvent<HTMLInputElement>,
     rowIdx: number,
@@ -615,9 +644,13 @@ export default function VoucherEntry({
         // Move to next row first column
         if (rowIdx === rows.length - 1) {
           // Add new row
-          setRows((prev) => [...prev, createEmptyRow()])
+          setRows((prev) => [
+            ...prev,
+            buildNextVoucherEntryRow(prev[rowIdx], () => createEmptyRow())
+          ])
           setTimeout(() => focusCell(rowIdx + 1, 0), 50)
         } else {
+          carrySummaryToRow(rowIdx + 1)
           focusCell(rowIdx + 1, 0)
         }
       }
@@ -772,10 +805,10 @@ export default function VoucherEntry({
     setManualSubjectRowId(rowId)
   }
 
-  const closeManualSubjectDialog = (): void => {
+  const closeManualSubjectDialog = useCallback((): void => {
     setManualSubjectRowId(null)
     setManualTreeExpandedCodes(new Set())
-  }
+  }, [])
 
   const toggleManualTreeNode = (code: string): void => {
     setManualTreeExpandedCodes((current) => {
@@ -927,7 +960,7 @@ export default function VoucherEntry({
       const allVouchers = await refreshNavigableVouchers(currentLedger.id)
       const targetVoucher = allVouchers.find((voucher) => voucher.id === normalizedVoucherId)
       if (!targetVoucher) {
-        setMessage({ type: 'error', text: '凭证不存在或已被删除' })
+        await prepareNewVoucherState('凭证不存在或已被删除，已切换为新建凭证。')
         return false
       }
 
@@ -967,6 +1000,7 @@ export default function VoucherEntry({
       setDate(targetVoucher.voucher_date)
       setVoucherNumber(targetVoucher.voucher_number)
       setEditingVoucherId(normalizedVoucherId)
+      setDismissedEditRequestToken(null)
       setCurrentVoucherStatus(targetVoucher.status)
       setSubjectOptions({})
       setActiveSubjectRowId(null)
@@ -992,9 +1026,16 @@ export default function VoucherEntry({
 
   useEffect(() => {
     if (!currentLedger || !window.electron) return
-    if (!normalizedEditVoucherId) return
+    if (!normalizedEditVoucherId || !currentEditRequestToken) return
+    if (dismissedEditRequestToken === currentEditRequestToken) return
     void loadVoucherForEditRef.current(normalizedEditVoucherId)
-  }, [currentLedger, normalizedEditVoucherId, editRequestKey, activePeriod])
+  }, [
+    activePeriod,
+    currentEditRequestToken,
+    currentLedger,
+    dismissedEditRequestToken,
+    normalizedEditVoucherId
+  ])
 
   const validateAndCleanRows = (): {
     valid: boolean
@@ -1009,14 +1050,7 @@ export default function VoucherEntry({
       }
     }
 
-    const cleanedRows = rows.filter((row) => {
-      return !(
-        row.summary.trim() === '' &&
-        row.subjectCode.trim() === '' &&
-        row.debit.trim() === '' &&
-        row.credit.trim() === ''
-      )
-    })
+    const cleanedRows = filterVoucherRowsForSave(rows)
 
     if (cleanedRows.length < 2) {
       return { valid: false, cleanedRows, error: '至少需要两条有效分录' }
@@ -1045,7 +1079,7 @@ export default function VoucherEntry({
     return { valid: true, cleanedRows }
   }
 
-  const resetVoucher = (): void => {
+  const resetVoucher = useCallback((): void => {
     const nextRows = Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow())
     setRows(nextRows)
     setSubjectOptions({})
@@ -1057,28 +1091,81 @@ export default function VoucherEntry({
     setCurrentVoucherStatus(null)
     setBaselineSignature('')
     setIsEditMode(true)
-  }
+  }, [closeManualSubjectDialog])
+
+  const prepareNewVoucherState = useCallback(
+    async (messageText?: string): Promise<void> => {
+      setLoadingVoucher(false)
+      if (currentEditRequestToken) {
+        setDismissedEditRequestToken(currentEditRequestToken)
+      }
+      resetVoucher()
+      const targetDate = activePeriod ? `${activePeriod}-01` : date
+      if (activePeriod) {
+        setDate(targetDate)
+      }
+
+      if (!currentLedger || !targetDate || targetDate.length < 7 || !window.electron) {
+        if (messageText) {
+          setMessage({ type: 'success', text: messageText })
+        }
+        return
+      }
+
+      const period = activePeriod || targetDate.slice(0, 7)
+      try {
+        const next = await window.api.voucher.getNextNumber(currentLedger.id, period)
+        setVoucherNumber(next)
+        if (messageText) {
+          setMessage({ type: 'success', text: messageText })
+        }
+      } catch (error) {
+        setMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '获取下一个凭证号失败'
+        })
+      }
+    },
+    [activePeriod, currentEditRequestToken, currentLedger, date, resetVoucher]
+  )
 
   const handleNewVoucher = async (): Promise<void> => {
-    resetVoucher()
     setMessage(null)
-    const targetDate = activePeriod ? `${activePeriod}-01` : date
-    if (activePeriod) {
-      setDate(targetDate)
-    }
-    if (!currentLedger || !targetDate || targetDate.length < 7) return
-    if (!window.electron) return
-    const period = activePeriod || targetDate.slice(0, 7)
-    try {
-      const next = await window.api.voucher.getNextNumber(currentLedger.id, period)
-      setVoucherNumber(next)
-    } catch (error) {
-      setMessage({
-        type: 'error',
-        text: error instanceof Error ? error.message : '获取下一个凭证号失败'
-      })
-    }
+    await prepareNewVoucherState()
   }
+
+  useEffect(() => {
+    if (
+      activeTabId !== 'voucher-entry' ||
+      editingVoucherId === null ||
+      !currentLedger ||
+      !window.electron ||
+      loadingVoucher
+    ) {
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const list = await loadNavigableVoucherRows(currentLedger.id)
+        if (cancelled) return
+
+        setNavigableVouchers(list)
+        if (!list.some((voucher) => voucher.id === editingVoucherId)) {
+          await prepareNewVoucherState('当前凭证已被删除，凭证录入已恢复为新建状态。')
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('refresh active voucher failed', error)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [activeTabId, currentLedger, editingVoucherId, loadingVoucher, prepareNewVoucherState])
 
   const saveVoucher = async (mode: 'newAfterSave' | 'stay'): Promise<boolean> => {
     setMessage(null)
@@ -1131,6 +1218,7 @@ export default function VoucherEntry({
       }
 
       await refreshNavigableVouchers(currentLedger.id)
+      const normalizedRows = padRows(cleanedRows.map((row) => ({ ...row })))
       if (editingVoucherId === null) {
         setMessage({
           type: 'success',
@@ -1144,7 +1232,8 @@ export default function VoucherEntry({
           type: 'success',
           text: `凭证已更新（记-${String(voucherNumber).padStart(4, '0')}）`
         })
-        setBaselineSignature(buildDraftSignature(date, rows))
+        setRows(normalizedRows)
+        setBaselineSignature(buildDraftSignature(date, normalizedRows))
         setCurrentVoucherStatus((result.status as 0 | 1 | 2) ?? 0)
         setIsEditMode(false)
       }
@@ -1368,10 +1457,11 @@ export default function VoucherEntry({
                 >
                   <input
                     ref={setRef(rIdx, 0)}
-                    className="w-full h-full bg-transparent px-3 py-3 outline-none focus:bg-white/10 transition-colors"
+                    className="voucher-grid-input w-full h-full bg-transparent px-3 py-3 outline-none transition-colors"
                     value={row.summary}
                     onChange={(e) => updateRow(rIdx, 'summary', e.target.value)}
                     onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
+                    onFocus={() => carrySummaryToRow(rIdx)}
                     placeholder="摘要"
                     disabled={!canEditFields}
                     aria-label="voucher-row-summary"
@@ -1383,11 +1473,12 @@ export default function VoucherEntry({
                 >
                   <input
                     ref={setRef(rIdx, 1)}
-                    className="w-full h-full bg-transparent px-3 py-3 pr-14 outline-none focus:bg-white/10 transition-colors"
+                    className="voucher-grid-input w-full h-full bg-transparent px-3 py-3 pr-14 outline-none transition-colors"
                     value={row.subjectInput}
                     onChange={(e) => handleSubjectInput(rIdx, e.target.value)}
                     onKeyDown={(e) => handleSubjectInputKeyDown(e, rIdx)}
                     onFocus={() => {
+                      carrySummaryToRow(rIdx)
                       setActiveSubjectRowId(row.id)
                       if (row.subjectInput.trim()) {
                         updateSubjectOptions(row.id, row.subjectInput)
@@ -1473,7 +1564,7 @@ export default function VoucherEntry({
                     ref={setRef(rIdx, 2)}
                     type="text"
                     inputMode="decimal"
-                    className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
+                    className="voucher-grid-input w-full h-full bg-transparent px-3 py-3 outline-none text-right transition-colors"
                     value={row.debit}
                     onChange={(e) => {
                       if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
@@ -1486,6 +1577,7 @@ export default function VoucherEntry({
                       setRows(newRows)
                     }}
                     onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
+                    onFocus={() => carrySummaryToRow(rIdx)}
                     disabled={!canEditFields}
                     aria-label="voucher-row-debit"
                   />
@@ -1495,7 +1587,7 @@ export default function VoucherEntry({
                     ref={setRef(rIdx, 3)}
                     type="text"
                     inputMode="decimal"
-                    className="w-full h-full bg-transparent px-3 py-3 outline-none text-right focus:bg-white/10 transition-colors"
+                    className="voucher-grid-input w-full h-full bg-transparent px-3 py-3 outline-none text-right transition-colors"
                     value={row.credit}
                     onChange={(e) => {
                       if (e.target.value !== '' && !AMOUNT_PATTERN.test(e.target.value)) return
@@ -1508,6 +1600,7 @@ export default function VoucherEntry({
                       setRows(newRows)
                     }}
                     onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
+                    onFocus={() => carrySummaryToRow(rIdx)}
                     disabled={!canEditFields}
                     aria-label="voucher-row-credit"
                   />

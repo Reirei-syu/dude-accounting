@@ -28,6 +28,7 @@ export interface PLCarryForwardPreview {
   voucherDate: string
   summary: string
   voucherWord: string
+  includeUnpostedVouchers: boolean
   required: boolean
   canExecute: boolean
   blockedReason?: string
@@ -44,6 +45,16 @@ export interface ExecutePLCarryForwardResult {
   status: number
   voucherDate: string
   removedDraftVoucherIds: number[]
+}
+
+export interface PreviewPLCarryForwardParams {
+  ledgerId: number
+  period: string
+  includeUnpostedVouchers?: boolean
+}
+
+export interface ExecutePLCarryForwardParams extends PreviewPLCarryForwardParams {
+  operatorId: number
 }
 
 type RuleMovementRow = {
@@ -119,8 +130,11 @@ function getStatusLabel(status: number): string {
 function getRuleMovements(
   db: Database.Database,
   ledgerId: number,
-  period: string
+  period: string,
+  includeUnpostedVouchers: boolean
 ): RuleMovementRow[] {
+  const voucherStatusCondition = includeUnpostedVouchers ? '' : 'AND v.status = 2'
+
   return db
     .prepare(
       `SELECT
@@ -141,7 +155,7 @@ function getRuleMovements(
      LEFT JOIN vouchers v
        ON v.ledger_id = r.ledger_id
       AND v.period = ?
-      AND v.status = 2
+      ${voucherStatusCondition}
       AND v.is_carry_forward = 0
      LEFT JOIN voucher_entries ve
        ON ve.voucher_id = v.id
@@ -305,13 +319,13 @@ export function listPLCarryForwardRules(
 
 export function previewPLCarryForward(
   db: Database.Database,
-  params: { ledgerId: number; period: string }
+  params: PreviewPLCarryForwardParams
 ): PLCarryForwardPreview {
-  const { ledgerId, period } = params
+  const { ledgerId, period, includeUnpostedVouchers = false } = params
   assertLedgerExists(db, ledgerId)
   assertPeriodFormat(period)
 
-  const movements = getRuleMovements(db, ledgerId, period)
+  const movements = getRuleMovements(db, ledgerId, period, includeUnpostedVouchers)
   const entries = buildPreviewEntries(movements)
   const existingVouchers = getExistingCarryForwardVouchers(db, ledgerId, period)
   const draftVoucherIds = existingVouchers
@@ -330,6 +344,7 @@ export function previewPLCarryForward(
     voucherDate: getPeriodLastDay(period),
     summary: '期末损益结转',
     voucherWord: '结',
+    includeUnpostedVouchers,
     required,
     canExecute,
     blockedReason: blockingVoucher
@@ -345,10 +360,10 @@ export function previewPLCarryForward(
 
 export function executePLCarryForward(
   db: Database.Database,
-  params: { ledgerId: number; period: string; operatorId: number }
+  params: ExecutePLCarryForwardParams
 ): ExecutePLCarryForwardResult {
-  const { ledgerId, period, operatorId } = params
-  const preview = previewPLCarryForward(db, { ledgerId, period })
+  const { ledgerId, period, operatorId, includeUnpostedVouchers = false } = params
+  const preview = previewPLCarryForward(db, { ledgerId, period, includeUnpostedVouchers })
 
   if (!preview.required) {
     throw new Error('当前期间无可结转的损益金额')
@@ -440,7 +455,7 @@ export function assertPLCarryForwardCompleted(
   params: { ledgerId: number; period: string }
 ): void {
   const { ledgerId, period } = params
-  const preview = previewPLCarryForward(db, { ledgerId, period })
+  const preview = previewPLCarryForward(db, { ledgerId, period, includeUnpostedVouchers: false })
   if (!preview.required) {
     return
   }

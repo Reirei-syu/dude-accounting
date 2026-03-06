@@ -21,6 +21,7 @@ type PreviewResult = {
   voucherDate: string
   summary: string
   voucherWord: string
+  includeUnpostedVouchers: boolean
   required: boolean
   canExecute: boolean
   blockedReason?: string
@@ -48,6 +49,7 @@ export default function PLSettle(): JSX.Element {
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [executing, setExecuting] = useState(false)
+  const [includeUnpostedVouchers, setIncludeUnpostedVouchers] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
   const canLoad = Boolean(window.electron && currentLedger && currentPeriod)
@@ -63,7 +65,8 @@ export default function PLSettle(): JSX.Element {
     try {
       const result = await window.api.plCarryForward.preview({
         ledgerId: currentLedger.id,
-        period: currentPeriod
+        period: currentPeriod,
+        includeUnpostedVouchers
       })
       setPreview(result)
     } catch (error) {
@@ -75,7 +78,7 @@ export default function PLSettle(): JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [currentLedger, currentPeriod])
+  }, [currentLedger, currentPeriod, includeUnpostedVouchers])
 
   useEffect(() => {
     void loadPreview()
@@ -90,9 +93,10 @@ export default function PLSettle(): JSX.Element {
   const handleExecute = async (): Promise<void> => {
     if (!currentLedger || !currentPeriod || !preview) return
 
+    const rangeLabel = includeUnpostedVouchers ? '当前勾选范围' : '当前已记账范围'
     const confirmText =
       preview.draftVoucherIds.length > 0
-        ? `当前期间存在 ${preview.draftVoucherIds.length} 张未审核的损益结转凭证，系统将先删除旧草稿再重建。是否继续？`
+        ? `当前期间存在 ${preview.draftVoucherIds.length} 张未审核的损益结转凭证，系统将先删除旧草稿并按${rangeLabel}重建。是否继续？`
         : `将按 ${preview.entries.length} 条分录执行期末损益结转，结转金额 ${totalAmount}。是否继续？`
 
     if (!window.confirm(confirmText)) return
@@ -102,7 +106,8 @@ export default function PLSettle(): JSX.Element {
     try {
       const result = await window.api.plCarryForward.execute({
         ledgerId: currentLedger.id,
-        period: currentPeriod
+        period: currentPeriod,
+        includeUnpostedVouchers
       })
       if (!result.success) {
         setMessage({ type: 'error', text: result.error || '执行损益结转失败' })
@@ -135,10 +140,27 @@ export default function PLSettle(): JSX.Element {
             期末损益结转
           </h2>
           <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            仅统计当前会计期间内已记账且非结转凭证的损益类科目发生额。
+            默认仅统计当前会计期间内已记账且非结转凭证；勾选“未记账凭证”后，扩大到当前期间全部状态的非结转凭证。
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <label
+            className="flex items-center gap-2 text-sm px-3 py-2 rounded-xl border"
+            style={{
+              color: 'var(--color-text-primary)',
+              borderColor: 'var(--color-glass-border-light)',
+              background: 'var(--color-glass-bg-light)'
+            }}
+          >
+            <input
+              type="checkbox"
+              className="h-4 w-4"
+              checked={includeUnpostedVouchers}
+              onChange={(event) => setIncludeUnpostedVouchers(event.target.checked)}
+              disabled={!canLoad || loading || executing}
+            />
+            <span>未记账凭证</span>
+          </label>
           <button
             className="glass-btn-secondary"
             onClick={() => void loadPreview()}
@@ -205,6 +227,12 @@ export default function PLSettle(): JSX.Element {
                   {preview.summary} / {preview.voucherWord}
                 </span>
               </div>
+              <div>
+                <span style={{ color: 'var(--color-text-muted)' }}>结转范围：</span>
+                <span style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
+                  {includeUnpostedVouchers ? '全部状态凭证' : '仅已记账凭证'}
+                </span>
+              </div>
             </div>
 
             <div className="glass-panel-light px-4 py-3 text-sm space-y-2">
@@ -253,7 +281,9 @@ export default function PLSettle(): JSX.Element {
               className="glass-panel-light px-4 py-3 text-sm"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              当前期间无可结转的损益金额，可直接进行期间结账。
+              {includeUnpostedVouchers
+                ? '当前期间全部状态凭证中无可结转的损益金额。'
+                : '当前期间已记账凭证中无可结转的损益金额，可直接进行期间结账。'}
             </div>
           )}
 
@@ -263,7 +293,7 @@ export default function PLSettle(): JSX.Element {
               style={{ color: 'var(--color-warning)' }}
             >
               当前期间存在 {preview.draftVoucherIds.length}{' '}
-              张未审核损益结转凭证，再次执行时将自动删除旧草稿并按当前已记账数据重建。
+              张未审核损益结转凭证，再次执行时将自动删除旧草稿并按当前所选范围重建。
             </div>
           )}
 

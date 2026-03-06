@@ -224,14 +224,15 @@ class FakeDatabase {
         all: (period, ledgerId) => {
           const currentLedgerId = Number(ledgerId)
           const currentPeriod = String(period)
+          const includeUnpostedVouchers = !normalized.includes('AND v.status = 2')
           const eligibleVoucherIds = new Set(
             this.vouchers
               .filter(
                 (voucher) =>
                   voucher.ledger_id === currentLedgerId &&
                   voucher.period === currentPeriod &&
-                  voucher.status === 2 &&
-                  voucher.is_carry_forward === 0
+                  voucher.is_carry_forward === 0 &&
+                  (includeUnpostedVouchers || voucher.status === 2)
               )
               .map((voucher) => voucher.id)
           )
@@ -586,6 +587,90 @@ describe('pl carry forward service', () => {
     ])
   })
 
+  it('defaults to posted vouchers and expands to all statuses when requested', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '1122', '应收账款', 'asset', 1)
+    seedSubject(db, 1, '1002', '银行存款', 'asset', 1)
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '6602', '管理费用', 'profit_loss', 1)
+    seedSubject(db, 1, '6603', '财务费用', 'profit_loss', 1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+    seedRule(db, 1, '6001', '4103')
+    seedRule(db, 1, '6602', '4103')
+    seedRule(db, 1, '6603', '4103')
+
+    insertVoucher(db, {
+      ledgerId: 1,
+      period: '2026-03',
+      voucherDate: '2026-03-08',
+      voucherNumber: 1,
+      status: 2,
+      entries: [
+        { subjectCode: '1122', debitAmount: 50000, creditAmount: 0 },
+        { subjectCode: '6001', debitAmount: 0, creditAmount: 50000 }
+      ]
+    })
+    insertVoucher(db, {
+      ledgerId: 1,
+      period: '2026-03',
+      voucherDate: '2026-03-12',
+      voucherNumber: 2,
+      status: 1,
+      entries: [
+        { subjectCode: '6602', debitAmount: 12000, creditAmount: 0 },
+        { subjectCode: '1002', debitAmount: 0, creditAmount: 12000 }
+      ]
+    })
+    insertVoucher(db, {
+      ledgerId: 1,
+      period: '2026-03',
+      voucherDate: '2026-03-18',
+      voucherNumber: 3,
+      status: 0,
+      entries: [
+        { subjectCode: '6603', debitAmount: 8000, creditAmount: 0 },
+        { subjectCode: '1002', debitAmount: 0, creditAmount: 8000 }
+      ]
+    })
+
+    const defaultPreview = previewPLCarryForward(db as never, {
+      ledgerId: 1,
+      period: '2026-03'
+    })
+    const expandedPreview = previewPLCarryForward(db as never, {
+      ledgerId: 1,
+      period: '2026-03',
+      includeUnpostedVouchers: true
+    })
+
+    expect(defaultPreview.includeUnpostedVouchers).toBe(false)
+    expect(defaultPreview.totalDebit).toBe(50000)
+    expect(defaultPreview.totalCredit).toBe(50000)
+    expect(defaultPreview.entries).toHaveLength(2)
+
+    expect(expandedPreview.includeUnpostedVouchers).toBe(true)
+    expect(expandedPreview.totalDebit).toBe(70000)
+    expect(expandedPreview.totalCredit).toBe(70000)
+    expect(expandedPreview.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subjectCode: '6602',
+          creditAmount: 12000
+        }),
+        expect.objectContaining({
+          subjectCode: '6603',
+          creditAmount: 8000
+        }),
+        expect.objectContaining({
+          subjectCode: '4103',
+          debitAmount: 20000
+        })
+      ])
+    )
+  })
+
   it('previews NPO carry-forward entries against the correct net-asset targets', () => {
     const db = createTestDb()
     openDbs.push(db)
@@ -749,6 +834,67 @@ describe('pl carry forward service', () => {
         creator_id: 9,
         auditor_id: 9,
         bookkeeper_id: 9
+      }
+    ])
+  })
+
+  it('can execute carry-forward for unposted vouchers when the option is enabled', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '1122', '应收账款', 'asset', 1)
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+    seedRule(db, 1, '6001', '4103')
+
+    insertVoucher(db, {
+      ledgerId: 1,
+      period: '2026-03',
+      voucherDate: '2026-03-05',
+      voucherNumber: 1,
+      status: 0,
+      entries: [
+        { subjectCode: '1122', debitAmount: 24000, creditAmount: 0 },
+        { subjectCode: '6001', debitAmount: 0, creditAmount: 24000 }
+      ]
+    })
+
+    expect(() =>
+      executePLCarryForward(db as never, {
+        ledgerId: 1,
+        period: '2026-03',
+        operatorId: 9
+      })
+    ).toThrow('当前期间无可结转的损益金额')
+
+    const result = executePLCarryForward(db as never, {
+      ledgerId: 1,
+      period: '2026-03',
+      operatorId: 9,
+      includeUnpostedVouchers: true
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.voucherNumber).toBe(2)
+    expect(db.vouchers.find((voucher) => voucher.id === result.voucherId)?.is_carry_forward).toBe(1)
+    expect(
+      db.voucherEntries
+        .filter((entry) => entry.voucher_id === result.voucherId)
+        .map((entry) => ({
+          subject_code: entry.subject_code,
+          debit_amount: entry.debit_amount,
+          credit_amount: entry.credit_amount
+        }))
+    ).toEqual([
+      {
+        subject_code: '6001',
+        debit_amount: 24000,
+        credit_amount: 0
+      },
+      {
+        subject_code: '4103',
+        debit_amount: 0,
+        credit_amount: 24000
       }
     ])
   })
