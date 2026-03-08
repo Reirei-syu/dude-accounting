@@ -13,6 +13,7 @@ import AccountingStandard from '../pages/AccountingStandard'
 import PeriodClose from '../pages/PeriodClose'
 import PLCarryForward from '../pages/PLCarryForward'
 import PLSettle from '../pages/PLSettle'
+import Backup from '../pages/Backup'
 import type React from 'react'
 import type { JSX } from 'react'
 
@@ -34,7 +35,8 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   AccountingStandard: AccountingStandard as React.ComponentType<WorkspaceComponentProps>,
   PeriodClose: PeriodClose as React.ComponentType<WorkspaceComponentProps>,
   PLCarryForward: PLCarryForward as React.ComponentType<WorkspaceComponentProps>,
-  PLSettle: PLSettle as React.ComponentType<WorkspaceComponentProps>
+  PLSettle: PLSettle as React.ComponentType<WorkspaceComponentProps>,
+  Backup: Backup as React.ComponentType<WorkspaceComponentProps>
 }
 
 export default function Workspace(): JSX.Element {

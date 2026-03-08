@@ -1,11 +1,12 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
-import { assertPLCarryForwardCompleted } from '../services/plCarryForward'
+import { appendOperationLog } from '../services/auditLog'
 import {
   assertPeriodReopenAllowed,
   getNextPeriod,
   getPeriodStatusSummary
 } from '../services/periodState'
+import { assertPLCarryForwardCompleted } from '../services/plCarryForward'
 import { requireAuth, requirePermission } from './session'
 
 function getPeriodParts(period: string): { year: number; month: number } {
@@ -61,16 +62,17 @@ function carryForwardYear(
 
   const movementRows = db
     .prepare(
-      `SELECT ve.subject_code AS subject_code,
-              SUM(ve.debit_amount) AS debit_sum,
-              SUM(ve.credit_amount) AS credit_sum
-         FROM voucher_entries ve
-         INNER JOIN vouchers v ON v.id = ve.voucher_id
-        WHERE v.ledger_id = ?
-          AND v.status = 2
-          AND v.period >= ?
-          AND v.period <= ?
-        GROUP BY ve.subject_code`
+      `SELECT
+         ve.subject_code AS subject_code,
+         SUM(ve.debit_amount) AS debit_sum,
+         SUM(ve.credit_amount) AS credit_sum
+       FROM voucher_entries ve
+       INNER JOIN vouchers v ON v.id = ve.voucher_id
+       WHERE v.ledger_id = ?
+         AND v.status = 2
+         AND v.period >= ?
+         AND v.period <= ?
+       GROUP BY ve.subject_code`
     )
     .all(ledgerId, startPeriod, endPeriod) as Array<{
     subject_code: string
@@ -107,8 +109,8 @@ function carryForwardYear(
   for (const subject of subjects) {
     const opening = openingMap.get(subject.code) ?? { debit: 0, credit: 0 }
     const movement = movementMap.get(subject.code) ?? { debit: 0, credit: 0 }
-
     const net = opening.debit - opening.credit + (movement.debit - movement.credit)
+
     if (net === 0) {
       deleteStmt.run(ledgerId, nextPeriod, subject.code)
       continue
@@ -145,7 +147,7 @@ export function registerPeriodHandlers(): void {
 
   ipcMain.handle('period:close', (event, payload: { ledgerId: number; period: string }) => {
     try {
-      requirePermission(event, 'bookkeeping')
+      const user = requirePermission(event, 'bookkeeping')
       const { ledgerId, period } = payload
 
       if (!ledgerId) {
@@ -154,10 +156,10 @@ export function registerPeriodHandlers(): void {
 
       const { year, month } = getPeriodParts(period)
       const nextPeriod = getNextPeriod(period)
-
       const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(ledgerId) as
         | { start_period: string }
         | undefined
+
       if (!ledger) {
         return { success: false, error: '账套不存在' }
       }
@@ -176,9 +178,10 @@ export function registerPeriodHandlers(): void {
           ledgerId,
           nextPeriod
         )
+
         const status = db
           .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
-          .get(ledgerId, period) as { is_closed: number }
+          .get(ledgerId, period) as { is_closed: number } | undefined
 
         if (status?.is_closed === 1) {
           return
@@ -186,8 +189,8 @@ export function registerPeriodHandlers(): void {
 
         db.prepare(
           `UPDATE periods
-             SET is_closed = 1, closed_at = datetime('now')
-             WHERE ledger_id = ? AND period = ?`
+           SET is_closed = 1, closed_at = datetime('now')
+           WHERE ledger_id = ? AND period = ?`
         ).run(ledgerId, period)
 
         if (month === 12) {
@@ -198,6 +201,21 @@ export function registerPeriodHandlers(): void {
       })
 
       closeTx()
+
+      appendOperationLog(db, {
+        ledgerId,
+        userId: user.id,
+        username: user.username,
+        module: 'period',
+        action: 'close',
+        targetType: 'period',
+        targetId: period,
+        details: {
+          nextPeriod,
+          carriedForward,
+          carriedCount
+        }
+      })
 
       return {
         success: true,
@@ -215,7 +233,7 @@ export function registerPeriodHandlers(): void {
 
   ipcMain.handle('period:reopen', (event, payload: { ledgerId: number; period: string }) => {
     try {
-      requirePermission(event, 'bookkeeping')
+      const user = requirePermission(event, 'bookkeeping')
       const { ledgerId, period } = payload
 
       if (!ledgerId) {
@@ -227,9 +245,19 @@ export function registerPeriodHandlers(): void {
 
       db.prepare(
         `UPDATE periods
-           SET is_closed = 0, closed_at = NULL
+         SET is_closed = 0, closed_at = NULL
          WHERE ledger_id = ? AND period = ?`
       ).run(ledgerId, period)
+
+      appendOperationLog(db, {
+        ledgerId,
+        userId: user.id,
+        username: user.username,
+        module: 'period',
+        action: 'reopen',
+        targetType: 'period',
+        targetId: period
+      })
 
       return { success: true }
     } catch (error) {

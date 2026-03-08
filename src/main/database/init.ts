@@ -5,9 +5,13 @@ import { seedAdminUser, seedSubjects, seedCashFlowItems, seedPLCarryForwardRules
 
 let db: Database.Database | null = null
 
+export function getDatabasePath(): string {
+  return path.join(app.getPath('userData'), 'dude-accounting.db')
+}
+
 export function getDatabase(): Database.Database {
   if (db) return db
-  const dbPath = path.join(app.getPath('userData'), 'dude-accounting.db')
+  const dbPath = getDatabasePath()
   db = new Database(dbPath)
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
@@ -191,6 +195,111 @@ export function initializeDatabase(): void {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- 操作日志
+    CREATE TABLE IF NOT EXISTS operation_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER DEFAULT NULL,
+      user_id INTEGER DEFAULT NULL,
+      username TEXT DEFAULT NULL,
+      module TEXT NOT NULL,
+      action TEXT NOT NULL,
+      target_type TEXT DEFAULT NULL,
+      target_id TEXT DEFAULT NULL,
+      reason TEXT DEFAULT NULL,
+      approval_tag TEXT DEFAULT NULL,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- 电子凭证文件
+    CREATE TABLE IF NOT EXISTS electronic_voucher_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      original_name TEXT NOT NULL,
+      stored_name TEXT NOT NULL,
+      stored_path TEXT NOT NULL,
+      file_ext TEXT NOT NULL DEFAULT '',
+      mime_type TEXT DEFAULT NULL,
+      sha256 TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      imported_by INTEGER DEFAULT NULL,
+      imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(ledger_id, sha256)
+    );
+
+    -- 电子凭证业务记录
+    CREATE TABLE IF NOT EXISTS electronic_voucher_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      file_id INTEGER NOT NULL,
+      voucher_type TEXT NOT NULL DEFAULT 'unknown'
+        CHECK(voucher_type IN ('digital_invoice', 'bank_receipt', 'bank_statement', 'unknown')),
+      source_number TEXT DEFAULT NULL,
+      source_date TEXT DEFAULT NULL,
+      counterpart_name TEXT DEFAULT NULL,
+      amount_cents INTEGER DEFAULT NULL,
+      fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'imported'
+        CHECK(status IN ('imported', 'verified', 'parsed', 'converted', 'rejected')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (file_id) REFERENCES electronic_voucher_files(id) ON DELETE CASCADE
+    );
+
+    -- 电子凭证验签/验真记录
+    CREATE TABLE IF NOT EXISTS electronic_voucher_verifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      record_id INTEGER NOT NULL,
+      verification_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(verification_status IN ('pending', 'verified', 'failed')),
+      verification_method TEXT DEFAULT NULL,
+      verification_message TEXT DEFAULT NULL,
+      verified_at TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (record_id) REFERENCES electronic_voucher_records(id) ON DELETE CASCADE
+    );
+
+    -- 凭证来源关联
+    CREATE TABLE IF NOT EXISTS voucher_source_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      voucher_id INTEGER NOT NULL,
+      source_type TEXT NOT NULL,
+      source_record_id INTEGER NOT NULL,
+      linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(voucher_id, source_type, source_record_id),
+      FOREIGN KEY (voucher_id) REFERENCES vouchers(id) ON DELETE CASCADE
+    );
+
+    -- 电子档案导出记录
+    CREATE TABLE IF NOT EXISTS archive_exports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      fiscal_year TEXT NOT NULL,
+      export_path TEXT NOT NULL,
+      manifest_path TEXT NOT NULL,
+      checksum TEXT DEFAULT NULL,
+      status TEXT NOT NULL DEFAULT 'generated'
+        CHECK(status IN ('generated', 'validated', 'failed')),
+      item_count INTEGER NOT NULL DEFAULT 0,
+      created_by INTEGER DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- 备份包记录
+    CREATE TABLE IF NOT EXISTS backup_packages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      fiscal_year TEXT DEFAULT NULL,
+      backup_path TEXT NOT NULL,
+      checksum TEXT NOT NULL,
+      file_size INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'generated'
+        CHECK(status IN ('generated', 'validated', 'failed')),
+      created_by INTEGER DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      validated_at TEXT DEFAULT NULL
+    );
+
     -- 创建索引
     CREATE INDEX IF NOT EXISTS idx_subjects_ledger ON subjects(ledger_id);
     CREATE INDEX IF NOT EXISTS idx_subject_aux_categories_subject ON subject_auxiliary_categories(subject_id);
@@ -201,11 +310,24 @@ export function initializeDatabase(): void {
       ON vouchers(ledger_id, period, voucher_word, voucher_number);
     CREATE INDEX IF NOT EXISTS idx_voucher_entries_voucher ON voucher_entries(voucher_id);
     CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
+    CREATE INDEX IF NOT EXISTS idx_operation_logs_created_at ON operation_logs(created_at);
+    CREATE INDEX IF NOT EXISTS idx_operation_logs_module_action ON operation_logs(module, action);
+    CREATE INDEX IF NOT EXISTS idx_operation_logs_ledger_user ON operation_logs(ledger_id, user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_electronic_voucher_records_fingerprint
+      ON electronic_voucher_records(ledger_id, fingerprint);
+    CREATE INDEX IF NOT EXISTS idx_electronic_voucher_records_file ON electronic_voucher_records(file_id);
+    CREATE INDEX IF NOT EXISTS idx_electronic_voucher_verifications_record
+      ON electronic_voucher_verifications(record_id);
+    CREATE INDEX IF NOT EXISTS idx_voucher_source_links_source
+      ON voucher_source_links(source_type, source_record_id);
+    CREATE INDEX IF NOT EXISTS idx_archive_exports_ledger_year ON archive_exports(ledger_id, fiscal_year);
+    CREATE INDEX IF NOT EXISTS idx_backup_packages_ledger_year ON backup_packages(ledger_id, fiscal_year);
   `)
 
   ensureVoucherSchema(db)
   ensureInitialBalanceSchema(db)
   ensureCashFlowMappingSchema(db)
+  ensureComplianceSchema(db)
 
   // Seed default data
   seedAdminUser(db)
@@ -358,6 +480,23 @@ export function ensureVoucherSchema(db: Database.Database): void {
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_number ON vouchers(ledger_id, period, voucher_word, voucher_number)'
   ).run()
   db.prepare('CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date)').run()
+}
+
+export function ensureComplianceSchema(db: Database.Database): void {
+  const voucherColumns = db.prepare("PRAGMA table_info('vouchers')").all() as Array<{ name: string }>
+  if (voucherColumns.length === 0) return
+
+  const addColumnIfMissing = (name: string, sql: string): void => {
+    if (!voucherColumns.some((column) => column.name === name)) {
+      db.exec(`ALTER TABLE vouchers ADD COLUMN ${sql}`)
+    }
+  }
+
+  addColumnIfMissing('posted_at', 'posted_at TEXT DEFAULT NULL')
+  addColumnIfMissing('emergency_reversal_reason', 'emergency_reversal_reason TEXT DEFAULT NULL')
+  addColumnIfMissing('emergency_reversal_by', 'emergency_reversal_by INTEGER DEFAULT NULL')
+  addColumnIfMissing('emergency_reversal_at', 'emergency_reversal_at TEXT DEFAULT NULL')
+  addColumnIfMissing('reversal_approval_tag', 'reversal_approval_tag TEXT DEFAULT NULL')
 }
 
 export function ensureCashFlowMappingSchema(db: Database.Database): void {

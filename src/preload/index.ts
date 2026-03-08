@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-// Type-safe API for renderer process
 const api = {
   auth: {
     login: (username: string, password: string) =>
@@ -114,6 +113,8 @@ const api = {
         | 'restoreDelete'
         | 'purgeDelete'
       voucherIds: number[]
+      reason?: string
+      approvalTag?: string
     }) => ipcRenderer.invoke('voucher:batchAction', payload),
     swapPositions: (payload: { voucherIds: [number, number] | number[] }) =>
       ipcRenderer.invoke('voucher:swapPositions', payload),
@@ -167,6 +168,65 @@ const api = {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     getAll: () => ipcRenderer.invoke('settings:getAll'),
     set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value)
+  },
+  auditLog: {
+    list: (filters?: {
+      ledgerId?: number
+      module?: string
+      action?: string
+      userId?: number
+      keyword?: string
+      limit?: number
+    }) => ipcRenderer.invoke('auditLog:list', filters),
+    export: (payload?: {
+      filters?: {
+        ledgerId?: number
+        module?: string
+        action?: string
+        userId?: number
+        keyword?: string
+        limit?: number
+      }
+      filePath?: string
+    }) => ipcRenderer.invoke('auditLog:export', payload)
+  },
+  backup: {
+    create: (payload: { ledgerId: number; fiscalYear?: string | null }) =>
+      ipcRenderer.invoke('backup:create', payload),
+    list: (ledgerId?: number) => ipcRenderer.invoke('backup:list', ledgerId),
+    validate: (backupId: number) => ipcRenderer.invoke('backup:validate', backupId),
+    restore: (backupId: number) => ipcRenderer.invoke('backup:restore', backupId)
+  },
+  archive: {
+    export: (payload: { ledgerId: number; fiscalYear: string }) =>
+      ipcRenderer.invoke('archive:export', payload),
+    list: (ledgerId?: number) => ipcRenderer.invoke('archive:list', ledgerId),
+    getManifest: (exportId: number) => ipcRenderer.invoke('archive:getManifest', exportId)
+  },
+  eVoucher: {
+    import: (payload: {
+      ledgerId: number
+      sourcePath: string
+      sourceNumber?: string | null
+      sourceDate?: string | null
+      amountCents?: number | null
+    }) => ipcRenderer.invoke('eVoucher:import', payload),
+    list: (ledgerId: number) => ipcRenderer.invoke('eVoucher:list', ledgerId),
+    verify: (payload: {
+      recordId: number
+      verificationStatus?: 'verified' | 'failed'
+      verificationMethod?: string
+      verificationMessage?: string
+    }) => ipcRenderer.invoke('eVoucher:verify', payload),
+    parse: (payload: {
+      recordId: number
+      sourceNumber?: string | null
+      sourceDate?: string | null
+      amountCents?: number | null
+      counterpartName?: string | null
+    }) => ipcRenderer.invoke('eVoucher:parse', payload),
+    convert: (payload: { recordId: number; voucherDate?: string; voucherWord?: string }) =>
+      ipcRenderer.invoke('eVoucher:convert', payload)
   }
 }
 
@@ -178,8 +238,8 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore (define in dts)
+  // @ts-ignore
   window.electron = electronAPI
-  // @ts-ignore (define in dts)
+  // @ts-ignore
   window.api = api
 }

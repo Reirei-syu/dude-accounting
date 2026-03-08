@@ -1,7 +1,13 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
+import { appendOperationLog } from '../services/auditLog'
 import { hashPassword, verifyPassword } from '../security/password'
-import { clearSessionByEvent, requireAdmin, setSessionByEvent } from './session'
+import {
+  clearSessionByEvent,
+  getSessionByEvent,
+  requireAdmin,
+  setSessionByEvent
+} from './session'
 
 function parsePermissions(raw: unknown): Record<string, boolean> {
   if (typeof raw !== 'string') return {}
@@ -21,7 +27,6 @@ function parsePermissions(raw: unknown): Record<string, boolean> {
 export function registerAuthHandlers(): void {
   const db = getDatabase()
 
-  // 登录验证
   ipcMain.handle('auth:login', (event, username: string, password: string) => {
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as
       | Record<string, unknown>
@@ -52,6 +57,16 @@ export function registerAuthHandlers(): void {
     }
     setSessionByEvent(event, sessionUser)
 
+    appendOperationLog(db, {
+      userId: sessionUser.id,
+      username: sessionUser.username,
+      module: 'auth',
+      action: 'login',
+      details: {
+        senderId: event.sender.id
+      }
+    })
+
     return {
       success: true,
       user: {
@@ -65,26 +80,38 @@ export function registerAuthHandlers(): void {
   })
 
   ipcMain.handle('auth:logout', (event) => {
+    const session = getSessionByEvent(event)
+    if (session) {
+      appendOperationLog(db, {
+        userId: session.id,
+        username: session.username,
+        module: 'auth',
+        action: 'logout',
+        details: {
+          senderId: event.sender.id
+        }
+      })
+    }
+
     clearSessionByEvent(event)
     return { success: true }
   })
 
-  // 获取所有用户
   ipcMain.handle('auth:getUsers', (event) => {
     requireAdmin(event)
     const users = db
       .prepare('SELECT id, username, real_name, permissions, is_admin FROM users')
       .all() as Array<Record<string, unknown>>
-    return users.map((u) => ({
-      id: u.id,
-      username: u.username,
-      realName: u.real_name,
-      permissions: parsePermissions(u.permissions),
-      isAdmin: u.is_admin === 1
+
+    return users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      realName: user.real_name,
+      permissions: parsePermissions(user.permissions),
+      isAdmin: user.is_admin === 1
     }))
   })
 
-  // 创建用户
   ipcMain.handle(
     'auth:createUser',
     (
@@ -97,7 +124,7 @@ export function registerAuthHandlers(): void {
       }
     ) => {
       try {
-        requireAdmin(event)
+        const admin = requireAdmin(event)
         db.prepare(
           `INSERT INTO users (username, real_name, password_hash, permissions, is_admin)
            VALUES (?, ?, ?, ?, 0)`
@@ -107,14 +134,26 @@ export function registerAuthHandlers(): void {
           hashPassword(data.password),
           JSON.stringify(data.permissions || {})
         )
+
+        appendOperationLog(db, {
+          userId: admin.id,
+          username: admin.username,
+          module: 'auth',
+          action: 'create_user',
+          targetType: 'user',
+          targetId: data.username.trim(),
+          details: {
+            realName: data.realName.trim()
+          }
+        })
+
         return { success: true }
-      } catch (err) {
-        return { success: false, error: (err as Error).message }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
       }
     }
   )
 
-  // 更新用户
   ipcMain.handle(
     'auth:updateUser',
     (
@@ -127,16 +166,17 @@ export function registerAuthHandlers(): void {
       }
     ) => {
       try {
-        requireAdmin(event)
+        const admin = requireAdmin(event)
         const target = db.prepare('SELECT id, is_admin FROM users WHERE id = ?').get(data.id) as
           | { id: number; is_admin: number }
           | undefined
+
         if (!target) {
           return { success: false, error: '用户不存在' }
         }
 
         if (target.is_admin === 1 && data.permissions !== undefined) {
-          return { success: false, error: 'admin权限不可修改' }
+          return { success: false, error: '管理员账号权限不可修改' }
         }
 
         if (data.realName !== undefined) {
@@ -154,27 +194,56 @@ export function registerAuthHandlers(): void {
             data.id
           )
         }
+
+        appendOperationLog(db, {
+          userId: admin.id,
+          username: admin.username,
+          module: 'auth',
+          action: data.permissions !== undefined ? 'update_permissions' : 'update_user',
+          targetType: 'user',
+          targetId: data.id,
+          details: {
+            realName: data.realName,
+            passwordUpdated: data.password !== undefined,
+            permissionKeys: data.permissions ? Object.keys(data.permissions) : []
+          }
+        })
+
         return { success: true }
-      } catch (err) {
-        return { success: false, error: (err as Error).message }
+      } catch (error) {
+        return { success: false, error: (error as Error).message }
       }
     }
   )
 
-  // 删除用户
   ipcMain.handle('auth:deleteUser', (event, userId: number) => {
     try {
-      requireAdmin(event)
+      const admin = requireAdmin(event)
       const user = db.prepare('SELECT is_admin FROM users WHERE id = ?').get(userId) as
         | Record<string, unknown>
         | undefined
-      if (!user) return { success: false, error: '用户不存在' }
-      if (user.is_admin === 1) return { success: false, error: 'admin账号不可删除' }
+
+      if (!user) {
+        return { success: false, error: '用户不存在' }
+      }
+      if (user.is_admin === 1) {
+        return { success: false, error: '管理员账号不可删除' }
+      }
 
       db.prepare('DELETE FROM users WHERE id = ?').run(userId)
+
+      appendOperationLog(db, {
+        userId: admin.id,
+        username: admin.username,
+        module: 'auth',
+        action: 'delete_user',
+        targetType: 'user',
+        targetId: userId
+      })
+
       return { success: true }
-    } catch (err) {
-      return { success: false, error: (err as Error).message }
+    } catch (error) {
+      return { success: false, error: (error as Error).message }
     }
   })
 }

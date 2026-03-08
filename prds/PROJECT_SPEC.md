@@ -13,381 +13,123 @@
 Name: Dude Accounting (`dude-app`)
 
 Goal:
-构建一个基于 Electron 的本地化桌面会计系统，统一账套管理、科目设置、凭证处理、期初余额、结账与系统管理能力。
+构建一个基于 Electron 的本地单机财务软件，供代理记账企业为委托单位记账使用。软件当前仅支持企业账套与民间非营利组织账套，不支持政府会计与事业单位会计。
 
 Current Stage:
 
-- 已形成可运行主流程：登录 -> 账套 -> 凭证录入/管理 -> 科目与辅助设置 -> 期初余额 -> 结账。
-- 已纳入期末损益结转主流程：支持按当前会计期间预览/执行损益结转，并在结账前校验当前期间是否已完成损益结转。
-- 期间结账已扩展为“闭账 + 凭证冻结”流程：结账后当前期间凭证禁止新增与编辑，允许通过反结账恢复编辑；结账完成后可选择是否切换至下一会计期间。
-- 报表输出、账簿查询中的部分页面仍为占位入口（未完成业务实现）。
+- 已具备登录、账套、凭证、科目、辅助、期初余额、损益结转、结账等基础流程。
+- 正在从“桌面记账应用雏形”改造为“具备合规基础能力的代理记账单机软件”。
+- 已识别的重点改造方向为：已记账不可逆、关键操作日志、电子凭证处理底座、备份与电子档案导出、账簿报表输出。
+- 账簿报表与部分系统管理能力仍未完成，属于已纳入合规范围但尚未落地的模块。
 
 ---
 
-## 2. Tech Stack
+## 2. Product Scope
+
+Supported:
+
+- 委托单位账套：`enterprise`、`npo`
+- 使用者：代理记账企业内部人员
+- 场景：一个软件实例维护多个委托单位账套
+
+Explicitly Unsupported:
+
+- 政府会计
+- 事业单位会计
+- 云端多端同步
+- 完整内置电子档案库
+
+---
+
+## 3. Tech Stack
 
 Backend (Electron Main Process):
 
 - Language: TypeScript (Node.js runtime in Electron main)
 - Framework: Electron IPC (`ipcMain.handle`) + service layer
 - Database: SQLite (`better-sqlite3`)
-- Domain libs: `decimal.js`（金额精度处理）
+- Domain libs: `decimal.js`
 
 Frontend (Renderer):
 
 - Framework: React 19 + TypeScript
 - State: Zustand
-- UI: Tailwind CSS + 自定义玻璃态样式 + Radix UI（Dialog/ContextMenu 等）
+- UI: Tailwind CSS + 自定义玻璃态样式 + Radix UI
 - Build: `electron-vite` + Vite
 
 Infrastructure:
 
-- Docker: no
-- Cloud: no（当前为本地单机数据存储）
-- Packaging: `electron-builder`（win/mac/linux）
+- Cloud: no
+- Data: local SQLite only
+- Packaging: `electron-builder`
 
 ---
 
-## 3. Repository Structure
+## 4. Repository Structure
 
 /src/main
-/database # SQLite 初始化、迁移兼容、种子数据
-/ipc # IPC 接口与权限校验入口
-/security # 密码哈希/验证
-/services # 账套设置、现金流映射、损益结转等业务服务
+/database # SQLite 初始化、迁移、种子数据
+/ipc # IPC 接口与权限控制入口
+/security # 认证与安全相关逻辑
+/services # 业务服务层
 
-/src/preload # contextBridge 暴露 window.api（类型声明见 index.d.ts）
+/src/preload # contextBridge 与 window.api 类型声明
 
 /src/renderer/src
-/pages # 页面级业务（凭证、科目、账套、系统）
-/components # 布局与通用组件（Sidebar/Tab/Workspace）
+/pages # 页面级业务
+/components # 布局与通用组件
 /stores # Zustand 状态
 /assets # 样式与资源
 
-/prds # 产品、技术与开发日志文档
-
-/design-system # 设计系统基线
+/prds # 产品、规格、开发日志与合规整改文档
 
 ---
 
-## 4. Core Modules
+## 5. Core Modules
 
 ### AuthSessionModule
 
 Responsibility:
-登录认证、会话绑定（按 renderer sender 维度）与权限校验。
+登录认证、会话绑定、权限校验。
 
-Functions:
+Key Channels:
 
-- `auth:login(username, password)`
-- `auth:logout()`
-- `auth:getUsers/createUser/updateUser/deleteUser`（管理员）
-- `requireAuth/requireAdmin/requirePermission`
-
-Dependencies:
-
-- `src/main/security/password.ts`
-- `users` 表
-
----
+- `auth:login`
+- `auth:logout`
+- `auth:getUsers/createUser/updateUser/deleteUser`
 
 ### LedgerModule
 
 Responsibility:
-账套生命周期管理、会计准则模板应用、会计期间基础维护。
+账套生命周期管理、模板应用、会计期间切换。
 
-Functions:
+Key Channels:
 
 - `ledger:getAll/create/update/delete/getPeriods`
 - `ledger:getStandardTemplates`
 - `ledger:applyStandardTemplate`
 
-Dependencies:
-
-- `seedSubjectsForLedger`
-- `seedCashFlowItemsForLedger`
-- `seedCashFlowMappingsForLedger`
-- `seedPLCarryForwardRulesForLedger`
-
----
-
-### AccountSetupService
+### AccountSetupModule
 
 Responsibility:
-会计科目与辅助核算档案的核心规则（含多辅助类别、系统科目限制、自定义辅助明细绑定）。
+会计科目、辅助核算类别、自定义辅助明细管理。
 
-Functions:
+Key Channels:
 
-- `listSubjects`
-- `createSubject`
-- `updateSubject`
-- `listAuxiliaryItems`
-- `createAuxiliaryItem`
-- `updateAuxiliaryItem`
-- `deleteAuxiliaryItem`
-
-Dependencies:
-
-- `subjects`
-- `auxiliary_items`
-- `subject_auxiliary_categories`
-- `subject_auxiliary_custom_items`
-
----
+- `subject:getAll/search/create/update/delete`
+- `auxiliary:getAll/getByCategory/create/update/delete`
 
 ### VoucherModule
 
 Responsibility:
-凭证录入、修改、列表查询、审核/记账/删除状态流转与分录查询；并受会计期间闭账状态约束。
+凭证录入、查询、审核、记账、删除与状态流转。
 
-Functions:
+Current Constraint:
 
-- `voucher:getNextNumber`
-- `voucher:save`
-- `voucher:update`
-- `voucher:list`（支持全部/未审核/已审核/已记账/已删除状态筛选）
-- `voucher:getEntries`
-- `voucher:batchAction` (`audit/bookkeep/unbookkeep/unaudit/delete/restoreDelete/purgeDelete`)
+- 已记账凭证默认应视为不可逆。
+- 普通用户不得反记账；仅允许管理员执行紧急逆转并留下完整日志。
 
-Dependencies:
-
-- `vouchers`
-- `voucher_entries`
-- `periods`
-- 权限：`voucher_entry/audit/bookkeeping`
-- 凭证录入时会计科目仅允许选择末级科目；数字关键字按代码/名称前缀联想；回车可自动选中当前联想结果中的第一个末级科目；同时提供默认收起的树形手动选科目弹窗。
-
----
-
-### CashFlowModule
-
-Responsibility:
-现金流量项目管理与自动匹配规则管理；支撑凭证录入现金流归集。
-
-Functions:
-
-- `cashflow:getItems`
-- `cashflow:getMappings`
-- `cashflow:createMapping/updateMapping/deleteMapping`
-- `applyCashFlowMappings`（服务层自动匹配）
-
-Dependencies:
-
-- `cash_flow_items`
-- `cash_flow_mappings`
-
----
-
-### PLCarryForwardModule
-
-Responsibility:
-按会计期间生成损益结转预览与自动凭证；默认仅基于已记账凭证归集损益，勾选“未记账凭证”后可扩大到当前期间全部状态凭证；企业账套结转至所有者权益类科目，民非账套结转至净资产类科目；结账前校验当前期间是否已完成损益结转。
-
-Functions:
-
-- `plCarryForward:listRules`
-- `plCarryForward:preview`
-- `plCarryForward:execute`
-- 内部校验：`assertPeriodCarryForwardCompleted`
-
-Dependencies:
-
-- `pl_carry_forward_rules`
-- `subjects`
-- `vouchers`
-- `voucher_entries`
-- `system_settings`
-
----
-
-### InitialBalanceAndPeriodModule
-
-Responsibility:
-期初余额录入与年末结账结转（生成下一年度 1 月期初）；执行期间闭账前校验当前期间损益结转状态，并维护期间闭账/反结账状态、闭账后凭证冻结提示与下一期间切换流程。
-
-Functions:
-
-- `initialBalance:list/save`
-- `period:getStatus/close/reopen`
-- 年末结账时执行 `carryForwardYear`
-
-Dependencies:
-
-- `initial_balances`
-- `periods`
-- `vouchers/voucher_entries`
-
----
-
-## 5. Data Models
-
-User (`users`)
-
-- id
-- username
-- real_name
-- password_hash
-- permissions (JSON)
-- is_admin
-- created_at
-
-Ledger (`ledgers`)
-
-- id
-- name
-- standard_type (`enterprise` | `npo`)
-- start_period
-- current_period
-- created_at
-
-Subject (`subjects`)
-
-- id
-- ledger_id
-- code
-- name
-- parent_code
-- category
-- balance_direction
-- has_auxiliary
-- is_cash_flow
-- level
-- is_system
-- created_at
-
-AuxiliaryItem (`auxiliary_items`)
-
-- id
-- ledger_id
-- category
-- code
-- name
-- created_at
-
-SubjectAuxiliaryCategory (`subject_auxiliary_categories`)
-
-- id
-- subject_id
-- category
-
-SubjectAuxiliaryCustomItem (`subject_auxiliary_custom_items`)
-
-- id
-- subject_id
-- auxiliary_item_id
-
-Voucher (`vouchers`)
-
-- id
-- ledger_id
-- period
-- voucher_date
-- voucher_number
-- voucher_word
-- status（`0=未审核` / `1=已审核` / `2=已记账` / `3=已删除`）
-- deleted_from_status（软删除前状态，供“撤回删除”恢复）
-- creator_id / auditor_id / bookkeeper_id
-- is_carry_forward
-- created_at / updated_at
-
-VoucherEntry (`voucher_entries`)
-
-- id
-- voucher_id
-- row_order
-- summary
-- subject_code
-- debit_amount
-- credit_amount
-- auxiliary_item_id
-- cash_flow_item_id
-
-CashFlowItem (`cash_flow_items`)
-
-- id
-- ledger_id
-- code
-- name
-- category
-- direction
-- is_system
-
-CashFlowMapping (`cash_flow_mappings`)
-
-- id
-- ledger_id
-- subject_code
-- counterpart_subject_code
-- entry_direction
-- cash_flow_item_id
-
-PLCarryForwardRule (`pl_carry_forward_rules`)
-
-- id
-- ledger_id
-- from_subject_code
-- to_subject_code
-
-InitialBalance (`initial_balances`)
-
-- id
-- ledger_id
-- period
-- subject_code
-- debit_amount
-- credit_amount
-
-Period (`periods`)
-
-- id
-- ledger_id
-- period
-- is_closed
-- closed_at
-
-SystemSetting (`system_settings`)
-
-- key
-- value
-- updated_at
-
----
-
-## 6. API Endpoints（IPC Channels）
-
-Auth:
-
-- `auth:login`
-- `auth:logout`
-- `auth:getUsers`
-- `auth:createUser`
-- `auth:updateUser`
-- `auth:deleteUser`
-
-Ledger:
-
-- `ledger:getAll`
-- `ledger:create`
-- `ledger:update`
-- `ledger:delete`
-- `ledger:getPeriods`
-- `ledger:getStandardTemplates`
-- `ledger:applyStandardTemplate`
-
-Subject & Auxiliary:
-
-- `subject:getAll`
-- `subject:search`
-- `subject:create`
-- `subject:update`
-- `subject:delete`
-- `auxiliary:getAll`
-- `auxiliary:getByCategory`
-- `auxiliary:create`
-- `auxiliary:update`
-- `auxiliary:delete`
-
-Voucher:
+Key Channels:
 
 - `voucher:getNextNumber`
 - `voucher:save`
@@ -396,87 +138,182 @@ Voucher:
 - `voucher:getEntries`
 - `voucher:batchAction`
 
-Cash Flow:
+### PeriodAndCarryForwardModule
 
-- `cashflow:getItems`
-- `cashflow:getMappings`
-- `cashflow:createMapping`
-- `cashflow:updateMapping`
-- `cashflow:deleteMapping`
+Responsibility:
+损益结转、期末结账、反结账、期间冻结控制。
 
-P&L Carry Forward:
+Key Channels:
 
-- `plCarryForward:listRules`
-- `plCarryForward:preview`
-- `plCarryForward:execute`
+- `plCarryForward:listRules/preview/execute`
+- `period:getStatus/close/reopen`
+- `initialBalance:list/save`
 
-Initial Balance & Period:
+### AuditLogModule
 
-- `initialBalance:list`
-- `initialBalance:save`
-- `period:getStatus`
-- `period:close`
-- `period:reopen`
+Responsibility:
+记录关键业务过程日志，并支持按人员、时间、内容查询与导出。
 
-Settings:
+Status:
 
-- `settings:get`
-- `settings:getAll`
-- `settings:set`
+- 新增中的合规模块。
+
+Planned Channels:
+
+- `auditLog:list`
+- `auditLog:export`
+
+### ElectronicVoucherModule
+
+Responsibility:
+电子凭证接收、验签/验真状态留痕、解析、去重、入账关联。
+
+Scope of current phase:
+
+- 数电发票
+- 银行电子回单/对账单
+
+Planned Channels:
+
+- `eVoucher:import`
+- `eVoucher:list`
+- `eVoucher:verify`
+- `eVoucher:parse`
+- `eVoucher:convert`
+
+### BackupRecoveryModule
+
+Responsibility:
+账套备份包生成、校验、恢复。
+
+Planned Channels:
+
+- `backup:create`
+- `backup:list`
+- `backup:validate`
+- `backup:restore`
+
+### ArchiveExportModule
+
+Responsibility:
+生成电子会计档案导出包，保留元数据、校验信息、结构化入账数据和导出记录。
+
+Planned Channels:
+
+- `archive:export`
+- `archive:list`
+- `archive:getManifest`
+
+### ReportingOutputModule
+
+Responsibility:
+账簿、报表、打印、版式输出、标准数据导出。
+
+Status:
+
+- 尚未落地，当前仍为合规缺口。
 
 ---
 
-## 7. Coding Conventions
+## 6. Data Models
 
-General:
+Existing Tables:
 
-- TypeScript 优先，输入输出结构显式化（preload `index.d.ts` 同步维护）。
-- 前端状态集中在 Zustand；页面内尽量只处理展示和交互。
-- 业务规则放在 main/service 或 main/ipc，不放 renderer。
+- `users`
+- `ledgers`
+- `subjects`
+- `auxiliary_items`
+- `subject_auxiliary_categories`
+- `subject_auxiliary_custom_items`
+- `vouchers`
+- `voucher_entries`
+- `cash_flow_items`
+- `cash_flow_mappings`
+- `pl_carry_forward_rules`
+- `initial_balances`
+- `periods`
+- `system_settings`
 
-Main Process:
+Compliance Tables Added / To Be Added:
 
-- IPC 层负责鉴权、参数透传和错误包装，复杂规则下沉到 service。
-- 数据写入优先使用事务，保持账务数据一致性。
+- `operation_logs`
+- `electronic_voucher_files`
+- `electronic_voucher_records`
+- `electronic_voucher_verifications`
+- `voucher_source_links`
+- `archive_exports`
+- `backup_packages`
 
-Renderer:
+Voucher Model Direction:
 
-- Workspace + Tab 架构统一承载页面。
-- 占位页面统一使用 `PlaceholderPage`，待业务补齐后替换。
-
----
-
-## 8. Constraints
-
-- 默认离线单机模式，所有核心数据保存在本地 SQLite。
-- 除登录外，IPC 调用都依赖会话；敏感操作依赖权限键：
-  `voucher_entry`, `audit`, `bookkeeping`, `system_settings`, `ledger_settings`。
-- 企业与民非账套模板都内置，账套创建后自动灌入对应系统科目和规则。
-- 系统科目（`is_system = 1`）禁止改名、禁止删除。
-- 新建明细科目必须选择上级科目，并沿用上级类别与余额方向。
-- 凭证录入与凭证修改时，所有分录必须使用当前账套下的末级会计科目，前后端都要执行强制校验。
-- 辅助核算类别允许多选；选中 `custom` 时必须绑定至少一个自定义辅助明细。
-- 已被凭证引用的辅助项不可删除。
-- 会计准则模板切换仅允许在“无凭证且无非零期初余额”账套上执行。
-- 期末损益结转按当前会计期间执行；默认仅统计当前期间内已记账且非损益结转凭证的损益类科目发生额，勾选“未记账凭证”后可扩大到当前期间全部状态的非损益结转凭证。
-- 自动生成的损益结转凭证标记 `is_carry_forward = 1`；同一期间已存在未审核损益结转凭证时允许删除后重建，已审核或已记账时禁止重跑。
-- 期间结账前必须完成当前期间损益结转；若当前期间无可结转金额，则允许直接结账。
-- 期末结账按期间闭账，12 月结账会自动结转生成下一年度 1 月期初余额。
-- 凭证删除采用软删除：未审核、已审核未记账凭证执行“删除”后进入 `已删除` 状态并保留原凭证号；“撤回删除”恢复到删除前状态；“彻底删除”才执行物理删除。
-- `voucher:list` 默认返回未删除凭证；凭证管理“全部”标签通过显式状态参数查看全部状态，`已删除` 标签仅查看软删除凭证。
-- 期间已结账时，当前期间凭证禁止新增与编辑；未审核、已审核未记账凭证仅允许删除（软删除），不允许继续编辑；如需恢复编辑，必须先反结账。
-- `period:getStatus` 需返回当前期间闭账状态以及未审核、已审核未记账凭证提示信息，用于前端展示“结账后如需继续编辑请先反结账”的文案。
-- 结账完成后前端需提示是否进入下一会计期间；是否切换期间不影响当前期间闭账结果。
-- 金额按“分”存储（整数），输入允许两位小数。
+- 保留 `status`
+- 增补已记账元数据
+- 增补管理员紧急逆转轨迹
+- 增补电子凭证来源关联
 
 ---
 
-## 9. Future Modules (Optional)
+## 7. API Surface（Current + In-flight）
 
-- 报表输出模块完善：资产负债表、利润表/业务活动表、现金流量表。
-- 账簿查询模块完善：总账、明细账、辅助账等。
-- 账套备份/恢复能力（当前菜单有入口，占位中）。
-- 云备份与多端同步（尚未规划实现）。
+Current:
+
+- `auth:*`
+- `ledger:*`
+- `subject:*`
+- `auxiliary:*`
+- `voucher:*`
+- `cashflow:*`
+- `plCarryForward:*`
+- `initialBalance:*`
+- `period:*`
+- `settings:*`
+
+In-flight:
+
+- `auditLog:list/export`
+- `backup:create/list/restore/validate`
+- `eVoucher:import/list/verify/parse/convert`
+- `archive:export/list/getManifest`
+
+---
+
+## 8. Key Constraints
+
+- 默认离线单机模式，核心数据保存在本地 SQLite。
+- 一个账套对应一个委托单位，不支持政府和事业单位会计模板。
+- 普通用户不得对已记账凭证执行反记账。
+- 管理员紧急逆转必须强制记录原因并写入操作日志。
+- 电子凭证处理必须具备重复入账拦截能力。
+- 账套删除必须经过备份/导出前置校验。
+- 备份文件与档案导出文件不得混用。
+- 金额按“分”存储，输入允许两位小数。
+
+---
+
+## 9. Current Compliance Gaps
+
+- 账簿查询与财务报表仍为占位页面。
+- 电子凭证标准化接收、验签/验真、解析、结构化入账尚未完成。
+- 电子会计档案导出接口尚未完成。
+- 操作日志查询与导出尚未完成。
+- 账套备份/恢复尚未完成。
+- 已记账凭证控制需要从当前实现继续收紧。
+
+---
+
+## 10. Verification Baseline
+
+Required after each compliance slice:
+
+- `npm run typecheck`
+- `npm test`
+
+Documentation sync required:
+
+- `prds/prd.md`
+- `prds/PROJECT_SPEC.md`
+- `prds/合规整改计划.md`
+- `prds/开发日志.md`
 
 ---
 

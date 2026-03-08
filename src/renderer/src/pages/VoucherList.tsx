@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import Decimal from 'decimal.js'
+import { useAuthStore } from '../stores/authStore'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -104,7 +105,7 @@ const TAB_CONFIG: Array<{
 const BATCH_ACTION_TEXT: Record<BatchAction, { completed: string; available: string }> = {
   audit: { completed: '已审核', available: '可审核' },
   bookkeep: { completed: '已记账', available: '可记账' },
-  unbookkeep: { completed: '已反记账', available: '可反记账' },
+  unbookkeep: { completed: '已紧急逆转', available: '可紧急逆转' },
   unaudit: { completed: '已反审核', available: '可反审核' },
   delete: { completed: '已删除', available: '可删除' },
   restoreDelete: { completed: '已撤回删除', available: '可撤回删除' },
@@ -213,6 +214,7 @@ const buildRefreshSummary = (
 
 export default function VoucherList(): JSX.Element {
   const { currentLedger, currentPeriod } = useLedgerStore()
+  const currentUser = useAuthStore((state) => state.user)
   const openTab = useUIStore((state) => state.openTab)
   const activeTabId = useUIStore((state) => state.activeTabId)
   const [allRows, setAllRows] = useState<VoucherRow[]>([])
@@ -227,6 +229,7 @@ export default function VoucherList(): JSX.Element {
   const selectAllRef = useRef<HTMLInputElement | null>(null)
 
   const canOperate = Boolean(window.electron && currentLedger)
+  const canEmergencyReverse = currentUser?.isAdmin === true
   const isClosedPeriod = periodStatus?.is_closed === 1
   const closedPeriodMessage =
     currentPeriod && currentPeriod.trim() !== '' ? buildClosedPeriodEditMessage(currentPeriod) : ''
@@ -403,9 +406,28 @@ export default function VoucherList(): JSX.Element {
     }
 
     try {
+      let reason: string | undefined
+      let approvalTag: string | undefined
+
+      if (action === 'unbookkeep') {
+        reason = window.prompt('请输入管理员紧急逆转原因')?.trim()
+        if (!reason) {
+          setMessage({ type: 'error', text: '紧急逆转必须填写原因' })
+          return
+        }
+
+        approvalTag = window.prompt('请输入审批标记')?.trim()
+        if (!approvalTag) {
+          setMessage({ type: 'error', text: '紧急逆转必须填写审批标记' })
+          return
+        }
+      }
+
       const result = await window.api.voucher.batchAction({
         action,
-        voucherIds: selected
+        voucherIds: selected,
+        reason,
+        approvalTag
       })
 
       if (!result.success) {
@@ -542,9 +564,13 @@ export default function VoucherList(): JSX.Element {
       ]
     }
 
+    if (activeStatusTab === 'posted' && !canEmergencyReverse) {
+      return []
+    }
+
     if (activeStatusTab === 'posted') {
       return [
-        { key: 'unbookkeep', label: '反记账', onClick: () => void runBatchAction('unbookkeep') }
+        { key: 'unbookkeep', label: '紧急逆转', onClick: () => void runBatchAction('unbookkeep') }
       ]
     }
 
@@ -564,7 +590,7 @@ export default function VoucherList(): JSX.Element {
       ]
     }
 
-    return [
+    const buttons: ActionButtonConfig[] = [
       { key: 'refresh', label: '刷新', onClick: () => void handleRefresh() },
       {
         key: 'edit',
@@ -581,10 +607,19 @@ export default function VoucherList(): JSX.Element {
       },
       { key: 'audit', label: '审核', onClick: () => void runBatchAction('audit') },
       { key: 'bookkeep', label: '记账', onClick: () => void runBatchAction('bookkeep') },
-      { key: 'unbookkeep', label: '反记账', onClick: () => void runBatchAction('unbookkeep') },
       { key: 'unaudit', label: '反审核', onClick: () => void runBatchAction('unaudit') },
       { key: 'delete', label: '删除', onClick: () => void runBatchAction('delete') }
     ]
+
+    if (canEmergencyReverse) {
+      buttons.splice(5, 0, {
+        key: 'unbookkeep',
+        label: '紧急逆转',
+        onClick: () => void runBatchAction('unbookkeep')
+      })
+    }
+
+    return buttons
   })()
 
   const emptyText = useMemo(() => {

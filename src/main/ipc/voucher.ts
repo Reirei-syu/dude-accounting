@@ -1,9 +1,11 @@
 import { ipcMain } from 'electron'
 import Decimal from 'decimal.js'
 import { getDatabase } from '../database/init'
+import { appendOperationLog } from '../services/auditLog'
 import { applyCashFlowMappings } from '../services/cashFlowMapping'
 import { assertPeriodWritable } from '../services/periodState'
-import { requireAuth, requirePermission } from './session'
+import { assertVoucherSwapAllowed, normalizeEmergencyReversalPayload } from '../services/voucherControl'
+import { requireAdmin, requireAuth, requirePermission } from './session'
 import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
 import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
 
@@ -719,6 +721,8 @@ export function registerVoucherHandlers(): void {
         }
       }
 
+      assertVoucherSwapAllowed([firstVoucher, secondVoucher])
+
       if (
         firstVoucher.ledgerId !== secondVoucher.ledgerId ||
         firstVoucher.period !== secondVoucher.period
@@ -856,6 +860,20 @@ export function registerVoucherHandlers(): void {
 
       swapTx()
 
+      const currentUser = requirePermission(event, 'voucher_entry')
+      appendOperationLog(db, {
+        ledgerId: firstVoucher.ledgerId,
+        userId: currentUser.id,
+        username: currentUser.username,
+        module: 'voucher',
+        action: 'swap_positions',
+        targetType: 'voucher_pair',
+        targetId: voucherIds.join(','),
+        details: {
+          voucherIds
+        }
+      })
+
       return { success: true, voucherIds }
     } catch (error) {
       return {
@@ -875,6 +893,8 @@ export function registerVoucherHandlers(): void {
       payload: {
         action: VoucherBatchAction
         voucherIds: number[]
+        reason?: string
+        approvalTag?: string
       }
     ) => {
       try {
@@ -886,9 +906,18 @@ export function registerVoucherHandlers(): void {
         const user =
           action === 'audit' || action === 'unaudit'
             ? requirePermission(event, 'audit')
-            : action === 'bookkeep' || action === 'unbookkeep'
+            : action === 'bookkeep'
               ? requirePermission(event, 'bookkeeping')
+              : action === 'unbookkeep'
+                ? requireAdmin(event)
               : requirePermission(event, 'voucher_entry')
+        const emergencyReversal =
+          action === 'unbookkeep'
+            ? normalizeEmergencyReversalPayload({
+                reason: payload.reason,
+                approvalTag: payload.approvalTag
+              })
+            : null
 
         const placeholders = payload.voucherIds.map(() => '?').join(',')
         const vouchers = db
@@ -938,7 +967,10 @@ export function registerVoucherHandlers(): void {
               if (voucher.status !== 1) throw new Error('仅已审核凭证可记账')
               db.prepare(
                 `UPDATE vouchers
-                                 SET status = 2, bookkeeper_id = ?, updated_at = datetime('now')
+                                 SET status = 2,
+                                     bookkeeper_id = ?,
+                                     posted_at = datetime('now'),
+                                     updated_at = datetime('now')
                                  WHERE id = ?`
               ).run(user.id, voucher.id)
             } else if (action === 'unbookkeep') {
@@ -946,9 +978,20 @@ export function registerVoucherHandlers(): void {
               if (voucher.status !== 2) throw new Error('仅已记账凭证可反记账')
               db.prepare(
                 `UPDATE vouchers
-                                 SET status = 1, bookkeeper_id = NULL, updated_at = datetime('now')
+                                 SET status = 1,
+                                     bookkeeper_id = NULL,
+                                     emergency_reversal_reason = ?,
+                                     emergency_reversal_by = ?,
+                                     emergency_reversal_at = datetime('now'),
+                                     reversal_approval_tag = ?,
+                                     updated_at = datetime('now')
                                  WHERE id = ?`
-              ).run(voucher.id)
+              ).run(
+                emergencyReversal?.reason ?? null,
+                user.id,
+                emergencyReversal?.approvalTag ?? null,
+                voucher.id
+              )
             } else if (action === 'unaudit') {
               if (voucher.status !== 1) continue
               if (voucher.status !== 1) throw new Error('仅已审核凭证可反审核')
@@ -1004,6 +1047,27 @@ export function registerVoucherHandlers(): void {
         })
 
         runTx()
+        appendOperationLog(db, {
+          ledgerId:
+            applicableVouchers.length > 0
+              ? applicableVouchers[0].ledger_id
+              : vouchers.length > 0
+                ? vouchers[0].ledger_id
+                : null,
+          userId: user.id,
+          username: user.username,
+          module: 'voucher',
+          action,
+          targetType: 'voucher_batch',
+          targetId: payload.voucherIds.join(','),
+          reason: emergencyReversal?.reason ?? null,
+          approvalTag: emergencyReversal?.approvalTag ?? null,
+          details: {
+            processedCount: applicableVouchers.length,
+            skippedCount: skippedVouchers.length,
+            requestedCount: vouchers.length
+          }
+        })
         return {
           success: true,
           processedCount: applicableVouchers.length,

@@ -343,6 +343,8 @@ interface VoucherAPI {
       | 'restoreDelete'
       | 'purgeDelete'
     voucherIds: number[]
+    reason?: string
+    approvalTag?: string
   }) => Promise<{
     success: boolean
     error?: string
@@ -454,6 +456,179 @@ interface PeriodAPI {
   }>
 }
 
+interface AuditLogAPI {
+  list: (filters?: {
+    ledgerId?: number
+    module?: string
+    action?: string
+    userId?: number
+    keyword?: string
+    limit?: number
+  }) => Promise<
+    Array<{
+      id: number
+      ledger_id: number | null
+      user_id: number | null
+      username: string | null
+      module: string
+      action: string
+      target_type: string | null
+      target_id: string | null
+      reason: string | null
+      approval_tag: string | null
+      details_json: string
+      created_at: string
+    }>
+  >
+  export: (payload?: {
+    filters?: {
+      ledgerId?: number
+      module?: string
+      action?: string
+      userId?: number
+      keyword?: string
+      limit?: number
+    }
+    filePath?: string
+  }) => Promise<{
+    success: boolean
+    error?: string
+    rowCount?: number
+    filePath?: string
+    csv?: string
+  }>
+}
+
+interface BackupAPI {
+  create: (payload: { ledgerId: number; fiscalYear?: string | null }) => Promise<{
+    success: boolean
+    error?: string
+    backupId?: number
+    backupPath?: string
+    checksum?: string
+    fileSize?: number
+  }>
+  list: (ledgerId?: number) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      fiscal_year: string | null
+      backup_path: string
+      checksum: string
+      file_size: number
+      status: 'generated' | 'validated' | 'failed'
+      created_by: number | null
+      created_at: string
+      validated_at: string | null
+    }>
+  >
+  validate: (backupId: number) => Promise<{
+    success: boolean
+    valid?: boolean
+    actualChecksum?: string | null
+    error?: string
+  }>
+  restore: (backupId: number) => Promise<{
+    success: boolean
+    restartRequired?: boolean
+    error?: string
+  }>
+}
+
+interface ArchiveAPI {
+  export: (payload: { ledgerId: number; fiscalYear: string }) => Promise<{
+    success: boolean
+    exportId?: number
+    exportPath?: string
+    manifestPath?: string
+    error?: string
+  }>
+  list: (ledgerId?: number) => Promise<
+    Array<{
+      id: number
+      ledger_id: number
+      fiscal_year: string
+      export_path: string
+      manifest_path: string
+      checksum: string | null
+      status: 'generated' | 'validated' | 'failed'
+      item_count: number
+      created_by: number | null
+      created_at: string
+    }>
+  >
+  getManifest: (exportId: number) => Promise<{
+    schemaVersion: '1.0'
+    ledgerId: number
+    ledgerName: string
+    fiscalYear: string
+    exportedAt: string
+    counts: {
+      originalVoucherFiles: number
+      vouchers: number
+      reports: number
+    }
+    metadata: Record<string, unknown>
+  }>
+}
+
+interface ElectronicVoucherAPI {
+  import: (payload: {
+    ledgerId: number
+    sourcePath: string
+    sourceNumber?: string | null
+    sourceDate?: string | null
+    amountCents?: number | null
+  }) => Promise<{
+    success: boolean
+    error?: string
+    fileId?: number
+    recordId?: number
+    voucherType?: 'digital_invoice' | 'bank_receipt' | 'bank_statement' | 'unknown'
+    fingerprint?: string
+  }>
+  list: (ledgerId: number) => Promise<Array<Record<string, unknown>>>
+  verify: (payload: {
+    recordId: number
+    verificationStatus?: 'verified' | 'failed'
+    verificationMethod?: string
+    verificationMessage?: string
+  }) => Promise<{
+    success: boolean
+    error?: string
+    verificationStatus?: 'verified' | 'failed'
+  }>
+  parse: (payload: {
+    recordId: number
+    sourceNumber?: string | null
+    sourceDate?: string | null
+    amountCents?: number | null
+    counterpartName?: string | null
+  }) => Promise<{
+    success: boolean
+    error?: string
+    structuredData?: Record<string, unknown>
+  }>
+  convert: (payload: { recordId: number; voucherDate?: string; voucherWord?: string }) => Promise<{
+    success: boolean
+    error?: string
+    draftVoucher?: {
+      ledgerId: number
+      voucherDate: string
+      voucherWord: string
+      summary: string
+      sourceRecordId: number
+      entries: Array<{
+        summary: string
+        subjectCode: string
+        debitAmount: string
+        creditAmount: string
+        cashFlowItemId: number | null
+      }>
+    }
+  }>
+}
+
 interface DudeAPI {
   auth: AuthAPI
   ledger: LedgerAPI
@@ -465,6 +640,10 @@ interface DudeAPI {
   initialBalance: InitialBalanceAPI
   period: PeriodAPI
   settings: SettingsAPI
+  auditLog: AuditLogAPI
+  backup: BackupAPI
+  archive: ArchiveAPI
+  eVoucher: ElectronicVoucherAPI
 }
 
 declare global {
