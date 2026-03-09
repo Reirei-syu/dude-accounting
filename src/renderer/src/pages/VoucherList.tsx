@@ -3,6 +3,7 @@ import Decimal from 'decimal.js'
 import { useAuthStore } from '../stores/authStore'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
+import { sortVouchersForDisplay } from './voucherOrdering'
 
 type VoucherStatus = 0 | 1 | 2 | 3
 type VoucherStatusTab = 'all' | 'pending' | 'audited' | 'posted' | 'deleted'
@@ -330,7 +331,7 @@ export default function VoucherList(): JSX.Element {
           period: currentPeriod || undefined,
           status: 'all'
         })
-        const nextRows = list as VoucherRow[]
+        const nextRows = sortVouchersForDisplay(list as VoucherRow[])
         setAllRows(nextRows)
         setSelected((prev) => prev.filter((id) => nextRows.some((row) => row.id === id)))
 
@@ -560,11 +561,6 @@ export default function VoucherList(): JSX.Element {
     const row = allRows.find((item) => item.id === voucherId)
     if (!row) {
       setMessage({ type: 'error', text: '凭证不存在' })
-      return
-    }
-
-    if (isClosedPeriod) {
-      setMessage({ type: 'error', text: closedPeriodMessage })
       return
     }
 

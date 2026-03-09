@@ -17,6 +17,10 @@ import {
   filterVoucherRowsForSave,
   inheritSummaryFromPreviousRow
 } from './voucherEntryRowUtils'
+import {
+  getDefaultVoucherDateForNewVoucher,
+  sortVouchersForDisplay
+} from './voucherOrdering'
 
 interface VoucherRow {
   id: string
@@ -90,6 +94,12 @@ interface VoucherListItem {
   voucher_number: number
   voucher_word: string
   status: 0 | 1 | 2 | 3
+  creator_id?: number | null
+  auditor_id?: number | null
+  bookkeeper_id?: number | null
+  creator_name?: string | null
+  auditor_name?: string | null
+  bookkeeper_name?: string | null
 }
 
 interface VoucherEntryFromApi {
@@ -388,14 +398,6 @@ const hasDraftRowContent = (row: VoucherRow): boolean =>
   row.credit.trim() !== '' ||
   row.cashFlowItemId !== null
 
-const sortVoucherRowsAsc = (rows: VoucherListItem[]): VoucherListItem[] =>
-  [...rows].sort((left, right) => {
-    if (left.voucher_date !== right.voucher_date) {
-      return left.voucher_date.localeCompare(right.voucher_date)
-    }
-    return left.voucher_number - right.voucher_number
-  })
-
 const toPositiveInt = (value: unknown): number | null => {
   const parsed = typeof value === 'number' ? value : Number(value)
   if (!Number.isInteger(parsed) || parsed <= 0) return null
@@ -408,6 +410,8 @@ const buildEditRequestToken = (voucherId: number | null, requestKey?: number): s
 }
 
 const PERIOD_PATTERN = /^\d{4}-\d{2}$/
+const CASH_FLOW_DIALOG_GRID_TEMPLATE =
+  '72px 72px minmax(170px, 1.2fr) minmax(210px, 1.35fr) minmax(108px, 0.7fr) minmax(420px, 2.75fr)'
 
 const buildClosedPeriodEditMessage = (period: string): string =>
   `当前会计期间（${period}）已结账，本期凭证不能新增或编辑；未审核、未记账凭证仅可删除，如需继续编辑请先反结账。`
@@ -635,16 +639,6 @@ export default function VoucherEntry({
 
   useEffect(() => {
     if (editingVoucherId !== null) return
-    if (!activePeriod) return
-    const nextDate = `${activePeriod}-01`
-    const frameId = window.requestAnimationFrame(() => {
-      setDate((prev) => (prev.startsWith(activePeriod) ? prev : nextDate))
-    })
-    return () => window.cancelAnimationFrame(frameId)
-  }, [activePeriod, editingVoucherId])
-
-  useEffect(() => {
-    if (editingVoucherId !== null) return
     if (periodStatus?.is_closed === 1) return
     if (!currentLedger || !activePeriod || !date || date.length < 7) return
     if (!date.startsWith(activePeriod)) return
@@ -762,6 +756,17 @@ export default function VoucherEntry({
     if (exactIndex >= 0) return exactIndex
     return navigableVouchers.findIndex((voucher) => String(voucher.id) === String(editingVoucherId))
   }, [editingVoucherId, navigableVouchers])
+  const currentVoucherPeriod = useMemo(
+    () => (date.length >= 7 && PERIOD_PATTERN.test(date.slice(0, 7)) ? date.slice(0, 7) : ''),
+    [date]
+  )
+  const navigableVoucherPeriod = useMemo(
+    () =>
+      editingVoucherId === null
+        ? activePeriod || undefined
+        : currentVoucherPeriod || activePeriod || undefined,
+    [activePeriod, currentVoucherPeriod, editingVoucherId]
+  )
   const hasPrevVoucher = currentEditableIndex > 0
   const hasNextVoucher =
     currentEditableIndex >= 0 && currentEditableIndex < navigableVouchers.length - 1
@@ -777,6 +782,17 @@ export default function VoucherEntry({
     baselineSignature !== '' &&
     buildDraftSignature(date, rows) !== baselineSignature
   const hasNewVoucherDraft = editingVoucherId === null && rows.some(hasDraftRowContent)
+  const currentVoucherMeta = useMemo(
+    () =>
+      editingVoucherId === null
+        ? null
+        : navigableVouchers.find((voucher) => voucher.id === editingVoucherId) ?? null,
+    [editingVoucherId, navigableVouchers]
+  )
+  const creatorDisplayName =
+    currentVoucherMeta?.creator_name || currentUser?.realName || currentUser?.username || '待制单'
+  const auditorDisplayName = currentVoucherMeta?.auditor_name || '待审核'
+  const bookkeeperDisplayName = currentVoucherMeta?.bookkeeper_name || '待记账'
 
   // Dynamic set ref helper
   const setRef =
@@ -934,6 +950,10 @@ export default function VoucherEntry({
   }
 
   const applyCashFlowAllocation = (): void => {
+    if (!canEditFields) {
+      return
+    }
+
     const hasMissingItem = cashFlowCandidateRows.some(({ row }) => {
       const draft = cashFlowDraft[row.id]
       return draft?.selected === true && draft.cashFlowItemId === null
@@ -958,14 +978,23 @@ export default function VoucherEntry({
     setMessage({ type: 'success', text: '现金流量分配已更新' })
   }
 
-  const loadNavigableVoucherRows = async (ledgerId: number): Promise<VoucherListItem[]> => {
-    const allList = await window.api.voucher.list({ ledgerId })
-    return sortVoucherRowsAsc(allList as VoucherListItem[])
+  const loadNavigableVoucherRows = async (
+    ledgerId: number,
+    period?: string
+  ): Promise<VoucherListItem[]> => {
+    const allList = await window.api.voucher.list({
+      ledgerId,
+      period
+    })
+    return sortVouchersForDisplay(allList as VoucherListItem[])
   }
 
-  const refreshNavigableVouchers = async (ledgerId: number): Promise<VoucherListItem[]> => {
+  const refreshNavigableVouchers = async (
+    ledgerId: number,
+    period?: string
+  ): Promise<VoucherListItem[]> => {
     try {
-      const list = await loadNavigableVoucherRows(ledgerId)
+      const list = await loadNavigableVoucherRows(ledgerId, period)
       setNavigableVouchers(list)
       return list
     } catch (error) {
@@ -985,9 +1014,12 @@ export default function VoucherEntry({
     let cancelled = false
     void (async () => {
       try {
-        const list = await loadNavigableVoucherRows(ledgerId)
+        const list = await loadNavigableVoucherRows(ledgerId, navigableVoucherPeriod)
         if (!cancelled) {
           setNavigableVouchers(list)
+          if (editingVoucherId === null && activePeriod) {
+            setDate(getDefaultVoucherDateForNewVoucher(activePeriod, list))
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -1000,7 +1032,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [currentLedger?.id])
+  }, [activePeriod, currentLedger?.id, editingVoucherId, navigableVoucherPeriod])
 
   const loadVoucherForEdit = async (voucherId: number): Promise<boolean> => {
     if (!currentLedger || !window.electron) return false
@@ -1156,16 +1188,19 @@ export default function VoucherEntry({
         setDismissedEditRequestToken(currentEditRequestToken)
       }
       resetVoucher()
-      const targetDate = activePeriod ? `${activePeriod}-01` : date
-      if (activePeriod) {
-        setDate(targetDate)
-      }
+      let targetDate = activePeriod ? `${activePeriod}-01` : date
 
       if (!currentLedger || !targetDate || targetDate.length < 7 || !window.electron) {
         if (messageText) {
           setMessage({ type: 'success', text: messageText })
         }
         return
+      }
+
+      const navigableList = await refreshNavigableVouchers(currentLedger.id, activePeriod || undefined)
+      if (activePeriod) {
+        targetDate = getDefaultVoucherDateForNewVoucher(activePeriod, navigableList)
+        setDate(targetDate)
       }
 
       const period = activePeriod || targetDate.slice(0, 7)
@@ -1216,7 +1251,12 @@ export default function VoucherEntry({
     let cancelled = false
     void (async () => {
       try {
-        const list = await loadNavigableVoucherRows(currentLedger.id)
+        const list = await loadNavigableVoucherRows(
+          currentLedger.id,
+          date.length >= 7 && PERIOD_PATTERN.test(date.slice(0, 7))
+            ? date.slice(0, 7)
+            : activePeriod || undefined
+        )
         if (cancelled) return
 
         setNavigableVouchers(list)
@@ -1233,7 +1273,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [activeTabId, currentLedger, editingVoucherId, loadingVoucher, prepareNewVoucherState])
+  }, [activePeriod, activeTabId, currentLedger, date, editingVoucherId, loadingVoucher, prepareNewVoucherState])
 
   const saveVoucher = async (mode: 'newAfterSave' | 'stay'): Promise<boolean> => {
     setMessage(null)
@@ -1289,7 +1329,7 @@ export default function VoucherEntry({
         return false
       }
 
-      await refreshNavigableVouchers(currentLedger.id)
+      await refreshNavigableVouchers(currentLedger.id, date.slice(0, 7))
       const normalizedRows = padRows(cleanedRows.map((row) => ({ ...row })))
       if (editingVoucherId === null) {
         setMessage({
@@ -1498,7 +1538,7 @@ export default function VoucherEntry({
           type="button"
           className="glass-btn-secondary text-sm px-3 py-1.5"
           onClick={openCashFlowDialog}
-          disabled={!canEditFields}
+          disabled={loadingVoucher || cashFlowCandidateRows.length === 0}
         >
           现金流量分配
         </button>
@@ -1879,8 +1919,11 @@ export default function VoucherEntry({
           >
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold" style={{ color: 'var(--color-text-primary)' }}>
-                现金流量分配
+                {canEditFields ? '现金流量分配' : '现金流量分配查看'}
               </h3>
+              <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                内容过宽时可左右滚动查看
+              </span>
               <button
                 type="button"
                 className="glass-btn-secondary text-sm px-3 py-1.5"
@@ -1891,89 +1934,99 @@ export default function VoucherEntry({
             </div>
 
             <div
-              className="overflow-auto rounded-md border"
+              className="overflow-x-auto overflow-y-auto rounded-md border"
               style={{ borderColor: 'var(--color-glass-border-light)' }}
             >
-              <div
-                className="grid grid-cols-12 py-2 text-xs font-semibold border-b"
-                style={{
-                  color: 'var(--color-text-secondary)',
-                  borderColor: 'var(--color-glass-border-light)'
-                }}
-              >
-                <div className="col-span-1 text-center">选择</div>
-                <div className="col-span-1 text-center">行号</div>
-                <div className="col-span-3 px-2">摘要</div>
-                <div className="col-span-3 px-2">会计科目</div>
-                <div className="col-span-1 text-right pr-2">金额</div>
-                <div className="col-span-3 px-2">现金流量项目</div>
-              </div>
+              <div className="min-w-[1180px]">
+                <div
+                  className="grid py-2 text-xs font-semibold border-b"
+                  style={{
+                    gridTemplateColumns: CASH_FLOW_DIALOG_GRID_TEMPLATE,
+                    color: 'var(--color-text-secondary)',
+                    borderColor: 'var(--color-glass-border-light)'
+                  }}
+                >
+                  <div className="text-center">选择</div>
+                  <div className="text-center">行号</div>
+                  <div className="px-2">摘要</div>
+                  <div className="px-2">会计科目</div>
+                  <div className="text-right pr-2">金额</div>
+                  <div className="px-2">现金流量项目</div>
+                </div>
 
-              {cashFlowCandidateRows.map(({ row, index }) => {
-                const draft = cashFlowDraft[row.id] ?? {
-                  selected: false,
-                  cashFlowItemId: null
-                }
-                const amount = row.debit || row.credit || '0.00'
-                const direction = row.debit ? '借' : '贷'
-                return (
-                  <div
-                    key={row.id}
-                    className="grid grid-cols-12 items-center py-2 border-b last:border-b-0"
-                    style={{ borderColor: 'var(--color-glass-border-light)' }}
-                  >
-                    <div className="col-span-1 flex justify-center">
-                      <input
-                        type="checkbox"
-                        checked={draft.selected}
-                        onChange={(e) => toggleCashFlowRow(row.id, e.target.checked)}
-                        aria-label="cashflow-allocation-row-toggle"
-                      />
-                    </div>
+                {cashFlowCandidateRows.map(({ row, index }) => {
+                  const draft = cashFlowDraft[row.id] ?? {
+                    selected: false,
+                    cashFlowItemId: null
+                  }
+                  const amount = row.debit || row.credit || '0.00'
+                  const direction = row.debit ? '借' : '贷'
+                  return (
                     <div
-                      className="col-span-1 text-center text-sm"
-                      style={{ color: 'var(--color-text-primary)' }}
+                      key={row.id}
+                      className="grid items-center py-2 border-b last:border-b-0"
+                      style={{
+                        gridTemplateColumns: CASH_FLOW_DIALOG_GRID_TEMPLATE,
+                        borderColor: 'var(--color-glass-border-light)'
+                      }}
                     >
-                      {index + 1}
-                    </div>
-                    <div
-                      className="col-span-3 px-2 text-sm truncate"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    >
-                      {row.summary || '-'}
-                    </div>
-                    <div
-                      className="col-span-3 px-2 text-sm truncate"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    >
-                      {row.subjectCode} {row.subjectName}
-                    </div>
-                    <div
-                      className="col-span-1 text-right pr-2 text-sm"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    >
-                      {direction}
-                      {amount}
-                    </div>
-                    <div className="col-span-3 px-2">
-                      <select
-                        className="glass-input w-full text-sm"
-                        value={draft.cashFlowItemId ?? ''}
-                        disabled={!draft.selected}
-                        onChange={(e) => changeCashFlowDraftItem(row.id, e.target.value)}
-                        aria-label="cashflow-allocation-item-select"
+                      <div className="flex justify-center">
+                        <input
+                          type="checkbox"
+                          checked={draft.selected}
+                          disabled={!canEditFields}
+                          onChange={(e) => toggleCashFlowRow(row.id, e.target.checked)}
+                          aria-label="cashflow-allocation-row-toggle"
+                        />
+                      </div>
+                      <div
+                        className="text-center text-sm"
+                        style={{ color: 'var(--color-text-primary)' }}
                       >
-                        <option value="">选择现金流量项目</option>
-                        {cashFlowItems.map((item) => (
-                          <option key={item.id} value={item.id}>
-                            {item.code} {item.name}
-                          </option>
-                        ))}
-                      </select>
+                        {index + 1}
+                      </div>
+                      <div
+                        className="px-2 text-sm truncate"
+                        style={{ color: 'var(--color-text-primary)' }}
+                      >
+                        {row.summary || '-'}
+                      </div>
+                      <div
+                        className="px-2 text-sm truncate"
+                        style={{ color: 'var(--color-text-primary)' }}
+                      >
+                        {row.subjectCode} {row.subjectName}
+                      </div>
+                      <div
+                        className="pr-2 text-sm"
+                        style={{ color: 'var(--color-text-primary)' }}
+                      >
+                        <span className="inline-flex w-full items-center justify-end">
+                          <span>{direction}</span>
+                          <span className="inline-block w-[2ch]" aria-hidden="true" />
+                          <span>{amount}</span>
+                        </span>
+                      </div>
+                      <div className="px-2">
+                        <select
+                          className="glass-input w-full text-sm"
+                          value={draft.cashFlowItemId ?? ''}
+                          disabled={!canEditFields || !draft.selected}
+                          onChange={(e) => changeCashFlowDraftItem(row.id, e.target.value)}
+                          aria-label="cashflow-allocation-item-select"
+                        >
+                          <option value="">选择现金流量项目</option>
+                          {cashFlowItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.code} {item.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })}
+              </div>
             </div>
 
             <div className="flex justify-end gap-2">
@@ -1982,15 +2035,17 @@ export default function VoucherEntry({
                 className="glass-btn-secondary"
                 onClick={() => setCashFlowDialogOpen(false)}
               >
-                取消
+                {canEditFields ? '取消' : '关闭'}
               </button>
-              <button
-                type="button"
-                className="glass-btn-secondary"
-                onClick={applyCashFlowAllocation}
-              >
-                确认分配
-              </button>
+              {canEditFields && (
+                <button
+                  type="button"
+                  className="glass-btn-secondary"
+                  onClick={applyCashFlowAllocation}
+                >
+                  确认分配
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2010,12 +2065,14 @@ export default function VoucherEntry({
 
       {/* 表尾区 */}
       <div
-        className="flex justify-between mt-2 px-2 text-xs flex-wrap gap-2"
+        className="mt-2 px-4 text-xs"
         style={{ color: 'var(--color-text-muted)' }}
       >
-        <span>记账：待记账</span>
-        <span>审核：待审核</span>
-        <span>制单：{currentUser?.realName || currentUser?.username || ''}</span>
+        <div className="flex items-center justify-center gap-[200px]">
+          <span>制单：{creatorDisplayName}</span>
+          <span>审核：{auditorDisplayName}</span>
+          <span>记账：{bookkeeperDisplayName}</span>
+        </div>
       </div>
     </div>
   )

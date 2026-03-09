@@ -603,10 +603,16 @@ export function registerVoucherHandlers(): void {
                     v.creator_id,
                     v.auditor_id,
                     v.bookkeeper_id,
+                    COALESCE(uc.real_name, uc.username) AS creator_name,
+                    COALESCE(ua.real_name, ua.username) AS auditor_name,
+                    COALESCE(ub.real_name, ub.username) AS bookkeeper_name,
                     SUM(ve.debit_amount) AS total_debit,
                     SUM(ve.credit_amount) AS total_credit
                 FROM vouchers v
                 INNER JOIN voucher_entries ve ON ve.voucher_id = v.id
+                LEFT JOIN users uc ON uc.id = v.creator_id
+                LEFT JOIN users ua ON ua.id = v.auditor_id
+                LEFT JOIN users ub ON ub.id = v.bookkeeper_id
                 WHERE ${whereClauses.join(' AND ')}
                 GROUP BY v.id
                 ORDER BY v.voucher_date DESC, v.voucher_number DESC

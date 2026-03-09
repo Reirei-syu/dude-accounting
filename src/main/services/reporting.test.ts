@@ -727,6 +727,95 @@ describe('reporting service', () => {
     expect(snapshot.content.tableColumns?.map((column) => column.label)).toEqual(['年初数', '期末数'])
   })
 
+  it('aggregates descendant npo subjects into balance sheet and cash flow statement rows', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoLedger(db)
+
+    db.subjects.push(
+      { ledger_id: 2, code: '100201', name: '银行存款-工行', category: 'asset', balance_direction: 1 },
+      { ledger_id: 2, code: '530101', name: '管理费用-办公费', category: 'profit_loss', balance_direction: 1 }
+    )
+    db.cashFlowItems.push(
+      {
+        id: 13,
+        ledger_id: 2,
+        code: 'CF03',
+        name: '收到其他与经营活动有关的现金',
+        category: 'operating',
+        direction: 'inflow'
+      },
+      {
+        id: 14,
+        ledger_id: 2,
+        code: 'CF07',
+        name: '支付其他与经营活动有关的现金',
+        category: 'operating',
+        direction: 'outflow'
+      }
+    )
+    db.vouchers.push(
+      { id: 203, ledger_id: 2, period: '2026-03', voucher_date: '2026-03-25', status: 2, is_carry_forward: 0 },
+      { id: 204, ledger_id: 2, period: '2026-03', voucher_date: '2026-03-26', status: 2, is_carry_forward: 0 }
+    )
+    db.voucherEntries.push(
+      { id: 23, voucher_id: 203, row_order: 1, subject_code: '100201', debit_amount: 15_000, credit_amount: 0, cash_flow_item_id: 13 },
+      { id: 24, voucher_id: 203, row_order: 2, subject_code: '430101', debit_amount: 0, credit_amount: 15_000, cash_flow_item_id: null },
+      { id: 25, voucher_id: 204, row_order: 1, subject_code: '530101', debit_amount: 3_000, credit_amount: 0, cash_flow_item_id: null },
+      { id: 26, voucher_id: 204, row_order: 2, subject_code: '100201', debit_amount: 0, credit_amount: 3_000, cash_flow_item_id: 14 }
+    )
+
+    const balanceSheet = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'balance_sheet',
+      month: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-09T11:06:00.000Z'
+    })
+    const cashRow = balanceSheet.content.sections
+      .flatMap((section) => section.rows)
+      .find((row) => row.label === '货币资金')
+    expect(cashRow?.cells?.closing).toBe(77_000)
+
+    const activityStatement = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'activity_statement',
+      startPeriod: '2026-03',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-09T11:07:00.000Z'
+    })
+    const activityTable = (activityStatement.content as { tables?: Array<{ rows: Array<{ cells: Array<{ value: string | number | null }> }> }> }).tables?.[0]
+    expect(
+      activityTable?.rows.some(
+        (row) => row.cells[0]?.value === '管理费用' && row.cells[1]?.value === 8_000
+      )
+    ).toBe(true)
+
+    const cashflowStatement = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'cashflow_statement',
+      startPeriod: '2026-03',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-09T11:08:00.000Z'
+    })
+    const cashflowTable = (cashflowStatement.content as { tables?: Array<{ rows: Array<{ cells: Array<{ value: string | number | null }> }> }> }).tables?.[0]
+    expect(
+      cashflowTable?.rows.some(
+        (row) => row.cells[0]?.value === '提供服务收到的现金' && row.cells[1]?.value === 35_000
+      )
+    ).toBe(true)
+    expect(
+      cashflowTable?.rows.some(
+        (row) => row.cells[0]?.value === '支付的其他与业务活动有关的现金' && row.cells[1]?.value === 8_000
+      )
+    ).toBe(true)
+  })
+
   it('blocks duplicate report generation and builds export html with official-style headers', () => {
     const db = createTestDb()
     const testDb = db as never

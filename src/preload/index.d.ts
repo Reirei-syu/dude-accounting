@@ -325,6 +325,9 @@ interface VoucherAPI {
       creator_id: number | null
       auditor_id: number | null
       bookkeeper_id: number | null
+      creator_name: string | null
+      auditor_name: string | null
+      bookkeeper_name: string | null
       total_debit: number
       total_credit: number
     }>
