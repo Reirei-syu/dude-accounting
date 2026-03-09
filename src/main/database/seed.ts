@@ -15,6 +15,7 @@ export function seedAdminUser(db: Database.Database): void {
       voucher_entry: true,
       audit: true,
       bookkeeping: true,
+      unbookkeep: true,
       system_settings: true,
       ledger_settings: true
     }),

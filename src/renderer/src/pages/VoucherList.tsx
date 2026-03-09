@@ -55,6 +55,13 @@ interface ActionButtonConfig {
   title?: string
 }
 
+interface ReverseBookkeepFormState {
+  open: boolean
+  reason: string
+  approvalTag: string
+  submitting: boolean
+}
+
 const STATUS_TEXT: Record<VoucherStatus, string> = {
   0: '未审核',
   1: '已审核',
@@ -105,7 +112,7 @@ const TAB_CONFIG: Array<{
 const BATCH_ACTION_TEXT: Record<BatchAction, { completed: string; available: string }> = {
   audit: { completed: '已审核', available: '可审核' },
   bookkeep: { completed: '已记账', available: '可记账' },
-  unbookkeep: { completed: '已紧急逆转', available: '可紧急逆转' },
+  unbookkeep: { completed: '已反记账', available: '可反记账' },
   unaudit: { completed: '已反审核', available: '可反审核' },
   delete: { completed: '已删除', available: '可删除' },
   restoreDelete: { completed: '已撤回删除', available: '可撤回删除' },
@@ -222,6 +229,12 @@ export default function VoucherList(): JSX.Element {
   const [selected, setSelected] = useState<number[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [reverseBookkeepForm, setReverseBookkeepForm] = useState<ReverseBookkeepFormState>({
+    open: false,
+    reason: '',
+    approvalTag: '',
+    submitting: false
+  })
   const [periodStatus, setPeriodStatus] = useState<PeriodStatusSummary | null>(null)
   const [refreshSummary, setRefreshSummary] = useState('')
   const [lastRefreshAt, setLastRefreshAt] = useState('')
@@ -229,7 +242,8 @@ export default function VoucherList(): JSX.Element {
   const selectAllRef = useRef<HTMLInputElement | null>(null)
 
   const canOperate = Boolean(window.electron && currentLedger)
-  const canEmergencyReverse = currentUser?.isAdmin === true
+  const canReverseBookkeep =
+    currentUser?.isAdmin === true || currentUser?.permissions?.unbookkeep === true
   const isClosedPeriod = periodStatus?.is_closed === 1
   const closedPeriodMessage =
     currentPeriod && currentPeriod.trim() !== '' ? buildClosedPeriodEditMessage(currentPeriod) : ''
@@ -384,7 +398,10 @@ export default function VoucherList(): JSX.Element {
     return null
   }
 
-  const runBatchAction = async (action: BatchAction): Promise<void> => {
+  const executeBatchAction = async (
+    action: BatchAction,
+    options?: { reason?: string; approvalTag?: string }
+  ): Promise<boolean> => {
     setMessage(null)
 
     if (!canOperate) {
@@ -392,47 +409,30 @@ export default function VoucherList(): JSX.Element {
         type: 'error',
         text: '当前环境不支持该操作'
       })
-      return
+      return false
     }
 
     if (selected.length === 0) {
       setMessage({ type: 'error', text: '请先勾选凭证' })
-      return
+      return false
     }
 
     const confirmationMessage = shouldConfirmAction(action, selected.length)
     if (confirmationMessage && !window.confirm(confirmationMessage)) {
-      return
+      return false
     }
 
     try {
-      let reason: string | undefined
-      let approvalTag: string | undefined
-
-      if (action === 'unbookkeep') {
-        reason = window.prompt('请输入管理员紧急逆转原因')?.trim()
-        if (!reason) {
-          setMessage({ type: 'error', text: '紧急逆转必须填写原因' })
-          return
-        }
-
-        approvalTag = window.prompt('请输入审批标记')?.trim()
-        if (!approvalTag) {
-          setMessage({ type: 'error', text: '紧急逆转必须填写审批标记' })
-          return
-        }
-      }
-
       const result = await window.api.voucher.batchAction({
         action,
         voucherIds: selected,
-        reason,
-        approvalTag
+        reason: options?.reason,
+        approvalTag: options?.approvalTag
       })
 
       if (!result.success) {
         setMessage({ type: 'error', text: result.error || '批量操作失败' })
-        return
+        return false
       }
 
       setMessage({
@@ -441,12 +441,74 @@ export default function VoucherList(): JSX.Element {
       })
       await loadRows()
       await loadPeriodStatus()
+      return true
     } catch (err) {
       setMessage({
         type: 'error',
         text: err instanceof Error ? err.message : '批量操作失败'
       })
+      return false
     }
+  }
+
+  const runBatchAction = async (action: BatchAction): Promise<void> => {
+    if (action === 'unbookkeep') {
+      setMessage(null)
+      if (!canOperate) {
+        setMessage({ type: 'error', text: '当前环境不支持该操作' })
+        return
+      }
+      if (selected.length === 0) {
+        setMessage({ type: 'error', text: '请先勾选凭证' })
+        return
+      }
+      setReverseBookkeepForm({
+        open: true,
+        reason: '',
+        approvalTag: '',
+        submitting: false
+      })
+      return
+    }
+
+    await executeBatchAction(action)
+  }
+
+  const closeReverseBookkeepDialog = (): void => {
+    if (reverseBookkeepForm.submitting) return
+    setReverseBookkeepForm({
+      open: false,
+      reason: '',
+      approvalTag: '',
+      submitting: false
+    })
+  }
+
+  const submitReverseBookkeep = async (): Promise<void> => {
+    const reason = reverseBookkeepForm.reason.trim()
+    const approvalTag = reverseBookkeepForm.approvalTag.trim()
+
+    if (!reason) {
+      setMessage({ type: 'error', text: '反记账必须填写原因' })
+      return
+    }
+    if (!approvalTag) {
+      setMessage({ type: 'error', text: '反记账必须填写审批标记' })
+      return
+    }
+
+    setReverseBookkeepForm((prev) => ({ ...prev, submitting: true }))
+    const success = await executeBatchAction('unbookkeep', { reason, approvalTag })
+    setReverseBookkeepForm((prev) =>
+      success
+        ? {
+            open: false,
+            reason: '',
+            approvalTag: '',
+            submitting: false
+          }
+        : { ...prev, submitting: false }
+    )
   }
 
   const handleSwapPositions = async (): Promise<void> => {
@@ -564,14 +626,12 @@ export default function VoucherList(): JSX.Element {
       ]
     }
 
-    if (activeStatusTab === 'posted' && !canEmergencyReverse) {
+    if (activeStatusTab === 'posted' && !canReverseBookkeep) {
       return []
     }
 
     if (activeStatusTab === 'posted') {
-      return [
-        { key: 'unbookkeep', label: '紧急逆转', onClick: () => void runBatchAction('unbookkeep') }
-      ]
+      return [{ key: 'unbookkeep', label: '反记账', onClick: () => void runBatchAction('unbookkeep') }]
     }
 
     if (activeStatusTab === 'deleted') {
@@ -611,10 +671,10 @@ export default function VoucherList(): JSX.Element {
       { key: 'delete', label: '删除', onClick: () => void runBatchAction('delete') }
     ]
 
-    if (canEmergencyReverse) {
+    if (canReverseBookkeep) {
       buttons.splice(5, 0, {
         key: 'unbookkeep',
-        label: '紧急逆转',
+        label: '反记账',
         onClick: () => void runBatchAction('unbookkeep')
       })
     }
@@ -819,6 +879,85 @@ export default function VoucherList(): JSX.Element {
           </div>
         </div>
       </div>
+
+      {reverseBookkeepForm.open && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center px-4"
+          style={{ background: 'rgba(15, 23, 42, 0.28)' }}
+        >
+          <div className="glass-panel w-full max-w-xl p-5 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  反记账
+                </h3>
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  已选 {selected.length} 张已记账凭证。请填写反记账原因和审批标记，系统将写入操作日志。
+                </p>
+              </div>
+              <button
+                type="button"
+                className="glass-btn-secondary px-3 py-1 text-xs"
+                onClick={closeReverseBookkeepDialog}
+                disabled={reverseBookkeepForm.submitting}
+              >
+                关闭
+              </button>
+            </div>
+
+            <label className="flex flex-col gap-2 text-sm">
+              <span style={{ color: 'var(--color-text-secondary)' }}>反记账原因</span>
+              <textarea
+                className="glass-input min-h-[112px] resize-y"
+                value={reverseBookkeepForm.reason}
+                onChange={(event) =>
+                  setReverseBookkeepForm((prev) => ({ ...prev, reason: event.target.value }))
+                }
+                placeholder="请输入本次反记账的业务原因"
+                disabled={reverseBookkeepForm.submitting}
+              />
+            </label>
+
+            <label className="flex flex-col gap-2 text-sm">
+              <span style={{ color: 'var(--color-text-secondary)' }}>审批标记</span>
+              <input
+                className="glass-input"
+                value={reverseBookkeepForm.approvalTag}
+                onChange={(event) =>
+                  setReverseBookkeepForm((prev) => ({
+                    ...prev,
+                    approvalTag: event.target.value
+                  }))
+                }
+                placeholder="例如：负责人同意 / 工单号 / 审批单号"
+                disabled={reverseBookkeepForm.submitting}
+              />
+            </label>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="glass-btn-secondary"
+                onClick={closeReverseBookkeepDialog}
+                disabled={reverseBookkeepForm.submitting}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="glass-btn-secondary"
+                onClick={() => void submitReverseBookkeep()}
+                disabled={reverseBookkeepForm.submitting}
+              >
+                {reverseBookkeepForm.submitting ? '提交中...' : '确认反记账'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {message && (
         <div

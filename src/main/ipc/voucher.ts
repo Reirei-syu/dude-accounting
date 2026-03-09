@@ -5,7 +5,7 @@ import { appendOperationLog } from '../services/auditLog'
 import { applyCashFlowMappings } from '../services/cashFlowMapping'
 import { assertPeriodWritable } from '../services/periodState'
 import { assertVoucherSwapAllowed, normalizeEmergencyReversalPayload } from '../services/voucherControl'
-import { requireAdmin, requireAuth, requirePermission } from './session'
+import { requireAuth, requirePermission } from './session'
 import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
 import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
 
@@ -909,7 +909,7 @@ export function registerVoucherHandlers(): void {
             : action === 'bookkeep'
               ? requirePermission(event, 'bookkeeping')
               : action === 'unbookkeep'
-                ? requireAdmin(event)
+                ? requirePermission(event, 'unbookkeep')
               : requirePermission(event, 'voucher_entry')
         const emergencyReversal =
           action === 'unbookkeep'

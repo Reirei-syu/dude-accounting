@@ -117,6 +117,7 @@ class FakeDatabase {
     period: string
     voucherDate: string
     voucherNumber: number
+    voucherWord?: string
     status: number
     isCarryForward?: boolean
     entries: Array<{
@@ -133,7 +134,7 @@ class FakeDatabase {
       period: data.period,
       voucher_date: data.voucherDate,
       voucher_number: data.voucherNumber,
-      voucher_word: '记',
+      voucher_word: data.voucherWord ?? '记',
       status: data.status,
       creator_id: 1,
       auditor_id: 1,
@@ -377,6 +378,26 @@ class FakeDatabase {
       }
     }
 
+    if (
+      normalized ===
+      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND voucher_word = ?'
+    ) {
+      return {
+        get: (ledgerId, period, voucherWord) => ({
+          max_num: this.vouchers
+            .filter(
+              (voucher) =>
+                voucher.ledger_id === Number(ledgerId) &&
+                voucher.period === String(period) &&
+                voucher.voucher_word === String(voucherWord)
+            )
+            .reduce((max, voucher) => Math.max(max, voucher.voucher_number), 0)
+        }),
+        all: () => [],
+        run: () => ({})
+      }
+    }
+
     if (normalized.startsWith('DELETE FROM voucher_entries WHERE voucher_id IN (')) {
       return {
         get: () => undefined,
@@ -546,6 +567,7 @@ function insertVoucher(
     period: string
     voucherDate: string
     voucherNumber: number
+    voucherWord?: string
     status: number
     isCarryForward?: boolean
     entries: Array<{
@@ -1041,7 +1063,7 @@ describe('pl carry forward service', () => {
     })
 
     expect(result.status).toBe(0)
-    expect(result.voucherNumber).toBe(2)
+    expect(result.voucherNumber).toBe(1)
     expect(db.vouchers.find((voucher) => voucher.id === result.voucherId)?.is_carry_forward).toBe(1)
     expect(
       db.voucherEntries
@@ -1063,6 +1085,40 @@ describe('pl carry forward service', () => {
         credit_amount: 24000
       }
     ])
+  })
+
+  it('starts carry-forward voucher numbers from 结-0001 instead of continuing 记字号', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '1122', '应收账款', 'asset', 1)
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+    seedRule(db, 1, '6001', '4103')
+
+    insertVoucher(db, {
+      ledgerId: 1,
+      period: '2026-03',
+      voucherDate: '2026-03-05',
+      voucherNumber: 7,
+      voucherWord: '记',
+      status: 2,
+      entries: [
+        { subjectCode: '1122', debitAmount: 30_000, creditAmount: 0 },
+        { subjectCode: '6001', debitAmount: 0, creditAmount: 30_000 }
+      ]
+    })
+
+    const result = executePLCarryForward(db as never, {
+      ledgerId: 1,
+      period: '2026-03',
+      operatorId: 9
+    })
+
+    const carryForwardVoucher = db.vouchers.find((voucher) => voucher.id === result.voucherId)
+    expect(result.voucherNumber).toBe(1)
+    expect(carryForwardVoucher?.voucher_word).toBe('结')
+    expect(carryForwardVoucher?.voucher_number).toBe(1)
   })
 
   it('blocks rerun and period close until carry-forward has been completed with a posted voucher', () => {

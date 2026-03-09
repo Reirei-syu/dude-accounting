@@ -28,6 +28,25 @@ export interface ReportSnapshotTotal {
   amountCents: number
 }
 
+export interface ReportSnapshotTableCell {
+  value: string | number | null
+  isAmount?: boolean
+}
+
+export interface ReportSnapshotTableRow {
+  key: string
+  cells: ReportSnapshotTableCell[]
+}
+
+export interface ReportSnapshotTable {
+  key: string
+  columns: Array<{
+    key: string
+    label: string
+  }>
+  rows: ReportSnapshotTableRow[]
+}
+
 export interface ReportSnapshotContent {
   title: string
   reportType: ReportType
@@ -45,10 +64,12 @@ export interface ReportSnapshotContent {
     asOfDate: string | null
     includeUnpostedVouchers: boolean
   }
+  formCode?: string
   tableColumns?: Array<{
     key: string
     label: string
   }>
+  tables?: ReportSnapshotTable[]
   sections: ReportSnapshotSection[]
   totals: ReportSnapshotTotal[]
 }
@@ -113,6 +134,7 @@ interface ViewerProps {
 
 export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
   const isMultiColumn = (detail.content.tableColumns?.length ?? 0) > 0
+  const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
 
   return (
     <div className="glass-panel-light p-4 flex flex-col gap-4">
@@ -124,6 +146,11 @@ export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
           >
             {detail.report_name}
           </h3>
+          {detail.content.formCode && (
+            <p className="text-sm font-semibold" style={{ color: 'var(--color-text-muted)' }}>
+              {detail.content.formCode}
+            </p>
+          )}
           <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
             账套：{detail.ledger_name} | 期间：{detail.period} | 生成时间：
             {formatGeneratedAt(detail.generated_at)}
@@ -170,7 +197,64 @@ export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        {detail.content.sections.map((section) => (
+        {hasOfficialTables
+          ? detail.content.tables?.map((table) => (
+              <div
+                key={table.key}
+                className="rounded-2xl border overflow-hidden xl:col-span-2"
+                style={{
+                  borderColor: 'var(--color-glass-border-light)',
+                  background: 'rgba(255, 255, 255, 0.7)'
+                }}
+              >
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse text-sm">
+                    <thead>
+                      <tr>
+                        {table.columns.map((column, index) => (
+                          <th
+                            key={column.key}
+                            className={`border-b px-4 py-3 font-semibold ${index === 0 ? 'text-left' : 'text-right'}`}
+                            style={{
+                              borderColor: 'var(--color-glass-border-light)',
+                              color: 'var(--color-text-primary)',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            {column.label}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {table.rows.map((row) => (
+                        <tr key={row.key}>
+                          {row.cells.map((cell, index) => (
+                            <td
+                              key={`${row.key}-${index}`}
+                              className={`border-b px-4 py-3 ${index === 0 ? 'text-left' : 'text-right'}`}
+                              style={{
+                                borderColor: 'var(--color-glass-border-light)',
+                                color:
+                                  index === 0
+                                    ? 'var(--color-text-secondary)'
+                                    : 'var(--color-text-primary)',
+                                whiteSpace: index === 0 ? 'normal' : 'nowrap'
+                              }}
+                            >
+                              {typeof cell.value === 'number' && cell.isAmount
+                                ? formatAmountCents(cell.value)
+                                : String(cell.value ?? '')}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))
+          : detail.content.sections.map((section) => (
           <div
             key={section.key}
             className="rounded-2xl border overflow-hidden"

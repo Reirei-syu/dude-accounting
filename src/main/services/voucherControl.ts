@@ -19,11 +19,11 @@ export function normalizeEmergencyReversalPayload(
   const approvalTag = typeof input.approvalTag === 'string' ? input.approvalTag.trim() : ''
 
   if (!reason) {
-    throw new Error('管理员紧急逆转必须填写原因')
+    throw new Error('反记账必须填写原因')
   }
 
   if (!approvalTag) {
-    throw new Error('管理员紧急逆转必须填写审批标记')
+    throw new Error('反记账必须填写审批标记')
   }
 
   return { reason, approvalTag }

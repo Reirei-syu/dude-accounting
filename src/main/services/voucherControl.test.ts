@@ -4,10 +4,10 @@ import { assertVoucherSwapAllowed, normalizeEmergencyReversalPayload } from './v
 describe('voucherControl service', () => {
   it('requires reason and approval tag for emergency reversal', () => {
     expect(() => normalizeEmergencyReversalPayload({ reason: ' ', approvalTag: 'A-1' })).toThrow(
-      '管理员紧急逆转必须填写原因'
+      '反记账必须填写原因'
     )
     expect(() => normalizeEmergencyReversalPayload({ reason: '补录冲销', approvalTag: '' })).toThrow(
-      '管理员紧急逆转必须填写审批标记'
+      '反记账必须填写审批标记'
     )
     expect(
       normalizeEmergencyReversalPayload({ reason: '补录冲销', approvalTag: 'A-1' })

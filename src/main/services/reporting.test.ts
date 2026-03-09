@@ -459,16 +459,35 @@ function seedNpoLedger(db: FakeReportingDb): void {
     { ledger_id: 2, period: '2026-01', subject_code: '3101', debit_amount: 0, credit_amount: 50_000 }
   )
 
+  db.cashFlowItems.push(
+    {
+      id: 11,
+      ledger_id: 2,
+      code: 'NCF03',
+      name: '提供服务收到的现金',
+      category: 'operating',
+      direction: 'inflow'
+    },
+    {
+      id: 12,
+      ledger_id: 2,
+      code: 'NCF12',
+      name: '支付的其他与业务活动有关的现金',
+      category: 'operating',
+      direction: 'outflow'
+    }
+  )
+
   db.vouchers.push(
     { id: 201, ledger_id: 2, period: '2026-03', voucher_date: '2026-03-08', status: 2, is_carry_forward: 0 },
     { id: 202, ledger_id: 2, period: '2026-03', voucher_date: '2026-03-20', status: 2, is_carry_forward: 0 }
   )
 
   db.voucherEntries.push(
-    { id: 19, voucher_id: 201, row_order: 1, subject_code: '1002', debit_amount: 20_000, credit_amount: 0, cash_flow_item_id: null },
+    { id: 19, voucher_id: 201, row_order: 1, subject_code: '1002', debit_amount: 20_000, credit_amount: 0, cash_flow_item_id: 11 },
     { id: 20, voucher_id: 201, row_order: 2, subject_code: '430101', debit_amount: 0, credit_amount: 20_000, cash_flow_item_id: null },
     { id: 21, voucher_id: 202, row_order: 1, subject_code: '5301', debit_amount: 5_000, credit_amount: 0, cash_flow_item_id: null },
-    { id: 22, voucher_id: 202, row_order: 2, subject_code: '1002', debit_amount: 0, credit_amount: 5_000, cash_flow_item_id: null }
+    { id: 22, voucher_id: 202, row_order: 2, subject_code: '1002', debit_amount: 0, credit_amount: 5_000, cash_flow_item_id: 12 }
   )
 }
 
@@ -593,6 +612,29 @@ describe('reporting service', () => {
     expect(readTotal(snapshot.content.totals, 'income_total')).toBe(20_000)
     expect(readTotal(snapshot.content.totals, 'expense_total')).toBe(5_000)
     expect(readTotal(snapshot.content.totals, 'net_assets_change')).toBe(15_000)
+    const activityTable = (snapshot.content as { tables?: Array<{ columns: Array<{ label: string }>; rows: Array<{ cells: Array<{ value: string | number | null }> }> }> }).tables?.[0]
+    expect(activityTable?.columns.map((column) => column.label)).toEqual([
+      '项目',
+      '本月数（非限定性）',
+      '本月数（限定性）',
+      '本月数（合计）',
+      '本年累计数（非限定性）',
+      '本年累计数（限定性）',
+      '本年累计数（合计）'
+    ])
+    expect(
+      activityTable?.rows.some(
+        (row) => row.cells[0]?.value === '提供服务收入' && row.cells[1]?.value === 20_000
+      )
+    ).toBe(true)
+    expect(
+      activityTable?.rows.some(
+        (row) =>
+          row.cells[0]?.value === '六、净资产变动额（减少以“-”号填列）' &&
+          row.cells[3]?.value === 15_000 &&
+          row.cells[6]?.value === 15_000
+      )
+    ).toBe(true)
 
     expect(
       listReportSnapshots(testDb, {
@@ -605,6 +647,40 @@ describe('reporting service', () => {
     expect(deleteReportSnapshot(testDb, snapshot.id, 2)).toBe(true)
     expect(listReportSnapshots(testDb, { ledgerId: 2 })).toHaveLength(0)
     expect(() => getReportSnapshotDetail(testDb, snapshot.id, 2)).toThrow('报表快照不存在')
+  })
+
+  it('uses the official NGO cash flow statement table structure', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'cashflow_statement',
+      startPeriod: '2026-03',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-09T11:03:00.000Z'
+    })
+
+    const cashflowTable = (snapshot.content as { tables?: Array<{ columns: Array<{ label: string }>; rows: Array<{ cells: Array<{ value: string | number | null }> }> }> }).tables?.[0]
+    expect(cashflowTable?.columns.map((column) => column.label)).toEqual(['项目', '本年金额', '上年金额'])
+    expect(
+      cashflowTable?.rows.some(
+        (row) => row.cells[0]?.value === '提供服务收到的现金' && row.cells[1]?.value === 20_000
+      )
+    ).toBe(true)
+    expect(
+      cashflowTable?.rows.some(
+        (row) => row.cells[0]?.value === '支付的其他与业务活动有关的现金' && row.cells[1]?.value === 5_000
+      )
+    ).toBe(true)
+    expect(
+      cashflowTable?.rows.some(
+        (row) => row.cells[0]?.value === '业务活动产生的现金流量净额' && row.cells[1]?.value === 15_000
+      )
+    ).toBe(true)
   })
 
   it('uses the NGO system balance sheet template rows and year-start/year-end columns', () => {
@@ -623,14 +699,31 @@ describe('reporting service', () => {
 
     const allRows = snapshot.content.sections.flatMap((section) => section.rows)
     const cashRow = allRows.find((row) => row.label === '货币资金')
+    const currentAssetTotalRow = allRows.find((row) => row.label === '流动资产合计')
+    const nonCurrentAssetTotalRow = allRows.find((row) => row.label === '非流动资产合计')
+    const assetTotalRow = allRows.find((row) => row.label === '资产总计')
+    const liabilityTotalRow = allRows.find((row) => row.label === '负债合计')
+    const unrestrictedNetAssetRow = allRows.find((row) => row.label === '非限定性净资产')
     const entrustedAssetRow = allRows.find((row) => row.label === '受托代理资产')
     const totalRow = allRows.find((row) => row.label === '负债和净资产总计')
 
     expect(cashRow?.lineNo).toBe('1')
     expect(cashRow?.cells?.opening).toBe(50_000)
     expect(cashRow?.cells?.closing).toBe(65_000)
-    expect(entrustedAssetRow?.lineNo).toBe('21')
+    expect(currentAssetTotalRow?.cells?.opening).toBe(50_000)
+    expect(currentAssetTotalRow?.cells?.closing).toBe(65_000)
+    expect(nonCurrentAssetTotalRow?.cells?.opening).toBe(0)
+    expect(nonCurrentAssetTotalRow?.cells?.closing).toBe(0)
+    expect(assetTotalRow?.cells?.opening).toBe(50_000)
+    expect(assetTotalRow?.cells?.closing).toBe(65_000)
+    expect(liabilityTotalRow?.cells?.opening).toBe(0)
+    expect(liabilityTotalRow?.cells?.closing).toBe(0)
+    expect(unrestrictedNetAssetRow?.cells?.opening).toBe(50_000)
+    expect(unrestrictedNetAssetRow?.cells?.closing).toBe(65_000)
+    expect(entrustedAssetRow?.lineNo).toBe('26')
     expect(totalRow?.lineNo).toBe('80')
+    expect(totalRow?.cells?.opening).toBe(50_000)
+    expect(totalRow?.cells?.closing).toBe(65_000)
     expect(snapshot.content.tableColumns?.map((column) => column.label)).toEqual(['年初数', '期末数'])
   })
 
@@ -665,6 +758,7 @@ describe('reporting service', () => {
     expect(html).toContain('会计期间：2026.03')
     expect(html).toContain('单位：元')
     expect(html).toContain('<table>')
+    expect(html).not.toContain('<h2>汇总</h2>')
   })
 
   it('writes excel and pdf exports for save-as flow', async () => {

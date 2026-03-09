@@ -33,6 +33,27 @@ export interface ReportSnapshotTotal {
   amountCents: number
 }
 
+export interface ReportSnapshotTableColumn {
+  key: string
+  label: string
+}
+
+export interface ReportSnapshotTableCell {
+  value: string | number | null
+  isAmount?: boolean
+}
+
+export interface ReportSnapshotTableRow {
+  key: string
+  cells: ReportSnapshotTableCell[]
+}
+
+export interface ReportSnapshotTable {
+  key: string
+  columns: ReportSnapshotTableColumn[]
+  rows: ReportSnapshotTableRow[]
+}
+
 export interface ReportSnapshotScope {
   mode: 'month' | 'range'
   startPeriod: string
@@ -52,7 +73,9 @@ export interface ReportSnapshotContent {
   standardType: AccountingStandardType
   generatedAt: string
   scope: ReportSnapshotScope
+  formCode?: string
   tableColumns?: Array<{ key: string; label: string }>
+  tables?: ReportSnapshotTable[]
   sections: ReportSnapshotSection[]
   totals: ReportSnapshotTotal[]
 }
@@ -455,196 +478,370 @@ function createTemplateRow(
   }
 }
 
+function createTextCell(value: string | null = ''): ReportSnapshotTableCell {
+  return { value }
+}
+
+function createAmountCell(value: number): ReportSnapshotTableCell {
+  return { value, isAmount: true }
+}
+
+function shiftPeriod(period: string, yearDelta: number): string {
+  assertPeriod(period)
+  const [yearText, monthText] = period.split('-')
+  return `${String(Number(yearText) + yearDelta).padStart(4, '0')}-${monthText}`
+}
+
 function buildNgoBalanceSheetSnapshot(
   ledger: LedgerRow,
   scope: ReportSnapshotScope,
   generatedAt: string,
   openingMap: Map<string, number>,
-  closingMap: Map<string, number>
+  closingMap: Map<string, number>,
+  unrestrictedNetChange: number,
+  restrictedNetChange: number
 ): ReportSnapshotContent {
-  const assetRows: ReportSnapshotLine[] = []
-  const liabilityRows: ReportSnapshotLine[] = []
-
-  const line = (
-    collection: ReportSnapshotLine[],
+  const buildRow = (
     key: string,
     label: string,
     lineNo: string,
     specs: Array<{ code: string; sign?: 1 | -1 }>
-  ): number => {
-    const opening = sumTemplateAmount(openingMap, specs)
-    const closing = sumTemplateAmount(closingMap, specs)
-    collection.push(createTemplateRow(key, label, lineNo, opening, closing))
-    return closing
-  }
-
-  const flowAssetClosing =
-    line(assetRows, 'cash', '货币资金', '1', [
-      { code: '1001' },
-      { code: '1002' },
-      { code: '1009' }
-    ]) +
-    line(assetRows, 'short_investment', '短期投资', '2', [
-      { code: '1101' },
-      { code: '1102', sign: -1 }
-    ]) +
-    line(assetRows, 'receivables', '应收款项', '3', [
-      { code: '1111' },
-      { code: '1121' },
-      { code: '1122' },
-      { code: '1131', sign: -1 }
-    ]) +
-    line(assetRows, 'prepayments', '预付账款', '4', [{ code: '1141' }]) +
-    line(assetRows, 'inventory', '存货', '5', [
-      { code: '1201' },
-      { code: '1202', sign: -1 }
-    ]) +
-    line(assetRows, 'prepaid_expense', '待摊费用', '6', [{ code: '1301' }]) +
-    line(assetRows, 'current_long_term_bond', '一年内到期的长期债权投资', '7', []) +
-    line(assetRows, 'other_current_assets', '其他流动资产', '8', [])
-
-  assetRows.push(
+  ): ReportSnapshotLine =>
     createTemplateRow(
-      'flow_assets_total',
-      '流动资产合计',
-      '9',
-      assetRows.slice(0, 8).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      flowAssetClosing
+      key,
+      label,
+      lineNo,
+      sumTemplateAmount(openingMap, specs),
+      sumTemplateAmount(closingMap, specs)
     )
-  )
 
-  const longTermInvestmentClosing =
-    line(assetRows, 'long_term_equity', '长期股权投资', '10', [{ code: '1401' }]) +
-    line(assetRows, 'long_term_debt', '长期债权投资', '11', [{ code: '1402' }])
-
-  assetRows.push(
+  const buildSumRow = (
+    key: string,
+    label: string,
+    lineNo: string,
+    rows: ReportSnapshotLine[]
+  ): ReportSnapshotLine =>
     createTemplateRow(
-      'long_term_investment_total',
-      '长期投资合计',
-      '12',
-      assetRows.slice(9, 11).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      longTermInvestmentClosing
+      key,
+      label,
+      lineNo,
+      rows.reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      rows.reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
     )
-  )
 
-  line(assetRows, 'fixed_asset_cost', '固定资产原价', '13', [{ code: '1501' }])
-  line(assetRows, 'accumulated_depreciation', '减：累计折旧', '14', [{ code: '1502' }])
-  assetRows.push(
+  const buildDiffRow = (
+    key: string,
+    label: string,
+    lineNo: string,
+    minuend: ReportSnapshotLine,
+    subtrahend: ReportSnapshotLine
+  ): ReportSnapshotLine =>
     createTemplateRow(
-      'fixed_asset_net',
-      '固定资产净值',
-      '15',
-      (assetRows[12].cells?.opening ?? 0) - (assetRows[13].cells?.opening ?? 0),
-      (assetRows[12].cells?.closing ?? 0) - (assetRows[13].cells?.closing ?? 0)
+      key,
+      label,
+      lineNo,
+      (minuend.cells?.opening ?? 0) - (subtrahend.cells?.opening ?? 0),
+      (minuend.cells?.closing ?? 0) - (subtrahend.cells?.closing ?? 0)
     )
-  )
-  line(assetRows, 'construction_in_progress', '在建工程', '16', [{ code: '1505' }])
-  line(assetRows, 'cultural_relic_asset', '文物文化资产', '17', [{ code: '1506' }])
-  line(assetRows, 'fixed_asset_disposal', '固定资产清理', '18', [{ code: '1509' }])
-  assetRows.push(
-    createTemplateRow(
-      'fixed_assets_total',
-      '固定资产合计',
-      '19',
-      assetRows.slice(14, 18).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      assetRows.slice(14, 18).reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
-    )
-  )
 
-  line(assetRows, 'intangible_assets', '无形资产', '20', [
-    { code: '1601' },
-    { code: '1602', sign: -1 }
+  const createHeadingRow = (key: string, label: string): ReportSnapshotLine => ({
+    key,
+    label,
+    amountCents: 0
+  })
+
+  const cashRow = buildRow('cash', '货币资金', '1', [
+    { code: '1001' },
+    { code: '1002' },
+    { code: '1009' }
   ])
-  line(assetRows, 'entrusted_assets', '受托代理资产', '21', [{ code: '1801' }])
-  assetRows.push(
-    createTemplateRow(
-      'asset_total',
-      '资产总计',
-      '22',
-      assetRows.reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      assetRows.reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
-    )
+  const shortInvestmentRow = buildRow('short_investment', '短期投资', '2', [
+    { code: '1101' },
+    { code: '1102', sign: -1 }
+  ])
+  const receivablesRow = buildRow('receivables', '应收款项', '3', [
+    { code: '1111' },
+    { code: '1121' },
+    { code: '1122' },
+    { code: '1131', sign: -1 }
+  ])
+  const prepaymentRow = buildRow('prepayments', '预付账款', '4', [{ code: '1141' }])
+  const inventoryRow = buildRow('inventory', '存货', '5', [
+    { code: '1201' },
+    { code: '1202', sign: -1 }
+  ])
+  const prepaidExpenseRow = buildRow('prepaid_expense', '待摊费用', '6', [{ code: '1301' }])
+  const currentLongInvestmentRow = buildRow(
+    'current_long_investment',
+    '一年内到期的长期投资',
+    '7',
+    []
+  )
+  const otherCurrentAssetRow = buildRow('other_current_assets', '其他流动资产', '8', [])
+  const flowAssetsTotalRow = buildSumRow('flow_assets_total', '流动资产合计', '9', [
+    cashRow,
+    shortInvestmentRow,
+    receivablesRow,
+    prepaymentRow,
+    inventoryRow,
+    prepaidExpenseRow,
+    currentLongInvestmentRow,
+    otherCurrentAssetRow
+  ])
+
+  const longTermEquityRow = buildRow('long_term_equity', '长期股权投资', '10', [{ code: '1401' }])
+  const longTermDebtRow = buildRow('long_term_debt', '长期债权投资', '11', [{ code: '1402' }])
+  const otherLongInvestmentRow = buildRow('other_long_investment', '其他长期投资', '12', [
+    { code: '1403' }
+  ])
+  const longTermInvestmentTotalRow = buildSumRow('long_term_investment_total', '长期投资合计', '13', [
+    longTermEquityRow,
+    longTermDebtRow,
+    otherLongInvestmentRow
+  ])
+
+  const fixedAssetCostRow = buildRow('fixed_asset_cost', '固定资产原价', '14', [{ code: '1501' }])
+  const accumulatedDepreciationRow = buildRow('accumulated_depreciation', '减：累计折旧', '15', [
+    { code: '1502' }
+  ])
+  const fixedAssetNetRow = buildDiffRow(
+    'fixed_asset_net',
+    '固定资产净值',
+    '16',
+    fixedAssetCostRow,
+    accumulatedDepreciationRow
+  )
+  const constructionInProgressRow = buildRow('construction_in_progress', '在建工程', '17', [
+    { code: '1505' }
+  ])
+  const fixedAssetDisposalRow = buildRow('fixed_asset_disposal', '固定资产清理', '18', [
+    { code: '1509' }
+  ])
+  const fixedAssetsTotalRow = buildSumRow('fixed_assets_total', '固定资产合计', '19', [
+    fixedAssetNetRow,
+    constructionInProgressRow,
+    fixedAssetDisposalRow
+  ])
+
+  const culturalRelicRow = buildRow('cultural_relic', '文物资源', '20', [{ code: '1506' }])
+  const intangibleOriginalRow = buildRow('intangible_original', '无形资产原价', '21', [
+    { code: '1601' }
+  ])
+  const intangibleAccumulatedRow = buildRow('intangible_accumulated', '减：累计摊销', '22', [
+    { code: '1602' }
+  ])
+  const intangibleNetRow = buildDiffRow(
+    'intangible_net',
+    '无形资产净值',
+    '23',
+    intangibleOriginalRow,
+    intangibleAccumulatedRow
+  )
+  const longPrepaidRow = buildRow('long_prepaid', '长期待摊费用', '24', [{ code: '1701' }])
+  const nonCurrentAssetTotalRow = buildSumRow('noncurrent_total', '非流动资产合计', '25', [
+    longTermInvestmentTotalRow,
+    fixedAssetsTotalRow,
+    culturalRelicRow,
+    intangibleNetRow,
+    longPrepaidRow
+  ])
+  const entrustedAssetRow = buildRow('entrusted_asset', '受托代理资产', '26', [{ code: '1801' }])
+  const assetTotalRow = buildSumRow('asset_total', '资产总计', '27', [
+    flowAssetsTotalRow,
+    nonCurrentAssetTotalRow,
+    entrustedAssetRow
+  ])
+
+  const shortTermLoanRow = buildRow('short_term_loan', '短期借款', '61', [{ code: '2101' }])
+  const payablesRow = buildRow('payables', '应付款项', '62', [
+    { code: '2201' },
+    { code: '2202' },
+    { code: '2209' }
+  ])
+  const payrollRow = buildRow('payroll', '应付职工薪酬', '63', [{ code: '2204' }])
+  const taxesRow = buildRow('taxes', '应交税费', '64', [{ code: '2206' }])
+  const advanceReceiptsRow = buildRow('advance_receipts', '预收账款', '65', [{ code: '2203' }])
+  const accruedExpenseRow = buildRow('accrued_expense', '预提费用', '66', [{ code: '2301' }])
+  const currentLongLiabilityRow = buildRow(
+    'current_long_liability',
+    '一年内到期的长期负债',
+    '67',
+    []
+  )
+  const otherCurrentLiabilityRow = buildRow(
+    'other_current_liability',
+    '其他流动负债',
+    '68',
+    []
+  )
+  const flowLiabilityTotalRow = buildSumRow('flow_liability_total', '流动负债合计', '69', [
+    shortTermLoanRow,
+    payablesRow,
+    payrollRow,
+    taxesRow,
+    advanceReceiptsRow,
+    accruedExpenseRow,
+    currentLongLiabilityRow,
+    otherCurrentLiabilityRow
+  ])
+
+  const longTermLoanRow = buildRow('long_term_loan', '长期借款', '70', [{ code: '2501' }])
+  const longTermPayableRow = buildRow('long_term_payable', '长期应付款', '71', [{ code: '2502' }])
+  const estimatedLiabilityRow = buildRow('estimated_liability', '预计负债', '72', [
+    { code: '2503' }
+  ])
+  const otherLongTermLiabilityRow = buildRow(
+    'other_long_term_liability',
+    '其他长期负债',
+    '73',
+    []
+  )
+  const longTermLiabilityTotalRow = buildSumRow('long_term_liability_total', '长期负债合计', '74', [
+    longTermLoanRow,
+    longTermPayableRow,
+    estimatedLiabilityRow,
+    otherLongTermLiabilityRow
+  ])
+  const entrustedLiabilityRow = buildRow('entrusted_liability', '受托代理负债', '75', [
+    { code: '2601' }
+  ])
+  const liabilityTotalRow = buildSumRow('liability_total', '负债合计', '76', [
+    flowLiabilityTotalRow,
+    longTermLiabilityTotalRow,
+    entrustedLiabilityRow
+  ])
+  const unrestrictedNetAssetsRow = createTemplateRow(
+    'unrestricted_net_assets',
+    '非限定性净资产',
+    '77',
+    sumTemplateAmount(openingMap, [{ code: '3101' }]),
+    sumTemplateAmount(closingMap, [{ code: '3101' }]) + unrestrictedNetChange
+  )
+  const restrictedNetAssetsRow = createTemplateRow(
+    'restricted_net_assets',
+    '限定性净资产',
+    '78',
+    sumTemplateAmount(openingMap, [{ code: '3102' }]),
+    sumTemplateAmount(closingMap, [{ code: '3102' }]) + restrictedNetChange
+  )
+  const netAssetsTotalRow = buildSumRow('net_assets_total', '净资产合计', '79', [
+    unrestrictedNetAssetsRow,
+    restrictedNetAssetsRow
+  ])
+  const liabilityAndNetAssetsTotalRow = buildSumRow(
+    'liability_and_net_assets_total',
+    '负债和净资产总计',
+    '80',
+    [liabilityTotalRow, netAssetsTotalRow]
   )
 
-  const flowLiabilityClosing =
-    line(liabilityRows, 'short_term_loan', '短期借款', '61', [{ code: '2101' }]) +
-    line(liabilityRows, 'payables', '应付款项', '62', [
-      { code: '2201' },
-      { code: '2202' },
-      { code: '2209' }
-    ]) +
-    line(liabilityRows, 'payroll', '应付工资', '63', [{ code: '2204' }]) +
-    line(liabilityRows, 'taxes', '应交税金', '64', [{ code: '2206' }]) +
-    line(liabilityRows, 'advance_receipts', '预收账款', '65', [{ code: '2203' }]) +
-    line(liabilityRows, 'accrued_expense', '预提费用', '66', [{ code: '2301' }]) +
-    line(liabilityRows, 'estimated_liability', '预计负债', '67', [{ code: '2503' }]) +
-    line(liabilityRows, 'current_long_term_liability', '一年内到期的长期负债', '68', []) +
-    line(liabilityRows, 'other_current_liability', '其他流动负债', '69', [])
+  const assetRows: ReportSnapshotLine[] = [
+    cashRow,
+    shortInvestmentRow,
+    receivablesRow,
+    prepaymentRow,
+    inventoryRow,
+    prepaidExpenseRow,
+    currentLongInvestmentRow,
+    otherCurrentAssetRow,
+    flowAssetsTotalRow,
+    longTermEquityRow,
+    longTermDebtRow,
+    otherLongInvestmentRow,
+    longTermInvestmentTotalRow,
+    fixedAssetCostRow,
+    accumulatedDepreciationRow,
+    fixedAssetNetRow,
+    constructionInProgressRow,
+    fixedAssetDisposalRow,
+    fixedAssetsTotalRow,
+    culturalRelicRow,
+    intangibleOriginalRow,
+    intangibleAccumulatedRow,
+    intangibleNetRow,
+    longPrepaidRow,
+    nonCurrentAssetTotalRow,
+    entrustedAssetRow,
+    assetTotalRow
+  ]
 
-  liabilityRows.push(
-    createTemplateRow(
-      'flow_liability_total',
-      '流动负债合计',
-      '70',
-      liabilityRows.slice(0, 9).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      flowLiabilityClosing
-    )
-  )
+  const liabilityRows: ReportSnapshotLine[] = [
+    shortTermLoanRow,
+    payablesRow,
+    payrollRow,
+    taxesRow,
+    advanceReceiptsRow,
+    accruedExpenseRow,
+    currentLongLiabilityRow,
+    otherCurrentLiabilityRow,
+    flowLiabilityTotalRow,
+    longTermLoanRow,
+    longTermPayableRow,
+    estimatedLiabilityRow,
+    otherLongTermLiabilityRow,
+    longTermLiabilityTotalRow,
+    entrustedLiabilityRow,
+    liabilityTotalRow,
+    unrestrictedNetAssetsRow,
+    restrictedNetAssetsRow,
+    netAssetsTotalRow,
+    liabilityAndNetAssetsTotalRow
+  ]
 
-  const longTermLiabilityClosing =
-    line(liabilityRows, 'long_term_loan', '长期借款', '71', [{ code: '2501' }]) +
-    line(liabilityRows, 'long_term_payable', '长期应付款', '72', [{ code: '2502' }]) +
-    line(liabilityRows, 'other_long_term_liability', '其他长期负债', '73', [])
+  const amountCellsForRow = (row?: ReportSnapshotLine): ReportSnapshotTableCell[] =>
+    row?.cells
+      ? [createAmountCell(row.cells.opening ?? 0), createAmountCell(row.cells.closing ?? 0)]
+      : [createTextCell(''), createTextCell('')]
 
-  liabilityRows.push(
-    createTemplateRow(
-      'long_term_liability_total',
-      '长期负债合计',
-      '74',
-      liabilityRows.slice(10, 13).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      longTermLiabilityClosing
-    )
-  )
+  const pairRow = (
+    key: string,
+    left: ReportSnapshotLine | undefined,
+    right: ReportSnapshotLine | undefined
+  ): ReportSnapshotTableRow => ({
+    key,
+    cells: [
+      createTextCell(left?.label ?? ''),
+      ...amountCellsForRow(left),
+      createTextCell(right?.label ?? ''),
+      ...amountCellsForRow(right)
+    ]
+  })
 
-  line(liabilityRows, 'entrusted_liability', '受托代理负债', '75', [{ code: '2601' }])
-  liabilityRows.push(
-    createTemplateRow(
-      'liability_total',
-      '负债合计',
-      '76',
-      liabilityRows
-        .filter((row) => ['70', '74', '75'].includes(row.lineNo ?? ''))
-        .reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      liabilityRows
-        .filter((row) => ['70', '74', '75'].includes(row.lineNo ?? ''))
-        .reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
-    )
-  )
-
-  line(liabilityRows, 'unrestricted_net_assets', '非限定性净资产', '77', [{ code: '3101' }])
-  line(liabilityRows, 'restricted_net_assets', '限定性净资产', '78', [{ code: '3102' }])
-  liabilityRows.push(
-    createTemplateRow(
-      'net_assets_total',
-      '净资产合计',
-      '79',
-      liabilityRows.slice(16, 18).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      liabilityRows.slice(16, 18).reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
-    )
-  )
-  liabilityRows.push(
-    createTemplateRow(
-      'liability_and_net_assets_total',
-      '负债和净资产总计',
-      '80',
-      liabilityRows
-        .filter((row) => ['76', '79'].includes(row.lineNo ?? ''))
-        .reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
-      liabilityRows
-        .filter((row) => ['76', '79'].includes(row.lineNo ?? ''))
-        .reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
-    )
-  )
+  const officialRows: ReportSnapshotTableRow[] = [
+    pairRow('row-1', createHeadingRow('asset-current-heading', '一、流动资产：'), createHeadingRow('liability-current-heading', '一、流动负债：')),
+    pairRow('row-2', cashRow, shortTermLoanRow),
+    pairRow('row-3', shortInvestmentRow, payablesRow),
+    pairRow('row-4', receivablesRow, payrollRow),
+    pairRow('row-5', prepaymentRow, taxesRow),
+    pairRow('row-6', inventoryRow, advanceReceiptsRow),
+    pairRow('row-7', prepaidExpenseRow, accruedExpenseRow),
+    pairRow('row-8', currentLongInvestmentRow, currentLongLiabilityRow),
+    pairRow('row-9', otherCurrentAssetRow, otherCurrentLiabilityRow),
+    pairRow('row-10', flowAssetsTotalRow, flowLiabilityTotalRow),
+    pairRow('row-11', createHeadingRow('asset-noncurrent-heading', '二、非流动资产：'), createHeadingRow('liability-long-heading', '二、长期负债：')),
+    pairRow('row-12', createHeadingRow('asset-long-investment-heading', '长期投资：'), longTermLoanRow),
+    pairRow('row-13', longTermEquityRow, longTermPayableRow),
+    pairRow('row-14', longTermDebtRow, estimatedLiabilityRow),
+    pairRow('row-15', otherLongInvestmentRow, otherLongTermLiabilityRow),
+    pairRow('row-16', longTermInvestmentTotalRow, longTermLiabilityTotalRow),
+    pairRow('row-17', createHeadingRow('asset-fixed-heading', '固定资产：'), createHeadingRow('entrusted-liability-heading', '三、受托代理负债')),
+    pairRow('row-18', fixedAssetCostRow, entrustedLiabilityRow),
+    pairRow('row-19', accumulatedDepreciationRow, liabilityTotalRow),
+    pairRow('row-20', fixedAssetNetRow, createHeadingRow('net-assets-heading', '四、净资产：')),
+    pairRow('row-21', constructionInProgressRow, unrestrictedNetAssetsRow),
+    pairRow('row-22', fixedAssetDisposalRow, restrictedNetAssetsRow),
+    pairRow('row-23', fixedAssetsTotalRow, netAssetsTotalRow),
+    pairRow('row-24', culturalRelicRow, liabilityAndNetAssetsTotalRow),
+    pairRow('row-25', createHeadingRow('asset-intangible-heading', '无形资产：'), undefined),
+    pairRow('row-26', intangibleOriginalRow, undefined),
+    pairRow('row-27', intangibleAccumulatedRow, undefined),
+    pairRow('row-28', intangibleNetRow, undefined),
+    pairRow('row-29', longPrepaidRow, undefined),
+    pairRow('row-30', nonCurrentAssetTotalRow, undefined),
+    pairRow('row-31', createHeadingRow('asset-entrusted-heading', '五、受托代理资产：'), undefined),
+    pairRow('row-32', entrustedAssetRow, undefined),
+    pairRow('row-33', assetTotalRow, undefined)
+  ]
 
   return {
     title: BALANCE_SHEET_TITLE,
@@ -654,18 +851,33 @@ function buildNgoBalanceSheetSnapshot(
     standardType: ledger.standard_type,
     generatedAt,
     scope,
+    formCode: '会民非01表',
     tableColumns: [
       { key: 'opening', label: '年初数' },
       { key: 'closing', label: '期末数' }
+    ],
+    tables: [
+      {
+        key: 'ngo-balance-sheet',
+        columns: [
+          { key: 'left_label', label: '项目' },
+          { key: 'left_opening', label: '年初余额' },
+          { key: 'left_closing', label: '期末余额' },
+          { key: 'right_label', label: '项目' },
+          { key: 'right_opening', label: '年初余额' },
+          { key: 'right_closing', label: '期末余额' }
+        ],
+        rows: officialRows
+      }
     ],
     sections: [
       { key: 'assets', title: '资产', rows: assetRows },
       { key: 'liabilities_and_net_assets', title: '负债和净资产', rows: liabilityRows }
     ],
     totals: [
-      { key: 'assets', label: '资产总计', amountCents: assetRows[assetRows.length - 1].amountCents },
-      { key: 'liabilities', label: '负债合计', amountCents: liabilityRows[15].amountCents },
-      { key: 'net_assets', label: '净资产合计', amountCents: liabilityRows[18].amountCents }
+      { key: 'assets', label: '资产总计', amountCents: assetTotalRow.amountCents },
+      { key: 'liabilities', label: '负债合计', amountCents: liabilityTotalRow.amountCents },
+      { key: 'net_assets', label: '净资产合计', amountCents: netAssetsTotalRow.amountCents }
     ]
   }
 }
@@ -745,13 +957,33 @@ function buildBalanceSheetSnapshot(
     openingBalanceMap.set(subject.code, getOpeningBalance(subject, openingBySubject.get(subject.code)))
   }
 
+  const ngoUnrestrictedNetChange =
+    ledger.standard_type === 'npo'
+      ? profitLossSubjects.reduce((sum, subject) => {
+          const amount = closingBalanceMap.get(subject.code) ?? 0
+          const signedAmount = subject.balance_direction === -1 ? amount : -amount
+          return sum + (subject.code.endsWith('02') ? 0 : signedAmount)
+        }, 0)
+      : 0
+
+  const ngoRestrictedNetChange =
+    ledger.standard_type === 'npo'
+      ? profitLossSubjects.reduce((sum, subject) => {
+          const amount = closingBalanceMap.get(subject.code) ?? 0
+          const signedAmount = subject.balance_direction === -1 ? amount : -amount
+          return sum + (subject.code.endsWith('02') ? signedAmount : 0)
+        }, 0)
+      : 0
+
   if (ledger.standard_type === 'npo') {
     return buildNgoBalanceSheetSnapshot(
       ledger,
       scope,
       generatedAt,
       openingBalanceMap,
-      closingBalanceMap
+      closingBalanceMap,
+      ngoUnrestrictedNetChange,
+      ngoRestrictedNetChange
     )
   }
 
@@ -841,6 +1073,356 @@ function buildBalanceSheetSnapshot(
     scope,
     sections,
     totals
+  }
+}
+
+function sumEntriesByPrefixes(
+  entries: EntryWithVoucher[],
+  prefixes: string[],
+  direction: 'income' | 'expense',
+  period?: string
+): { unrestricted: number; restricted: number } {
+  let unrestricted = 0
+  let restricted = 0
+
+  for (const entry of entries) {
+    if (period && entry.period !== period) {
+      continue
+    }
+    if (!prefixes.some((prefix) => entry.subject_code === prefix || entry.subject_code.startsWith(prefix))) {
+      continue
+    }
+
+    const amount =
+      direction === 'income'
+        ? entry.credit_amount - entry.debit_amount
+        : entry.debit_amount - entry.credit_amount
+    if (entry.subject_code.endsWith('02')) {
+      restricted += amount
+    } else {
+      unrestricted += amount
+    }
+  }
+
+  return { unrestricted, restricted }
+}
+
+function buildNgoActivityStatementSnapshot(
+  db: Database.Database,
+  ledger: LedgerRow,
+  scope: ReportSnapshotScope,
+  generatedAt: string
+): ReportSnapshotContent {
+  const vouchers = selectEffectiveVouchers(
+    listVouchersInDateRange(db, ledger.id, scope.startDate, scope.endDate),
+    scope.includeUnpostedVouchers
+  )
+  const entries = mergeEntriesWithVouchers(
+    vouchers,
+    listVoucherEntriesByVoucherIds(
+      db,
+      vouchers.map((voucher) => voucher.id)
+    )
+  )
+
+  const incomeGroups = [
+    { label: '捐赠收入', prefixes: ['4101'] },
+    { label: '会费收入', prefixes: ['4201'] },
+    { label: '提供服务收入', prefixes: ['4301'] },
+    { label: '政府补助收入', prefixes: ['4401'] },
+    { label: '商品销售收入', prefixes: ['4501'] },
+    { label: '总部拨款收入', prefixes: ['4701'] },
+    { label: '投资收益', prefixes: ['4601'] },
+    { label: '其他收入', prefixes: ['4901'] }
+  ]
+  const expenseGroups = [
+    { label: '业务活动成本', prefixes: ['5101'] },
+    { label: '  其中：税金及附加', prefixes: ['5201'] },
+    { label: '管理费用', prefixes: ['5301'] },
+    { label: '筹资费用', prefixes: ['5401'] },
+    { label: '资产减值损失', prefixes: ['5501'] },
+    { label: '所得税费用', prefixes: ['5601'] },
+    { label: '其他费用', prefixes: ['5901'] }
+  ]
+
+  const rowOf = (
+    label: string,
+    current: { unrestricted: number; restricted: number },
+    cumulative: { unrestricted: number; restricted: number }
+  ): ReportSnapshotTableRow => ({
+    key: label,
+    cells: [
+      createTextCell(label),
+      createAmountCell(current.unrestricted),
+      createAmountCell(current.restricted),
+      createAmountCell(current.unrestricted + current.restricted),
+      createAmountCell(cumulative.unrestricted),
+      createAmountCell(cumulative.restricted),
+      createAmountCell(cumulative.unrestricted + cumulative.restricted)
+    ]
+  })
+
+  const incomeRows = incomeGroups.map((group) =>
+    rowOf(
+      group.label,
+      sumEntriesByPrefixes(entries, group.prefixes, 'income', scope.endPeriod),
+      sumEntriesByPrefixes(entries, group.prefixes, 'income')
+    )
+  )
+  const expenseRows = expenseGroups.map((group) =>
+    rowOf(
+      group.label,
+      sumEntriesByPrefixes(entries, group.prefixes, 'expense', scope.endPeriod),
+      sumEntriesByPrefixes(entries, group.prefixes, 'expense')
+    )
+  )
+
+  const sumColumns = (rows: ReportSnapshotTableRow[]): number[] =>
+    [1, 2, 3, 4, 5, 6].map((index) =>
+      rows.reduce((sum, row) => sum + (typeof row.cells[index]?.value === 'number' ? Number(row.cells[index].value) : 0), 0)
+    )
+
+  const incomeTotals = sumColumns(incomeRows)
+  const expenseTotals = sumColumns(expenseRows)
+  const zeroSix = [0, 0, 0, 0, 0, 0]
+  const netValues = incomeTotals.map((value, index) => value - expenseTotals[index])
+
+  const tableRows: ReportSnapshotTableRow[] = [
+    { key: 'income-header', cells: [createTextCell('一、收入'), ...zeroSix.map(() => createTextCell(''))] },
+    ...incomeRows,
+    {
+      key: 'income-total',
+      cells: [createTextCell('收入合计'), ...incomeTotals.map((value) => createAmountCell(value))]
+    },
+    { key: 'expense-header', cells: [createTextCell('二、费用'), ...zeroSix.map(() => createTextCell(''))] },
+    ...expenseRows,
+    {
+      key: 'expense-total',
+      cells: [createTextCell('费用合计'), ...expenseTotals.map((value) => createAmountCell(value))]
+    },
+    {
+      key: 'restricted-to-unrestricted',
+      cells: [createTextCell('三、限定性净资产转为非限定性净资产'), ...zeroSix.map(() => createAmountCell(0))]
+    },
+    {
+      key: 'unrestricted-to-restricted',
+      cells: [createTextCell('四、非限定性净资产转为限定性净资产'), ...zeroSix.map(() => createAmountCell(0))]
+    },
+    {
+      key: 'prior-adjustment',
+      cells: [createTextCell('五、以前年度净资产调整'), ...zeroSix.map(() => createAmountCell(0))]
+    },
+    {
+      key: 'net-assets-change',
+      cells: [createTextCell('六、净资产变动额（减少以“-”号填列）'), ...netValues.map((value) => createAmountCell(value))]
+    }
+  ]
+
+  return {
+    title: ACTIVITY_STATEMENT_TITLE,
+    reportType: 'activity_statement',
+    period: scope.periodLabel,
+    ledgerName: ledger.name,
+    standardType: ledger.standard_type,
+    generatedAt,
+    scope,
+    formCode: '会民非02表',
+    tables: [
+      {
+        key: 'ngo-activity-statement',
+        columns: [
+          { key: 'item', label: '项目' },
+          { key: 'current_unrestricted', label: '本月数（非限定性）' },
+          { key: 'current_restricted', label: '本月数（限定性）' },
+          { key: 'current_total', label: '本月数（合计）' },
+          { key: 'cumulative_unrestricted', label: '本年累计数（非限定性）' },
+          { key: 'cumulative_restricted', label: '本年累计数（限定性）' },
+          { key: 'cumulative_total', label: '本年累计数（合计）' }
+        ],
+        rows: tableRows
+      }
+    ],
+    sections: [],
+    totals: [
+      { key: 'income_total', label: '收入合计', amountCents: incomeTotals[5] },
+      { key: 'expense_total', label: '费用合计', amountCents: expenseTotals[5] },
+      { key: 'net_assets_change', label: '净资产变动额', amountCents: netValues[5] }
+    ]
+  }
+}
+
+function buildNgoCashFlowStatementSnapshot(
+  db: Database.Database,
+  ledger: LedgerRow,
+  scope: ReportSnapshotScope,
+  generatedAt: string
+): ReportSnapshotContent {
+  const currentItems = listCashFlowItems(db, ledger.id)
+  const currentVouchers = selectEffectiveVouchers(
+    listVouchersInDateRange(db, ledger.id, scope.startDate, scope.endDate),
+    scope.includeUnpostedVouchers
+  )
+  const currentEntries = mergeEntriesWithVouchers(
+    currentVouchers,
+    listVoucherEntriesByVoucherIds(
+      db,
+      currentVouchers.map((voucher) => voucher.id)
+    )
+  )
+
+  const previousScope = {
+    startDate: getPeriodStartDate(shiftPeriod(scope.startPeriod, -1)),
+    endDate: getPeriodEndDate(shiftPeriod(scope.endPeriod, -1))
+  }
+  const previousVouchers = selectEffectiveVouchers(
+    listVouchersInDateRange(db, ledger.id, previousScope.startDate, previousScope.endDate),
+    scope.includeUnpostedVouchers
+  )
+  const previousEntries = mergeEntriesWithVouchers(
+    previousVouchers,
+    listVoucherEntriesByVoucherIds(
+      db,
+      previousVouchers.map((voucher) => voucher.id)
+    )
+  )
+
+  const sumCashflowByName = (entries: EntryWithVoucher[], itemName: string): number => {
+    const itemIds = currentItems.filter((item) => item.name === itemName).map((item) => item.id)
+    return entries
+      .filter((entry) => entry.cash_flow_item_id !== null && itemIds.includes(entry.cash_flow_item_id))
+      .reduce((sum, entry) => sum + (entry.debit_amount > 0 ? entry.debit_amount : entry.credit_amount), 0)
+  }
+
+  const line = (label: string, currentAmount: number, previousAmount: number): ReportSnapshotTableRow => ({
+    key: label,
+    cells: [createTextCell(label), createAmountCell(currentAmount), createAmountCell(previousAmount)]
+  })
+
+  const currentByName = (label: string): number => sumCashflowByName(currentEntries, label)
+  const previousByName = (label: string): number => sumCashflowByName(previousEntries, label)
+
+  const operatingInRows = [
+    '接受捐赠收到的现金',
+    '收取会费收到的现金',
+    '提供服务收到的现金',
+    '销售商品收到的现金',
+    '政府补助收到的现金',
+    '收到的其他与业务活动有关的现金'
+  ]
+  const operatingOutRows = [
+    '提供捐赠或者资助支付的现金',
+    '支付给员工以及为员工支付的现金',
+    '购买商品、接受服务支付的现金',
+    '各项税费支付的现金',
+    '支付的其他与业务活动有关的现金'
+  ]
+  const investingInRows = [
+    '收回投资所收到的现金',
+    '取得投资收益所收到的现金',
+    '处置固定资产、无形资产和其他非流动资产收回的现金',
+    '收到的其他与投资活动有关的现金'
+  ]
+  const investingOutRows = [
+    '购建固定资产、无形资产和其他非流动资产支付的现金',
+    '对外投资所支付的现金',
+    '支付的其他与投资活动有关的现金'
+  ]
+  const financingInRows = ['借款所收到的现金', '收到的其他与筹资活动有关的现金']
+  const financingOutRows = ['偿还借款所支付的现金', '偿付利息所支付的现金', '支付的其他与筹资活动有关的现金']
+
+  const sumLabels = (labels: string[], picker: (label: string) => number): number =>
+    labels.reduce((sum, label) => sum + picker(label), 0)
+
+  const currentOperatingIn = sumLabels(operatingInRows, currentByName)
+  const currentOperatingOut = sumLabels(operatingOutRows, currentByName)
+  const previousOperatingIn = sumLabels(operatingInRows, previousByName)
+  const previousOperatingOut = sumLabels(operatingOutRows, previousByName)
+
+  const currentInvestingIn = sumLabels(investingInRows, currentByName)
+  const currentInvestingOut = sumLabels(investingOutRows, currentByName)
+  const previousInvestingIn = sumLabels(investingInRows, previousByName)
+  const previousInvestingOut = sumLabels(investingOutRows, previousByName)
+
+  const currentFinancingIn = sumLabels(financingInRows, currentByName)
+  const currentFinancingOut = sumLabels(financingOutRows, currentByName)
+  const previousFinancingIn = sumLabels(financingInRows, previousByName)
+  const previousFinancingOut = sumLabels(financingOutRows, previousByName)
+
+  const tableRows: ReportSnapshotTableRow[] = [
+    line('一、业务活动产生的现金流量：', 0, 0),
+    ...operatingInRows.map((label) => line(label, currentByName(label), previousByName(label))),
+    line('现金流入小计', currentOperatingIn, previousOperatingIn),
+    ...operatingOutRows.map((label) => line(label, currentByName(label), previousByName(label))),
+    line('现金流出小计', currentOperatingOut, previousOperatingOut),
+    line(
+      '业务活动产生的现金流量净额',
+      currentOperatingIn - currentOperatingOut,
+      previousOperatingIn - previousOperatingOut
+    ),
+    line('二、投资活动产生的现金流量：', 0, 0),
+    ...investingInRows.map((label) => line(label, currentByName(label), previousByName(label))),
+    line('现金流入小计', currentInvestingIn, previousInvestingIn),
+    ...investingOutRows.map((label) => line(label, currentByName(label), previousByName(label))),
+    line('现金流出小计', currentInvestingOut, previousInvestingOut),
+    line(
+      '投资活动产生的现金流量净额',
+      currentInvestingIn - currentInvestingOut,
+      previousInvestingIn - previousInvestingOut
+    ),
+    line('三、筹资活动产生的现金流量：', 0, 0),
+    ...financingInRows.map((label) => line(label, currentByName(label), previousByName(label))),
+    line('现金流入小计', currentFinancingIn, previousFinancingIn),
+    ...financingOutRows.map((label) => line(label, currentByName(label), previousByName(label))),
+    line('现金流出小计', currentFinancingOut, previousFinancingOut),
+    line(
+      '筹资活动产生的现金流量净额',
+      currentFinancingIn - currentFinancingOut,
+      previousFinancingIn - previousFinancingOut
+    ),
+    line('四、汇率变动对现金的影响额', 0, 0),
+    line(
+      '五、现金及现金等价物净增加额',
+      currentOperatingIn -
+        currentOperatingOut +
+        (currentInvestingIn - currentInvestingOut) +
+        (currentFinancingIn - currentFinancingOut),
+      previousOperatingIn -
+        previousOperatingOut +
+        (previousInvestingIn - previousInvestingOut) +
+        (previousFinancingIn - previousFinancingOut)
+    )
+  ]
+
+  return {
+    title: CASHFLOW_STATEMENT_TITLE,
+    reportType: 'cashflow_statement',
+    period: scope.periodLabel,
+    ledgerName: ledger.name,
+    standardType: ledger.standard_type,
+    generatedAt,
+    scope,
+    formCode: '会民非03表',
+    tables: [
+      {
+        key: 'ngo-cashflow-statement',
+        columns: [
+          { key: 'item', label: '项目' },
+          { key: 'current', label: '本年金额' },
+          { key: 'previous', label: '上年金额' }
+        ],
+        rows: tableRows
+      }
+    ],
+    sections: [],
+    totals: [
+      {
+        key: 'net_cash_flow',
+        label: '现金及现金等价物净增加额',
+        amountCents: typeof tableRows[tableRows.length - 1].cells[1].value === 'number'
+          ? Number(tableRows[tableRows.length - 1].cells[1].value)
+          : 0
+      }
+    ]
   }
 }
 
@@ -1045,7 +1627,13 @@ function buildSnapshotContent(
   if (reportType === 'balance_sheet') {
     return buildBalanceSheetSnapshot(db, ledger, scope, generatedAt)
   }
+  if (ledger.standard_type === 'npo' && reportType === 'activity_statement') {
+    return buildNgoActivityStatementSnapshot(db, ledger, scope, generatedAt)
+  }
   if (reportType === 'cashflow_statement') {
+    if (ledger.standard_type === 'npo') {
+      return buildNgoCashFlowStatementSnapshot(db, ledger, scope, generatedAt)
+    }
     return buildCashFlowSnapshot(db, ledger, scope, generatedAt)
   }
   return buildProfitLossSnapshot(db, ledger, scope, generatedAt, title)
@@ -1124,6 +1712,9 @@ function parseSnapshotRow(
       standardType: parsedContent.standardType ?? row.standard_type,
       generatedAt: parsedContent.generatedAt ?? row.generated_at,
       scope,
+      formCode: parsedContent.formCode,
+      tableColumns: parsedContent.tableColumns,
+      tables: parsedContent.tables,
       sections: parsedContent.sections ?? [],
       totals: parsedContent.totals ?? []
     }
@@ -1304,6 +1895,9 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   const ledgerName = escapeHtml(detail.ledger_name)
   const period = escapeHtml(detail.period)
   const generatedAt = escapeHtml(detail.generated_at)
+  const formCodeHtml = detail.content.formCode
+    ? `<div class="form-code">${escapeHtml(detail.content.formCode)}</div>`
+    : ''
   const scopeText = escapeHtml(
     `${detail.content.scope.startDate} 至 ${detail.content.scope.endDate}${
       detail.content.scope.asOfDate ? `（截至 ${detail.content.scope.asOfDate}）` : ''
@@ -1313,48 +1907,87 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
     detail.content.scope.includeUnpostedVouchers ? '含未记账凭证' : '仅已记账凭证'
   )
 
-  const sectionHtml = detail.content.sections
-    .map((section) => {
-      const columns = detail.content.tableColumns
-      const multiColumn = (columns?.length ?? 0) > 0
+  const sectionHtml =
+    detail.content.tables && detail.content.tables.length > 0
+      ? detail.content.tables
+          .map((table) => {
+            const headerCells = table.columns
+              .map(
+                (column, index) =>
+                  `<th${index === 0 ? '' : ' class="num"'}>${escapeHtml(column.label)}</th>`
+              )
+              .join('')
+            const bodyRows = table.rows
+              .map((row) => {
+                const cells = row.cells
+                  .map((cell, index) => {
+                    const value =
+                      typeof cell.value === 'number' && cell.isAmount
+                        ? formatAmount(cell.value)
+                        : String(cell.value ?? '')
+                    return `<td${index === 0 ? '' : ' class="num"'}>${escapeHtml(value)}</td>`
+                  })
+                  .join('')
+                return `<tr>${cells}</tr>`
+              })
+              .join('')
 
-      const headerCells = multiColumn
-        ? `<th>项目</th>${columns
-            ?.map((column) => `<th class="num">${escapeHtml(column.label)}</th>`)
-            .join('')}`
-        : '<th>项目</th><th class="num">金额</th>'
+            return `
+              <section class="report-section">
+                <table>
+                  <thead>
+                    <tr>${headerCells}</tr>
+                  </thead>
+                  <tbody>
+                    ${bodyRows}
+                  </tbody>
+                </table>
+              </section>
+            `
+          })
+          .join('')
+      : detail.content.sections
+          .map((section) => {
+            const columns = detail.content.tableColumns
+            const multiColumn = (columns?.length ?? 0) > 0
 
-      const bodyRows = section.rows
-        .map((row) => {
-          const label = `${row.lineNo ? `${row.lineNo} ` : ''}${row.code ? `${row.code} ` : ''}${row.label}`
-          const valueCells = multiColumn
-            ? columns
-                ?.map(
-                  (column) =>
-                    `<td class="num">${formatAmount(row.cells?.[column.key] ?? 0)}</td>`
-                )
-                .join('') ?? ''
-            : `<td class="num">${formatAmount(row.amountCents)}</td>`
+            const headerCells = multiColumn
+              ? `<th>项目</th>${columns
+                  ?.map((column) => `<th class="num">${escapeHtml(column.label)}</th>`)
+                  .join('')}`
+              : '<th>项目</th><th class="num">金额</th>'
 
-          return `<tr><td>${escapeHtml(label)}</td>${valueCells}</tr>`
-        })
-        .join('')
+            const bodyRows = section.rows
+              .map((row) => {
+                const label = `${row.lineNo ? `${row.lineNo} ` : ''}${row.code ? `${row.code} ` : ''}${row.label}`
+                const valueCells = multiColumn
+                  ? columns
+                      ?.map(
+                        (column) =>
+                          `<td class="num">${formatAmount(row.cells?.[column.key] ?? 0)}</td>`
+                      )
+                      .join('') ?? ''
+                  : `<td class="num">${formatAmount(row.amountCents)}</td>`
 
-      return `
-        <section class="report-section">
-          <h2>${escapeHtml(section.title)}</h2>
-          <table>
-            <thead>
-              <tr>${headerCells}</tr>
-            </thead>
-            <tbody>
-              ${bodyRows}
-            </tbody>
-          </table>
-        </section>
-      `
-    })
-    .join('')
+                return `<tr><td>${escapeHtml(label)}</td>${valueCells}</tr>`
+              })
+              .join('')
+
+            return `
+              <section class="report-section">
+                <h2>${escapeHtml(section.title)}</h2>
+                <table>
+                  <thead>
+                    <tr>${headerCells}</tr>
+                  </thead>
+                  <tbody>
+                    ${bodyRows}
+                  </tbody>
+                </table>
+              </section>
+            `
+          })
+          .join('')
 
   const totalsHtml = detail.content.totals
     .map(
@@ -1362,6 +1995,19 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
         `<tr><td>${escapeHtml(total.label)}</td><td class="num">${formatAmount(total.amountCents)}</td></tr>`
     )
     .join('')
+  const totalsSectionHtml =
+    detail.report_type === 'balance_sheet' || (detail.content.tables && detail.content.tables.length > 0)
+      ? ''
+      : `
+      <section class="report-section totals">
+        <h2>汇总</h2>
+        <table>
+          <thead>
+            <tr><th>项目</th><th class="num">金额</th></tr>
+          </thead>
+          <tbody>${totalsHtml}</tbody>
+        </table>
+      </section>`
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -1387,6 +2033,12 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
         font-size: 20px;
         font-weight: 700;
         letter-spacing: 0.08em;
+      }
+      .form-code {
+        margin-bottom: 8px;
+        text-align: center;
+        font-size: 12px;
+        font-weight: 700;
       }
       .meta {
         margin-bottom: 12px;
@@ -1438,6 +2090,7 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   <body>
     <div class="page">
       <h1>${title}</h1>
+      ${formCodeHtml}
       <div class="meta">
         <div class="meta-row">
           <span class="meta-label">编制单位：${ledgerName}</span>
@@ -1451,15 +2104,7 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
         </div>
       </div>
       ${sectionHtml}
-      <section class="report-section totals">
-        <h2>汇总</h2>
-        <table>
-          <thead>
-            <tr><th>项目</th><th class="num">金额</th></tr>
-          </thead>
-          <tbody>${totalsHtml}</tbody>
-        </table>
-      </section>
+      ${totalsSectionHtml}
     </div>
   </body>
 </html>`
@@ -1470,6 +2115,9 @@ function formatAmount(amountCents: number): string {
 }
 
 function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
+  if (detail.content.tables && detail.content.tables.length > 0) {
+    return detail.content.tables[0].columns.map((column) => column.label)
+  }
   if (detail.content.tableColumns && detail.content.tableColumns.length > 0) {
     return ['项目', ...detail.content.tableColumns.map((column) => column.label)]
   }
@@ -1477,6 +2125,17 @@ function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
 }
 
 function getExportTableRows(detail: ReportSnapshotDetail): Array<{ section: string; values: string[] }> {
+  if (detail.content.tables && detail.content.tables.length > 0) {
+    return detail.content.tables.flatMap((table) =>
+      table.rows.map((row) => ({
+        section: table.key,
+        values: row.cells.map((cell) =>
+          typeof cell.value === 'number' && cell.isAmount ? formatAmount(cell.value) : String(cell.value ?? '')
+        )
+      }))
+    )
+  }
+
   return detail.content.sections.flatMap((section) =>
     section.rows.map((row) => {
       const label = `${row.lineNo ? `${row.lineNo} ` : ''}${row.code ? `${row.code} ` : ''}${row.label}`
@@ -1519,6 +2178,7 @@ export async function writeReportSnapshotExcel(
 
   const headers = getExportTableHeaders(detail)
   const rows = getExportTableRows(detail)
+  const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
 
   worksheet.mergeCells(1, 1, 1, headers.length)
   worksheet.getCell(1, 1).value = detail.content.title
@@ -1530,8 +2190,20 @@ export async function writeReportSnapshotExcel(
   worksheet.getCell(3, 1).value = `会计期间：${detail.period}`
   worksheet.getCell(3, headers.length).value =
     detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证'
+  if (detail.content.formCode) {
+    worksheet.mergeCells(2, 1, 2, headers.length)
+    worksheet.getCell(2, 1).value = detail.content.formCode
+    worksheet.getCell(2, 1).font = { name: '宋体', size: 11, bold: true }
+    worksheet.getCell(2, 1).alignment = { horizontal: 'center', vertical: 'middle' }
+    worksheet.getCell(3, 1).value = `编制单位：${detail.ledger_name}`
+    worksheet.getCell(3, headers.length).value = '单位：元'
+    worksheet.getCell(4, 1).value = `会计期间：${detail.period}`
+    worksheet.getCell(4, headers.length).value =
+      detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证'
+  }
 
-  const headerRow = worksheet.getRow(4)
+  const headerRowIndex = detail.content.formCode ? 5 : 4
+  const headerRow = worksheet.getRow(headerRowIndex)
   headers.forEach((header, index) => {
     const cell = headerRow.getCell(index + 1)
     cell.value = header
@@ -1545,10 +2217,10 @@ export async function writeReportSnapshotExcel(
     }
   })
 
-  let rowIndex = 5
+  let rowIndex = headerRowIndex + 1
   let currentSection = ''
   for (const row of rows) {
-    if (row.section !== currentSection) {
+    if (!hasOfficialTables && row.section !== currentSection) {
       currentSection = row.section
       worksheet.mergeCells(rowIndex, 1, rowIndex, headers.length)
       const sectionCell = worksheet.getCell(rowIndex, 1)
@@ -1583,28 +2255,30 @@ export async function writeReportSnapshotExcel(
     rowIndex += 1
   }
 
-  rowIndex += 1
-  worksheet.mergeCells(rowIndex, 1, rowIndex, headers.length)
-  worksheet.getCell(rowIndex, 1).value = '汇总'
-  worksheet.getCell(rowIndex, 1).font = { name: '宋体', size: 11, bold: true }
-
-  rowIndex += 1
-  detail.content.totals.forEach((total) => {
-    worksheet.getCell(rowIndex, 1).value = total.label
-    worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
-    for (let column = 1; column <= headers.length; column += 1) {
-      const cell = worksheet.getCell(rowIndex, column)
-      cell.font = { name: '宋体', size: 10 }
-      cell.alignment = { horizontal: column === 1 ? 'left' : 'right', vertical: 'middle' }
-      cell.border = {
-        top: { style: 'thin' },
-        left: { style: 'thin' },
-        bottom: { style: 'thin' },
-        right: { style: 'thin' }
-      }
-    }
+  if (!hasOfficialTables) {
     rowIndex += 1
-  })
+    worksheet.mergeCells(rowIndex, 1, rowIndex, headers.length)
+    worksheet.getCell(rowIndex, 1).value = '汇总'
+    worksheet.getCell(rowIndex, 1).font = { name: '宋体', size: 11, bold: true }
+
+    rowIndex += 1
+    detail.content.totals.forEach((total) => {
+      worksheet.getCell(rowIndex, 1).value = total.label
+      worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
+      for (let column = 1; column <= headers.length; column += 1) {
+        const cell = worksheet.getCell(rowIndex, column)
+        cell.font = { name: '宋体', size: 10 }
+        cell.alignment = { horizontal: column === 1 ? 'left' : 'right', vertical: 'middle' }
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        }
+      }
+      rowIndex += 1
+    })
+  }
 
   worksheet.columns = headers.map((header, index) => ({
     header,
@@ -1635,6 +2309,7 @@ export async function writeReportSnapshotPdf(
     const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right
     const headers = getExportTableHeaders(detail)
     const rows = getExportTableRows(detail)
+    const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
     const columnWidth = headers.length > 0 ? pageWidth / headers.length : pageWidth
 
     const drawRow = (
@@ -1664,6 +2339,10 @@ export async function writeReportSnapshotPdf(
 
     document.fontSize(18).text(detail.content.title, { align: 'center' })
     document.moveDown(0.5)
+    if (detail.content.formCode) {
+      document.fontSize(10).text(detail.content.formCode, { align: 'center' })
+      document.moveDown(0.25)
+    }
     document.fontSize(10).text(`编制单位：${detail.ledger_name}`, { continued: true })
     document.text(`单位：元`, { align: 'right' })
     document.text(`会计期间：${detail.period}`, { continued: true })
@@ -1685,7 +2364,7 @@ export async function writeReportSnapshotPdf(
         top = drawRow(headers, top, { bold: true })
       }
 
-      if (row.section !== currentSection) {
+      if (!hasOfficialTables && row.section !== currentSection) {
         currentSection = row.section
         top = drawRow([currentSection, ...Array(headers.length - 1).fill('')], top, {
           bold: true,
@@ -1696,18 +2375,20 @@ export async function writeReportSnapshotPdf(
       top = drawRow(row.values, top)
     }
 
-    if (top > document.page.height - 120) {
-      document.addPage()
-      top = document.page.margins.top
-    }
+    if (!hasOfficialTables) {
+      if (top > document.page.height - 120) {
+        document.addPage()
+        top = document.page.margins.top
+      }
 
-    document.moveDown()
-    document.fontSize(12).text('汇总', document.page.margins.left, top + 8)
-    top += 28
-    top = drawRow(['项目', '金额'], top, { bold: true })
-    detail.content.totals.forEach((total) => {
-      top = drawRow([total.label, formatAmount(total.amountCents)], top)
-    })
+      document.moveDown()
+      document.fontSize(12).text('汇总', document.page.margins.left, top + 8)
+      top += 28
+      top = drawRow(['项目', '金额'], top, { bold: true })
+      detail.content.totals.forEach((total) => {
+        top = drawRow([total.label, formatAmount(total.amountCents)], top)
+      })
+    }
 
     document.end()
     stream.on('finish', () => resolve())

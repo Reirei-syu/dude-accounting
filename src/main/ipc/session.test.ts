@@ -41,6 +41,7 @@ describe('ipc session', () => {
 
     expect(requireAuth(event as never).id).toBe(2)
     expect(requirePermission(event as never, 'voucher_entry').id).toBe(2)
+    expect(() => requirePermission(event as never, 'unbookkeep')).toThrow()
     expect(() => requirePermission(event as never, 'system_settings')).toThrow()
     expect(() => requireAdmin(event as never)).toThrow()
   })

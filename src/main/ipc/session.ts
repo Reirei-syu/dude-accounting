@@ -11,6 +11,7 @@ type PermissionKey =
   | 'voucher_entry'
   | 'audit'
   | 'bookkeeping'
+  | 'unbookkeep'
   | 'system_settings'
   | 'ledger_settings'
 

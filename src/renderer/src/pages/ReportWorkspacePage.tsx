@@ -15,6 +15,7 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
   const currentLedger = useLedgerStore((state) => state.currentLedger)
   const currentPeriod = useLedgerStore((state) => state.currentPeriod)
   const [detail, setDetail] = useState<ReportSnapshotDetail | null>(null)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [month, setMonth] = useState('')
   const [startPeriod, setStartPeriod] = useState('')
   const [endPeriod, setEndPeriod] = useState('')
@@ -32,6 +33,7 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
     setError('')
     setSuccessMessage('')
     setIncludeUnposted(false)
+    setIsDetailOpen(false)
     setMonth(currentPeriod || '')
     setStartPeriod(currentPeriod || '')
     setEndPeriod(currentPeriod || '')
@@ -79,6 +81,7 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
       }
 
       setDetail(result.snapshot)
+      setIsDetailOpen(true)
       setSuccessMessage(`已生成并保存 ${result.snapshot.report_name}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '生成报表失败')
@@ -220,16 +223,46 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
         </div>
       )}
 
-      {detail ? (
-        <ReportSnapshotViewer detail={detail} />
-      ) : (
+      <div
+        className="glass-panel flex-1 flex items-center justify-center text-sm"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
+        {isDynamicReport
+          ? '按起始月份和结束月份生成动态报表；实际取数范围为起始月份 1 日至结束月份最后 1 日。生成后会弹出独立报表查看框。'
+          : '按月份生成静态报表；实际取数截至所选月份最后一天。生成后会弹出独立报表查看框。'}
+      </div>
+
+      {isDetailOpen && detail && (
         <div
-          className="glass-panel flex-1 flex items-center justify-center text-sm"
-          style={{ color: 'var(--color-text-muted)' }}
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/45 backdrop-blur-sm"
+          onClick={() => setIsDetailOpen(false)}
         >
-          {isDynamicReport
-            ? '按起始月份和结束月份生成动态报表；实际取数范围为起始月份 1 日至结束月份最后 1 日。'
-            : '按月份生成静态报表；实际取数截至所选月份最后一天。'}
+          <div
+            className="glass-panel-light max-h-[88vh] w-[min(1200px,92vw)] overflow-y-auto p-4"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
+                  报表详情
+                </h3>
+                <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                  生成报表后弹出的独立查看框
+                </p>
+              </div>
+              <button
+                type="button"
+                className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                onClick={() => setIsDetailOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+            <ReportSnapshotViewer detail={detail} />
+          </div>
         </div>
       )}
     </div>

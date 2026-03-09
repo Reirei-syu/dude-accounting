@@ -12,6 +12,7 @@ const DEFAULT_PERMISSIONS: Record<string, boolean> = {
   voucher_entry: true,
   audit: false,
   bookkeeping: false,
+  unbookkeep: false,
   system_settings: false,
   ledger_settings: false
 }
@@ -20,6 +21,7 @@ const PERMISSION_OPTIONS: Array<{ key: keyof typeof DEFAULT_PERMISSIONS; label: 
   { key: 'voucher_entry', label: '凭证录入' },
   { key: 'audit', label: '审核' },
   { key: 'bookkeeping', label: '记账' },
+  { key: 'unbookkeep', label: '反记账' },
   { key: 'system_settings', label: '系统设置' },
   { key: 'ledger_settings', label: '账套设置' }
 ]
@@ -34,6 +36,10 @@ function getPermissionSummary(user: UserRow): string {
 
 export default function UserManagement(): JSX.Element {
   const [users, setUsers] = useState<UserRow[]>([])
+  const [permissionDrafts, setPermissionDrafts] = useState<Record<number, Record<string, boolean>>>(
+    {}
+  )
+  const [savingUserId, setSavingUserId] = useState<number | null>(null)
   const [form, setForm] = useState({
     username: '',
     realName: '',
@@ -49,7 +55,15 @@ export default function UserManagement(): JSX.Element {
     }
     try {
       const result = await window.api.auth.getUsers()
-      setUsers(result as UserRow[])
+      const nextUsers = result as UserRow[]
+      setUsers(nextUsers)
+      setPermissionDrafts(
+        Object.fromEntries(
+          nextUsers
+            .filter((user) => !user.isAdmin)
+            .map((user) => [user.id, { ...DEFAULT_PERMISSIONS, ...user.permissions }])
+        )
+      )
     } catch (err) {
       setUsers([])
       setMessage({
@@ -117,6 +131,47 @@ export default function UserManagement(): JSX.Element {
     }
   }
 
+  const handlePermissionToggle = (
+    userId: number,
+    permissionKey: keyof typeof DEFAULT_PERMISSIONS,
+    checked: boolean
+  ): void => {
+    setPermissionDrafts((prev) => ({
+      ...prev,
+      [userId]: {
+        ...DEFAULT_PERMISSIONS,
+        ...(prev[userId] ?? users.find((user) => user.id === userId)?.permissions ?? {}),
+        [permissionKey]: checked
+      }
+    }))
+  }
+
+  const handleSavePermissions = async (userId: number): Promise<void> => {
+    if (!window.electron) return
+
+    const permissions = permissionDrafts[userId]
+    if (!permissions) return
+
+    setMessage(null)
+    setSavingUserId(userId)
+    try {
+      const result = await window.api.auth.updateUser({
+        id: userId,
+        permissions
+      })
+      if (!result.success) {
+        setMessage({ type: 'error', text: result.error || '保存权限失败' })
+        return
+      }
+      setMessage({ type: 'success', text: '权限已更新' })
+      await loadUsers()
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '保存权限失败' })
+    } finally {
+      setSavingUserId(null)
+    }
+  }
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
     void handleCreate()
@@ -181,7 +236,7 @@ export default function UserManagement(): JSX.Element {
 
       <div className="glass-panel flex-1 overflow-hidden">
         <div className="h-full overflow-x-auto">
-          <div className="min-w-[880px] h-full">
+          <div className="min-w-[980px] h-full">
             <div
               className="grid grid-cols-12 py-2 px-3 border-b text-sm font-semibold"
               style={{
@@ -192,7 +247,7 @@ export default function UserManagement(): JSX.Element {
               <div className="col-span-2">登录名</div>
               <div className="col-span-2">真实姓名</div>
               <div className="col-span-2">角色</div>
-              <div className="col-span-4">权限</div>
+              <div className="col-span-4">权限分配</div>
               <div className="col-span-2 text-right">操作</div>
             </div>
             <div className="overflow-y-auto h-[calc(100%-41px)]">
@@ -208,15 +263,48 @@ export default function UserManagement(): JSX.Element {
                   <div className="col-span-2">{user.username}</div>
                   <div className="col-span-2">{user.realName}</div>
                   <div className="col-span-2">{user.isAdmin ? '管理员' : '普通用户'}</div>
-                  <div className="col-span-4">{getPermissionSummary(user)}</div>
+                  <div className="col-span-4">
+                    {user.isAdmin ? (
+                      getPermissionSummary(user)
+                    ) : (
+                      <div className="flex flex-wrap gap-x-4 gap-y-2">
+                        {PERMISSION_OPTIONS.map((option) => (
+                          <label
+                            key={`${user.id}-${option.key}`}
+                            className="text-xs"
+                            style={{ color: 'var(--color-text-secondary)' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={Boolean(permissionDrafts[user.id]?.[option.key])}
+                              onChange={(event) =>
+                                handlePermissionToggle(user.id, option.key, event.target.checked)
+                              }
+                            />{' '}
+                            {option.label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="col-span-2 text-right">
                     {!user.isAdmin && (
-                      <button
-                        className="glass-btn-secondary px-3 py-1 text-xs"
-                        onClick={() => void handleDelete(user.id)}
-                      >
-                        删除
-                      </button>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="glass-btn-secondary px-3 py-1 text-xs"
+                          onClick={() => void handleSavePermissions(user.id)}
+                          disabled={savingUserId === user.id}
+                        >
+                          {savingUserId === user.id ? '保存中...' : '保存权限'}
+                        </button>
+                        <button
+                          className="glass-btn-secondary px-3 py-1 text-xs"
+                          onClick={() => void handleDelete(user.id)}
+                          disabled={savingUserId === user.id}
+                        >
+                          删除
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>

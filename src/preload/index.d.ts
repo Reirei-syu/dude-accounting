@@ -663,6 +663,25 @@ interface ReportSnapshotTotal {
   amountCents: number
 }
 
+interface ReportSnapshotTableCell {
+  value: string | number | null
+  isAmount?: boolean
+}
+
+interface ReportSnapshotTableRow {
+  key: string
+  cells: ReportSnapshotTableCell[]
+}
+
+interface ReportSnapshotTable {
+  key: string
+  columns: Array<{
+    key: string
+    label: string
+  }>
+  rows: ReportSnapshotTableRow[]
+}
+
 interface ReportSnapshotContent {
   title: string
   reportType: ReportType
@@ -680,10 +699,12 @@ interface ReportSnapshotContent {
     asOfDate: string | null
     includeUnpostedVouchers: boolean
   }
+  formCode?: string
   tableColumns?: Array<{
     key: string
     label: string
   }>
+  tables?: ReportSnapshotTable[]
   sections: ReportSnapshotSection[]
   totals: ReportSnapshotTotal[]
 }
