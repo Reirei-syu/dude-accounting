@@ -247,6 +247,17 @@ interface PLCarryForwardAPI {
       toSubjectName: string
     }>
   >
+  saveRules: (data: {
+    ledgerId: number
+    rules: Array<{
+      fromSubjectCode: string
+      toSubjectCode: string
+    }>
+  }) => Promise<{
+    success: boolean
+    error?: string
+    savedCount?: number
+  }>
   preview: (data: {
     ledgerId: number
     period: string

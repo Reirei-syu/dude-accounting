@@ -3,6 +3,7 @@ import {
   assertPLCarryForwardCompleted,
   executePLCarryForward,
   listPLCarryForwardRules,
+  savePLCarryForwardRules,
   previewPLCarryForward
 } from './plCarryForward'
 
@@ -170,6 +171,14 @@ class FakeDatabase {
       }
     }
 
+    if (normalized === 'SELECT id, standard_type FROM ledgers WHERE id = ?') {
+      return {
+        get: (ledgerId) => this.ledgers.find((item) => item.id === Number(ledgerId)),
+        all: () => [],
+        run: () => ({})
+      }
+    }
+
     if (normalized === 'SELECT value FROM system_settings WHERE key = ?') {
       return {
         get: (key) => this.systemSettings.find((item) => item.key === String(key)),
@@ -214,6 +223,55 @@ class FakeDatabase {
               }
             })
         },
+        run: () => ({})
+      }
+    }
+
+    if (
+      normalized.includes('FROM subjects s') &&
+      normalized.includes('EXISTS ( SELECT 1 FROM subjects child')
+    ) {
+      return {
+        get: () => undefined,
+        all: (ledgerId) => {
+          const currentLedgerId = Number(ledgerId)
+          return this.subjects
+            .filter((subject) => subject.ledger_id === currentLedgerId)
+            .slice()
+            .sort((left, right) => left.code.localeCompare(right.code))
+            .map((subject) => ({
+              code: subject.code,
+              name: subject.name,
+              category: subject.category,
+              has_children: this.subjects.some(
+                (child) =>
+                  child.ledger_id === currentLedgerId &&
+                  child.code !== subject.code &&
+                  child.code.startsWith(subject.code)
+              )
+                ? 1
+                : 0
+            }))
+        },
+        run: () => ({})
+      }
+    }
+
+    if (
+      normalized ===
+      'SELECT from_subject_code, to_subject_code FROM pl_carry_forward_rules WHERE ledger_id = ? ORDER BY from_subject_code ASC'
+    ) {
+      return {
+        get: () => undefined,
+        all: (ledgerId) =>
+          this.rules
+            .filter((item) => item.ledger_id === Number(ledgerId))
+            .slice()
+            .sort((left, right) => left.from_subject_code.localeCompare(right.from_subject_code))
+            .map((rule) => ({
+              from_subject_code: rule.from_subject_code,
+              to_subject_code: rule.to_subject_code
+            })),
         run: () => ({})
       }
     }
@@ -333,6 +391,17 @@ class FakeDatabase {
       }
     }
 
+    if (normalized === 'DELETE FROM pl_carry_forward_rules WHERE ledger_id = ?') {
+      return {
+        get: () => undefined,
+        all: () => [],
+        run: (ledgerId) => {
+          this.rules = this.rules.filter((rule) => rule.ledger_id !== Number(ledgerId))
+          return {}
+        }
+      }
+    }
+
     if (normalized.startsWith('DELETE FROM vouchers WHERE id IN (')) {
       return {
         get: () => undefined,
@@ -392,6 +461,22 @@ class FakeDatabase {
             subject_code: String(subjectCode),
             debit_amount: Number(debitAmount),
             credit_amount: Number(creditAmount)
+          })
+          return {}
+        }
+      }
+    }
+
+    if (normalized.startsWith('INSERT INTO pl_carry_forward_rules (ledger_id, from_subject_code, to_subject_code) VALUES (?, ?, ?)')) {
+      return {
+        get: () => undefined,
+        all: () => [],
+        run: (ledgerId, fromSubjectCode, toSubjectCode) => {
+          this.rules.push({
+            id: this.nextRuleId++,
+            ledger_id: Number(ledgerId),
+            from_subject_code: String(fromSubjectCode),
+            to_subject_code: String(toSubjectCode)
           })
           return {}
         }
@@ -511,6 +596,87 @@ describe('pl carry forward service', () => {
         toSubjectName: '本年利润'
       }
     ])
+  })
+
+  it('saves a complete rule set and replaces previous mappings', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '6602', '管理费用', 'profit_loss', 1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+    seedSubject(db, 1, '410301', '本年利润-经营结转', 'equity', -1)
+    seedRule(db, 1, '6001', '4103')
+
+    savePLCarryForwardRules(db as never, {
+      ledgerId: 1,
+      rules: [
+        { fromSubjectCode: '6001', toSubjectCode: '410301' },
+        { fromSubjectCode: '6602', toSubjectCode: '410301' }
+      ]
+    })
+
+    expect(
+      db.rules
+        .filter((rule) => rule.ledger_id === 1)
+        .map((rule) => ({
+          from_subject_code: rule.from_subject_code,
+          to_subject_code: rule.to_subject_code
+        }))
+        .sort((left, right) => left.from_subject_code.localeCompare(right.from_subject_code))
+    ).toEqual([
+      {
+        from_subject_code: '6001',
+        to_subject_code: '410301'
+      },
+      {
+        from_subject_code: '6602',
+        to_subject_code: '410301'
+      }
+    ])
+  })
+
+  it('rejects saving when a leaf profit-loss subject has no configured rule', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '6602', '管理费用', 'profit_loss', 1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+
+    expect(() =>
+      savePLCarryForwardRules(db as never, {
+        ledgerId: 1,
+        rules: [{ fromSubjectCode: '6001', toSubjectCode: '4103' }]
+      })
+    ).toThrow('以下损益科目尚未配置结转目标：6602 管理费用')
+  })
+
+  it('prevents preview when carry-forward rules are incomplete', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '1122', '应收账款', 'asset', 1)
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '6602', '管理费用', 'profit_loss', 1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+    seedRule(db, 1, '6001', '4103')
+
+    insertVoucher(db, {
+      ledgerId: 1,
+      period: '2026-03',
+      voucherDate: '2026-03-05',
+      voucherNumber: 1,
+      status: 2,
+      entries: [
+        { subjectCode: '1122', debitAmount: 10000, creditAmount: 0 },
+        { subjectCode: '6001', debitAmount: 0, creditAmount: 10000 }
+      ]
+    })
+
+    expect(() => previewPLCarryForward(db as never, { ledgerId: 1, period: '2026-03' })).toThrow(
+      '以下损益科目尚未配置结转目标：6602 管理费用'
+    )
   })
 
   it('previews enterprise carry-forward entries for the selected period', () => {

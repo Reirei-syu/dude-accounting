@@ -3,6 +3,7 @@ import { getDatabase } from '../database/init'
 import {
   executePLCarryForward,
   listPLCarryForwardRules,
+  savePLCarryForwardRules,
   previewPLCarryForward
 } from '../services/plCarryForward'
 import { requireAuth, requirePermission } from './session'
@@ -14,6 +15,31 @@ export function registerPLCarryForwardHandlers(): void {
     requireAuth(event)
     return listPLCarryForwardRules(db, ledgerId)
   })
+
+  ipcMain.handle(
+    'plCarryForward:saveRules',
+    (
+      event,
+      payload: {
+        ledgerId: number
+        rules: Array<{
+          fromSubjectCode: string
+          toSubjectCode: string
+        }>
+      }
+    ) => {
+      try {
+        requirePermission(event, 'ledger_settings')
+        const savedCount = savePLCarryForwardRules(db, payload)
+        return { success: true, savedCount }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '保存损益结转规则失败'
+        }
+      }
+    }
+  )
 
   ipcMain.handle(
     'plCarryForward:preview',

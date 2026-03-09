@@ -86,6 +86,13 @@ const api = {
   },
   plCarryForward: {
     listRules: (ledgerId: number) => ipcRenderer.invoke('plCarryForward:listRules', ledgerId),
+    saveRules: (data: {
+      ledgerId: number
+      rules: Array<{
+        fromSubjectCode: string
+        toSubjectCode: string
+      }>
+    }) => ipcRenderer.invoke('plCarryForward:saveRules', data),
     preview: (data: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) =>
       ipcRenderer.invoke('plCarryForward:preview', data),
     execute: (data: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) =>

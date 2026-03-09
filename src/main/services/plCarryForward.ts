@@ -47,6 +47,16 @@ export interface ExecutePLCarryForwardResult {
   removedDraftVoucherIds: number[]
 }
 
+export interface SavePLCarryForwardRuleItem {
+  fromSubjectCode: string
+  toSubjectCode: string
+}
+
+export interface SavePLCarryForwardRulesParams {
+  ledgerId: number
+  rules: SavePLCarryForwardRuleItem[]
+}
+
 export interface PreviewPLCarryForwardParams {
   ledgerId: number
   period: string
@@ -74,6 +84,23 @@ type ExistingVoucherRow = {
   status: number
 }
 
+type LedgerRow = {
+  id: number
+  standard_type: 'enterprise' | 'npo'
+}
+
+type SubjectWithChildrenRow = {
+  code: string
+  name: string
+  category: string
+  has_children: number
+}
+
+type StoredCarryForwardRuleRow = {
+  from_subject_code: string
+  to_subject_code: string
+}
+
 function assertPeriodFormat(period: string): void {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
     throw new Error('会计期间格式应为 YYYY-MM')
@@ -84,6 +111,156 @@ function assertLedgerExists(db: Database.Database, ledgerId: number): void {
   const ledger = db.prepare('SELECT id FROM ledgers WHERE id = ?').get(ledgerId)
   if (!ledger) {
     throw new Error('账套不存在')
+  }
+}
+
+function getLedgerRow(db: Database.Database, ledgerId: number): LedgerRow {
+  const ledger = db
+    .prepare('SELECT id, standard_type FROM ledgers WHERE id = ?')
+    .get(ledgerId) as LedgerRow | undefined
+
+  if (!ledger) {
+    throw new Error('账套不存在')
+  }
+
+  return ledger
+}
+
+function listLedgerSubjectsWithChildren(
+  db: Database.Database,
+  ledgerId: number
+): SubjectWithChildrenRow[] {
+  return db
+    .prepare(
+      `SELECT
+         s.code,
+         s.name,
+         s.category,
+         EXISTS (
+           SELECT 1
+             FROM subjects child
+            WHERE child.ledger_id = s.ledger_id
+              AND child.code <> s.code
+              AND (child.parent_code = s.code OR child.code LIKE s.code || '%')
+         ) AS has_children
+       FROM subjects s
+       WHERE s.ledger_id = ?
+       ORDER BY s.code ASC`
+    )
+    .all(ledgerId) as SubjectWithChildrenRow[]
+}
+
+function listStoredCarryForwardRules(
+  db: Database.Database,
+  ledgerId: number
+): StoredCarryForwardRuleRow[] {
+  return db
+    .prepare(
+      `SELECT from_subject_code, to_subject_code
+       FROM pl_carry_forward_rules
+       WHERE ledger_id = ?
+       ORDER BY from_subject_code ASC`
+    )
+    .all(ledgerId) as StoredCarryForwardRuleRow[]
+}
+
+function getAllowedTargetPrefixes(standardType: 'enterprise' | 'npo'): string[] {
+  return standardType === 'npo' ? ['3101', '3102'] : ['4103']
+}
+
+function isSubjectWithinPrefixes(subjectCode: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) => subjectCode === prefix || subjectCode.startsWith(prefix))
+}
+
+function formatSubjectList(
+  subjectCodes: string[],
+  subjectByCode: Map<string, Pick<SubjectWithChildrenRow, 'code' | 'name'>>
+): string {
+  return subjectCodes
+    .map((subjectCode) => {
+      const subject = subjectByCode.get(subjectCode)
+      return subject ? `${subject.code} ${subject.name}` : subjectCode
+    })
+    .join('、')
+}
+
+function normalizeSaveRules(
+  rules: SavePLCarryForwardRuleItem[]
+): SavePLCarryForwardRuleItem[] {
+  const normalizedRules = rules.map((rule) => ({
+    fromSubjectCode: rule.fromSubjectCode.trim(),
+    toSubjectCode: rule.toSubjectCode.trim()
+  }))
+
+  const blankSourceRule = normalizedRules.find((rule) => !rule.fromSubjectCode)
+  if (blankSourceRule) {
+    throw new Error('存在未选择的损益科目，无法保存')
+  }
+
+  const blankTargetRule = normalizedRules.find((rule) => !rule.toSubjectCode)
+  if (blankTargetRule) {
+    throw new Error(`请先为科目 ${blankTargetRule.fromSubjectCode} 选择结转目标`)
+  }
+
+  const duplicatedSourceCode = normalizedRules.find(
+    (rule, index) =>
+      normalizedRules.findIndex((candidate) => candidate.fromSubjectCode === rule.fromSubjectCode) !==
+      index
+  )?.fromSubjectCode
+
+  if (duplicatedSourceCode) {
+    throw new Error(`损益科目 ${duplicatedSourceCode} 重复配置了结转目标`)
+  }
+
+  return normalizedRules
+}
+
+function assertCarryForwardRulesConfigured(
+  db: Database.Database,
+  ledgerId: number,
+  rules: SavePLCarryForwardRuleItem[]
+): void {
+  const ledger = getLedgerRow(db, ledgerId)
+  const subjects = listLedgerSubjectsWithChildren(db, ledgerId)
+  const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
+  const sourceSubjects = subjects.filter(
+    (subject) => subject.category === 'profit_loss' && subject.has_children === 0
+  )
+  const targetPrefixes = getAllowedTargetPrefixes(ledger.standard_type)
+  const targetSubjects = subjects.filter(
+    (subject) =>
+      subject.category === 'equity' &&
+      subject.has_children === 0 &&
+      isSubjectWithinPrefixes(subject.code, targetPrefixes)
+  )
+  const sourceByCode = new Map(sourceSubjects.map((subject) => [subject.code, subject]))
+  const targetByCode = new Map(targetSubjects.map((subject) => [subject.code, subject]))
+  const normalizedRules = normalizeSaveRules(rules)
+
+  const missingSourceCodes = sourceSubjects
+    .filter((subject) => !normalizedRules.some((rule) => rule.fromSubjectCode === subject.code))
+    .map((subject) => subject.code)
+  if (missingSourceCodes.length > 0) {
+    throw new Error(
+      `以下损益科目尚未配置结转目标：${formatSubjectList(missingSourceCodes, subjectByCode)}`
+    )
+  }
+
+  const invalidSourceCodes = normalizedRules
+    .map((rule) => rule.fromSubjectCode)
+    .filter((code) => !sourceByCode.has(code))
+  if (invalidSourceCodes.length > 0) {
+    throw new Error(
+      `以下结转来源科目无效或不是末级损益科目：${formatSubjectList(invalidSourceCodes, subjectByCode)}`
+    )
+  }
+
+  const invalidTargetRules = normalizedRules.filter((rule) => !targetByCode.has(rule.toSubjectCode))
+  if (invalidTargetRules.length > 0) {
+    const invalidTargetText = invalidTargetRules
+      .map((rule) => `${rule.fromSubjectCode} -> ${rule.toSubjectCode}`)
+      .join('、')
+    throw new Error(`以下结转目标科目无效或不是允许的末级科目：${invalidTargetText}`)
   }
 }
 
@@ -317,6 +494,32 @@ export function listPLCarryForwardRules(
     })
 }
 
+export function savePLCarryForwardRules(
+  db: Database.Database,
+  params: SavePLCarryForwardRulesParams
+): number {
+  const { ledgerId } = params
+  assertCarryForwardRulesConfigured(db, ledgerId, params.rules)
+  const normalizedRules = normalizeSaveRules(params.rules).sort((left, right) =>
+    left.fromSubjectCode.localeCompare(right.fromSubjectCode)
+  )
+
+  const run = db.transaction(() => {
+    db.prepare('DELETE FROM pl_carry_forward_rules WHERE ledger_id = ?').run(ledgerId)
+    const insertRule = db.prepare(
+      `INSERT INTO pl_carry_forward_rules (ledger_id, from_subject_code, to_subject_code)
+       VALUES (?, ?, ?)`
+    )
+
+    for (const rule of normalizedRules) {
+      insertRule.run(ledgerId, rule.fromSubjectCode, rule.toSubjectCode)
+    }
+  })
+
+  run()
+  return normalizedRules.length
+}
+
 export function previewPLCarryForward(
   db: Database.Database,
   params: PreviewPLCarryForwardParams
@@ -324,6 +527,14 @@ export function previewPLCarryForward(
   const { ledgerId, period, includeUnpostedVouchers = false } = params
   assertLedgerExists(db, ledgerId)
   assertPeriodFormat(period)
+  assertCarryForwardRulesConfigured(
+    db,
+    ledgerId,
+    listStoredCarryForwardRules(db, ledgerId).map((rule) => ({
+      fromSubjectCode: rule.from_subject_code,
+      toSubjectCode: rule.to_subject_code
+    }))
+  )
 
   const movements = getRuleMovements(db, ledgerId, period, includeUnpostedVouchers)
   const entries = buildPreviewEntries(movements)
