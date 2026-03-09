@@ -569,4 +569,31 @@ describe('reporting service', () => {
     expect(listReportSnapshots(testDb, { ledgerId: 2 })).toHaveLength(0)
     expect(() => getReportSnapshotDetail(testDb, snapshot.id, 2)).toThrow('报表快照不存在')
   })
+
+  it('uses the NGO system balance sheet template rows and year-start/year-end columns', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'balance_sheet',
+      month: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-09T11:05:00.000Z'
+    })
+
+    const allRows = snapshot.content.sections.flatMap((section) => section.rows)
+    const cashRow = allRows.find((row) => row.label === '货币资金')
+    const entrustedAssetRow = allRows.find((row) => row.label === '受托代理资产')
+    const totalRow = allRows.find((row) => row.label === '负债和净资产总计')
+
+    expect(cashRow?.lineNo).toBe('1')
+    expect(cashRow?.cells?.opening).toBe(50_000)
+    expect(cashRow?.cells?.closing).toBe(65_000)
+    expect(entrustedAssetRow?.lineNo).toBe('21')
+    expect(totalRow?.lineNo).toBe('80')
+    expect(snapshot.content.tableColumns?.map((column) => column.label)).toEqual(['年初数', '期末数'])
+  })
 })

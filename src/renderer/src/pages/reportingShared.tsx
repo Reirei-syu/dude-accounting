@@ -12,6 +12,8 @@ export interface ReportSnapshotLine {
   label: string
   amountCents: number
   code?: string
+  lineNo?: string
+  cells?: Record<string, number>
 }
 
 export interface ReportSnapshotSection {
@@ -43,6 +45,10 @@ export interface ReportSnapshotContent {
     asOfDate: string | null
     includeUnpostedVouchers: boolean
   }
+  tableColumns?: Array<{
+    key: string
+    label: string
+  }>
   sections: ReportSnapshotSection[]
   totals: ReportSnapshotTotal[]
 }
@@ -106,6 +112,8 @@ interface ViewerProps {
 }
 
 export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
+  const isMultiColumn = (detail.content.tableColumns?.length ?? 0) > 0
+
   return (
     <div className="glass-panel-light p-4 flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -182,16 +190,59 @@ export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
             </div>
 
             {section.rows.length > 0 ? (
-              <div className="divide-y" style={{ borderColor: 'var(--color-glass-border-light)' }}>
+              <div
+                className="divide-y"
+                style={{ borderColor: 'var(--color-glass-border-light)' }}
+              >
+                {isMultiColumn && (
+                  <div
+                    className="grid gap-3 border-b px-4 py-3 text-xs font-semibold"
+                    style={{
+                      borderColor: 'var(--color-glass-border-light)',
+                      color: 'var(--color-text-muted)',
+                      gridTemplateColumns: `minmax(220px, 1fr) repeat(${detail.content.tableColumns?.length || 0}, minmax(120px, 1fr))`
+                    }}
+                  >
+                    <div>项目</div>
+                    {detail.content.tableColumns?.map((column) => (
+                      <div key={column.key} className="text-right">
+                        {column.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {section.rows.map((row) => (
-                  <div key={row.key} className="grid grid-cols-[1fr_auto] gap-3 px-4 py-3 text-sm">
+                  <div
+                    key={row.key}
+                    className="grid gap-3 px-4 py-3 text-sm"
+                    style={{
+                      gridTemplateColumns: isMultiColumn
+                        ? `minmax(220px, 1fr) repeat(${detail.content.tableColumns?.length || 0}, minmax(120px, 1fr))`
+                        : '1fr auto'
+                    }}
+                  >
                     <div style={{ color: 'var(--color-text-secondary)' }}>
+                      {row.lineNo ? `${row.lineNo} ` : ''}
                       {row.code ? `${row.code} ` : ''}
                       {row.label}
                     </div>
-                    <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                      {formatAmountCents(row.amountCents)}
-                    </div>
+
+                    {isMultiColumn ? (
+                      detail.content.tableColumns?.map((column) => (
+                        <div
+                          key={`${row.key}-${column.key}`}
+                          className="text-right font-medium"
+                          style={{ color: 'var(--color-text-primary)' }}
+                        >
+                          {formatAmountCents(row.cells?.[column.key] ?? 0)}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                        {formatAmountCents(row.amountCents)}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

@@ -647,6 +647,8 @@ interface ReportSnapshotLine {
   label: string
   amountCents: number
   code?: string
+  lineNo?: string
+  cells?: Record<string, number>
 }
 
 interface ReportSnapshotSection {
@@ -678,6 +680,10 @@ interface ReportSnapshotContent {
     asOfDate: string | null
     includeUnpostedVouchers: boolean
   }
+  tableColumns?: Array<{
+    key: string
+    label: string
+  }>
   sections: ReportSnapshotSection[]
   totals: ReportSnapshotTotal[]
 }

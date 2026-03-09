@@ -12,6 +12,8 @@ export interface ReportSnapshotLine {
   label: string
   amountCents: number
   code?: string
+  lineNo?: string
+  cells?: Record<string, number>
 }
 
 export interface ReportSnapshotSection {
@@ -45,6 +47,7 @@ export interface ReportSnapshotContent {
   standardType: AccountingStandardType
   generatedAt: string
   scope: ReportSnapshotScope
+  tableColumns?: Array<{ key: string; label: string }>
   sections: ReportSnapshotSection[]
   totals: ReportSnapshotTotal[]
 }
@@ -383,6 +386,279 @@ function buildRows(
   }))
 }
 
+function getOpeningBalance(subject: SubjectRow, opening: InitialBalanceRow | undefined): number {
+  return subject.balance_direction === 1
+    ? (opening?.debit_amount ?? 0) - (opening?.credit_amount ?? 0)
+    : (opening?.credit_amount ?? 0) - (opening?.debit_amount ?? 0)
+}
+
+function buildSubjectBalanceMap(
+  subjects: SubjectRow[],
+  openingBySubject: Map<string, InitialBalanceRow>,
+  entriesBySubject: Map<string, EntryWithVoucher[]>,
+  defaultStartPeriod: string,
+  targetDate: string
+): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const subject of subjects) {
+    map.set(
+      subject.code,
+      toSubjectBalance(
+        subject,
+        openingBySubject.get(subject.code),
+        entriesBySubject.get(subject.code) ?? [],
+        defaultStartPeriod,
+        targetDate
+      )
+    )
+  }
+  return map
+}
+
+function sumTemplateAmount(
+  amounts: Map<string, number>,
+  specs: Array<{ code: string; sign?: 1 | -1 }>
+): number {
+  return specs.reduce(
+    (sum, spec) => sum + (amounts.get(spec.code) ?? 0) * (spec.sign ?? 1),
+    0
+  )
+}
+
+function createTemplateRow(
+  key: string,
+  label: string,
+  lineNo: string,
+  opening: number,
+  closing: number
+): ReportSnapshotLine {
+  return {
+    key,
+    label,
+    lineNo,
+    amountCents: closing,
+    cells: {
+      opening,
+      closing
+    }
+  }
+}
+
+function buildNgoBalanceSheetSnapshot(
+  ledger: LedgerRow,
+  scope: ReportSnapshotScope,
+  generatedAt: string,
+  openingMap: Map<string, number>,
+  closingMap: Map<string, number>
+): ReportSnapshotContent {
+  const assetRows: ReportSnapshotLine[] = []
+  const liabilityRows: ReportSnapshotLine[] = []
+
+  const line = (
+    collection: ReportSnapshotLine[],
+    key: string,
+    label: string,
+    lineNo: string,
+    specs: Array<{ code: string; sign?: 1 | -1 }>
+  ): number => {
+    const opening = sumTemplateAmount(openingMap, specs)
+    const closing = sumTemplateAmount(closingMap, specs)
+    collection.push(createTemplateRow(key, label, lineNo, opening, closing))
+    return closing
+  }
+
+  const flowAssetClosing =
+    line(assetRows, 'cash', '货币资金', '1', [
+      { code: '1001' },
+      { code: '1002' },
+      { code: '1009' }
+    ]) +
+    line(assetRows, 'short_investment', '短期投资', '2', [
+      { code: '1101' },
+      { code: '1102', sign: -1 }
+    ]) +
+    line(assetRows, 'receivables', '应收款项', '3', [
+      { code: '1111' },
+      { code: '1121' },
+      { code: '1122' },
+      { code: '1131', sign: -1 }
+    ]) +
+    line(assetRows, 'prepayments', '预付账款', '4', [{ code: '1141' }]) +
+    line(assetRows, 'inventory', '存货', '5', [
+      { code: '1201' },
+      { code: '1202', sign: -1 }
+    ]) +
+    line(assetRows, 'prepaid_expense', '待摊费用', '6', [{ code: '1301' }]) +
+    line(assetRows, 'current_long_term_bond', '一年内到期的长期债权投资', '7', []) +
+    line(assetRows, 'other_current_assets', '其他流动资产', '8', [])
+
+  assetRows.push(
+    createTemplateRow(
+      'flow_assets_total',
+      '流动资产合计',
+      '9',
+      assetRows.slice(0, 8).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      flowAssetClosing
+    )
+  )
+
+  const longTermInvestmentClosing =
+    line(assetRows, 'long_term_equity', '长期股权投资', '10', [{ code: '1401' }]) +
+    line(assetRows, 'long_term_debt', '长期债权投资', '11', [{ code: '1402' }])
+
+  assetRows.push(
+    createTemplateRow(
+      'long_term_investment_total',
+      '长期投资合计',
+      '12',
+      assetRows.slice(9, 11).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      longTermInvestmentClosing
+    )
+  )
+
+  line(assetRows, 'fixed_asset_cost', '固定资产原价', '13', [{ code: '1501' }])
+  line(assetRows, 'accumulated_depreciation', '减：累计折旧', '14', [{ code: '1502' }])
+  assetRows.push(
+    createTemplateRow(
+      'fixed_asset_net',
+      '固定资产净值',
+      '15',
+      (assetRows[12].cells?.opening ?? 0) - (assetRows[13].cells?.opening ?? 0),
+      (assetRows[12].cells?.closing ?? 0) - (assetRows[13].cells?.closing ?? 0)
+    )
+  )
+  line(assetRows, 'construction_in_progress', '在建工程', '16', [{ code: '1505' }])
+  line(assetRows, 'cultural_relic_asset', '文物文化资产', '17', [{ code: '1506' }])
+  line(assetRows, 'fixed_asset_disposal', '固定资产清理', '18', [{ code: '1509' }])
+  assetRows.push(
+    createTemplateRow(
+      'fixed_assets_total',
+      '固定资产合计',
+      '19',
+      assetRows.slice(14, 18).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      assetRows.slice(14, 18).reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
+    )
+  )
+
+  line(assetRows, 'intangible_assets', '无形资产', '20', [
+    { code: '1601' },
+    { code: '1602', sign: -1 }
+  ])
+  line(assetRows, 'entrusted_assets', '受托代理资产', '21', [{ code: '1801' }])
+  assetRows.push(
+    createTemplateRow(
+      'asset_total',
+      '资产总计',
+      '22',
+      assetRows.reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      assetRows.reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
+    )
+  )
+
+  const flowLiabilityClosing =
+    line(liabilityRows, 'short_term_loan', '短期借款', '61', [{ code: '2101' }]) +
+    line(liabilityRows, 'payables', '应付款项', '62', [
+      { code: '2201' },
+      { code: '2202' },
+      { code: '2209' }
+    ]) +
+    line(liabilityRows, 'payroll', '应付工资', '63', [{ code: '2204' }]) +
+    line(liabilityRows, 'taxes', '应交税金', '64', [{ code: '2206' }]) +
+    line(liabilityRows, 'advance_receipts', '预收账款', '65', [{ code: '2203' }]) +
+    line(liabilityRows, 'accrued_expense', '预提费用', '66', [{ code: '2301' }]) +
+    line(liabilityRows, 'estimated_liability', '预计负债', '67', [{ code: '2503' }]) +
+    line(liabilityRows, 'current_long_term_liability', '一年内到期的长期负债', '68', []) +
+    line(liabilityRows, 'other_current_liability', '其他流动负债', '69', [])
+
+  liabilityRows.push(
+    createTemplateRow(
+      'flow_liability_total',
+      '流动负债合计',
+      '70',
+      liabilityRows.slice(0, 9).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      flowLiabilityClosing
+    )
+  )
+
+  const longTermLiabilityClosing =
+    line(liabilityRows, 'long_term_loan', '长期借款', '71', [{ code: '2501' }]) +
+    line(liabilityRows, 'long_term_payable', '长期应付款', '72', [{ code: '2502' }]) +
+    line(liabilityRows, 'other_long_term_liability', '其他长期负债', '73', [])
+
+  liabilityRows.push(
+    createTemplateRow(
+      'long_term_liability_total',
+      '长期负债合计',
+      '74',
+      liabilityRows.slice(10, 13).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      longTermLiabilityClosing
+    )
+  )
+
+  line(liabilityRows, 'entrusted_liability', '受托代理负债', '75', [{ code: '2601' }])
+  liabilityRows.push(
+    createTemplateRow(
+      'liability_total',
+      '负债合计',
+      '76',
+      liabilityRows
+        .filter((row) => ['70', '74', '75'].includes(row.lineNo ?? ''))
+        .reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      liabilityRows
+        .filter((row) => ['70', '74', '75'].includes(row.lineNo ?? ''))
+        .reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
+    )
+  )
+
+  line(liabilityRows, 'unrestricted_net_assets', '非限定性净资产', '77', [{ code: '3101' }])
+  line(liabilityRows, 'restricted_net_assets', '限定性净资产', '78', [{ code: '3102' }])
+  liabilityRows.push(
+    createTemplateRow(
+      'net_assets_total',
+      '净资产合计',
+      '79',
+      liabilityRows.slice(16, 18).reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      liabilityRows.slice(16, 18).reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
+    )
+  )
+  liabilityRows.push(
+    createTemplateRow(
+      'liability_and_net_assets_total',
+      '负债和净资产总计',
+      '80',
+      liabilityRows
+        .filter((row) => ['76', '79'].includes(row.lineNo ?? ''))
+        .reduce((sum, row) => sum + (row.cells?.opening ?? 0), 0),
+      liabilityRows
+        .filter((row) => ['76', '79'].includes(row.lineNo ?? ''))
+        .reduce((sum, row) => sum + (row.cells?.closing ?? 0), 0)
+    )
+  )
+
+  return {
+    title: BALANCE_SHEET_TITLE,
+    reportType: 'balance_sheet',
+    period: scope.periodLabel,
+    ledgerName: ledger.name,
+    standardType: ledger.standard_type,
+    generatedAt,
+    scope,
+    tableColumns: [
+      { key: 'opening', label: '年初数' },
+      { key: 'closing', label: '期末数' }
+    ],
+    sections: [
+      { key: 'assets', title: '资产', rows: assetRows },
+      { key: 'liabilities_and_net_assets', title: '负债和净资产', rows: liabilityRows }
+    ],
+    totals: [
+      { key: 'assets', label: '资产总计', amountCents: assetRows[assetRows.length - 1].amountCents },
+      { key: 'liabilities', label: '负债合计', amountCents: liabilityRows[15].amountCents },
+      { key: 'net_assets', label: '净资产合计', amountCents: liabilityRows[18].amountCents }
+    ]
+  }
+}
+
 function toSubjectBalance(
   subject: SubjectRow,
   opening: InitialBalanceRow | undefined,
@@ -446,65 +722,47 @@ function buildBalanceSheetSnapshot(
   const commonSubjects = subjects.filter((subject) => subject.category === 'common')
   const profitLossSubjects = subjects.filter((subject) => subject.category === 'profit_loss')
 
+  const closingBalanceMap = buildSubjectBalanceMap(
+    subjects,
+    openingBySubject,
+    entriesBySubject,
+    ledger.start_period,
+    scope.endDate
+  )
+  const openingBalanceMap = new Map<string, number>()
+  for (const subject of subjects) {
+    openingBalanceMap.set(subject.code, getOpeningBalance(subject, openingBySubject.get(subject.code)))
+  }
+
+  if (ledger.standard_type === 'npo') {
+    return buildNgoBalanceSheetSnapshot(
+      ledger,
+      scope,
+      generatedAt,
+      openingBalanceMap,
+      closingBalanceMap
+    )
+  }
+
   const assetAmounts = new Map<string, number>()
   const liabilityAmounts = new Map<string, number>()
   const equityAmounts = new Map<string, number>()
   const commonAmounts = new Map<string, number>()
 
   for (const subject of assetSubjects) {
-    addAmount(
-      assetAmounts,
-      subject.code,
-      toSubjectBalance(
-        subject,
-        openingBySubject.get(subject.code),
-        entriesBySubject.get(subject.code) ?? [],
-        ledger.start_period,
-        scope.endDate
-      )
-    )
+    addAmount(assetAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
   }
 
   for (const subject of liabilitySubjects) {
-    addAmount(
-      liabilityAmounts,
-      subject.code,
-      toSubjectBalance(
-        subject,
-        openingBySubject.get(subject.code),
-        entriesBySubject.get(subject.code) ?? [],
-        ledger.start_period,
-        scope.endDate
-      )
-    )
+    addAmount(liabilityAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
   }
 
   for (const subject of equitySubjects) {
-    addAmount(
-      equityAmounts,
-      subject.code,
-      toSubjectBalance(
-        subject,
-        openingBySubject.get(subject.code),
-        entriesBySubject.get(subject.code) ?? [],
-        ledger.start_period,
-        scope.endDate
-      )
-    )
+    addAmount(equityAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
   }
 
   for (const subject of commonSubjects) {
-    addAmount(
-      commonAmounts,
-      subject.code,
-      toSubjectBalance(
-        subject,
-        openingBySubject.get(subject.code),
-        entriesBySubject.get(subject.code) ?? [],
-        ledger.start_period,
-        scope.endDate
-      )
-    )
+    addAmount(commonAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
   }
 
   const profitLossNet = profitLossSubjects.reduce((sum, subject) => {
@@ -525,7 +783,7 @@ function buildBalanceSheetSnapshot(
 
   equityRows.push({
     key: 'period_net_result',
-    label: ledger.standard_type === 'npo' ? '本期净资产结余' : '本期净利润',
+    label: '本期净利润',
     amountCents: profitLossNet
   })
 
@@ -539,7 +797,7 @@ function buildBalanceSheetSnapshot(
     { key: 'liabilities', title: '负债项目', rows: liabilityRows },
     {
       key: 'equity',
-      title: ledger.standard_type === 'npo' ? '净资产项目' : '所有者权益项目',
+      title: '所有者权益项目',
       rows: equityRows
     }
   ]
@@ -553,7 +811,7 @@ function buildBalanceSheetSnapshot(
     { key: 'liabilities', label: '负债合计', amountCents: liabilitiesTotal },
     {
       key: 'equity',
-      label: ledger.standard_type === 'npo' ? '净资产合计' : '所有者权益合计',
+      label: '所有者权益合计',
       amountCents: equityTotal
     }
   ]
