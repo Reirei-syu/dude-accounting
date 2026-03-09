@@ -1,4 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import type Database from 'better-sqlite3'
+import ExcelJS from 'exceljs'
+import PDFDocument from 'pdfkit'
+import { buildTimestampToken, ensureDirectory } from './fileIntegrity'
 
 export type AccountingStandardType = 'enterprise' | 'npo'
 export type ReportType =
@@ -88,6 +93,12 @@ export interface GenerateReportSnapshotParams {
   generatedBy?: number | null
   now?: string | Date
 }
+
+export interface DuplicateReportSnapshotRow {
+  id: number
+}
+
+export type ReportExportFormat = 'xlsx' | 'pdf'
 
 type LedgerRow = {
   id: number
@@ -1044,6 +1055,19 @@ function buildReportName(title: string, scope: ReportSnapshotScope): string {
   return `${title} ${scope.periodLabel}${scope.includeUnpostedVouchers ? '（含未记账凭证）' : ''}`
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function sanitizeFileName(value: string): string {
+  return value.replace(/[\\/:*?"<>|]/g, '_')
+}
+
 function buildScopeFromRow(
   row: Pick<
     ReportSnapshotSummary,
@@ -1123,6 +1147,20 @@ export function generateReportSnapshot(
   const title = getReportTitle(params.reportType, ledger.standard_type)
   const content = buildSnapshotContent(db, ledger, scope, params.reportType, generatedAt)
   const reportName = buildReportName(title, scope)
+  const duplicate = db
+    .prepare(
+      `SELECT id
+       FROM report_snapshots
+       WHERE ledger_id = ?
+         AND report_type = ?
+         AND period = ?
+       LIMIT 1`
+    )
+    .get(params.ledgerId, params.reportType, scope.periodLabel) as DuplicateReportSnapshotRow | undefined
+
+  if (duplicate) {
+    throw new Error('已存在同会计期间同类型的报表，请先删除原报表后再生成')
+  }
 
   const result = db
     .prepare(
@@ -1259,4 +1297,423 @@ export function deleteReportSnapshot(
 ): boolean {
   const result = db.prepare('DELETE FROM report_snapshots WHERE id = ? AND ledger_id = ?').run(snapshotId, ledgerId)
   return result.changes > 0
+}
+
+export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
+  const title = escapeHtml(detail.content.title)
+  const ledgerName = escapeHtml(detail.ledger_name)
+  const period = escapeHtml(detail.period)
+  const generatedAt = escapeHtml(detail.generated_at)
+  const scopeText = escapeHtml(
+    `${detail.content.scope.startDate} 至 ${detail.content.scope.endDate}${
+      detail.content.scope.asOfDate ? `（截至 ${detail.content.scope.asOfDate}）` : ''
+    }`
+  )
+  const basisText = escapeHtml(
+    detail.content.scope.includeUnpostedVouchers ? '含未记账凭证' : '仅已记账凭证'
+  )
+
+  const sectionHtml = detail.content.sections
+    .map((section) => {
+      const columns = detail.content.tableColumns
+      const multiColumn = (columns?.length ?? 0) > 0
+
+      const headerCells = multiColumn
+        ? `<th>项目</th>${columns
+            ?.map((column) => `<th class="num">${escapeHtml(column.label)}</th>`)
+            .join('')}`
+        : '<th>项目</th><th class="num">金额</th>'
+
+      const bodyRows = section.rows
+        .map((row) => {
+          const label = `${row.lineNo ? `${row.lineNo} ` : ''}${row.code ? `${row.code} ` : ''}${row.label}`
+          const valueCells = multiColumn
+            ? columns
+                ?.map(
+                  (column) =>
+                    `<td class="num">${formatAmount(row.cells?.[column.key] ?? 0)}</td>`
+                )
+                .join('') ?? ''
+            : `<td class="num">${formatAmount(row.amountCents)}</td>`
+
+          return `<tr><td>${escapeHtml(label)}</td>${valueCells}</tr>`
+        })
+        .join('')
+
+      return `
+        <section class="report-section">
+          <h2>${escapeHtml(section.title)}</h2>
+          <table>
+            <thead>
+              <tr>${headerCells}</tr>
+            </thead>
+            <tbody>
+              ${bodyRows}
+            </tbody>
+          </table>
+        </section>
+      `
+    })
+    .join('')
+
+  const totalsHtml = detail.content.totals
+    .map(
+      (total) =>
+        `<tr><td>${escapeHtml(total.label)}</td><td class="num">${formatAmount(total.amountCents)}</td></tr>`
+    )
+    .join('')
+
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>${title}</title>
+    <style>
+      @page { size: A4 portrait; margin: 16mm 14mm; }
+      body {
+        margin: 0;
+        color: #111827;
+        background: #ffffff;
+        font-family: "SimSun", "Songti SC", serif;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .page {
+        width: 100%;
+      }
+      h1 {
+        margin: 0 0 8px;
+        text-align: center;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+      .meta {
+        margin-bottom: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        justify-content: space-between;
+      }
+      .meta-row {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+      }
+      .meta-label {
+        color: #374151;
+      }
+      .report-section {
+        margin-top: 12px;
+      }
+      .report-section h2 {
+        margin: 0 0 6px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      th, td {
+        border: 1px solid #111827;
+        padding: 6px 8px;
+        vertical-align: middle;
+        word-break: break-word;
+      }
+      th {
+        text-align: center;
+        font-weight: 700;
+      }
+      .num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .totals {
+        margin-top: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>${title}</h1>
+      <div class="meta">
+        <div class="meta-row">
+          <span class="meta-label">编制单位：${ledgerName}</span>
+          <span class="meta-label">会计期间：${period}</span>
+          <span class="meta-label">单位：元</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">取数范围：${scopeText}</span>
+          <span class="meta-label">统计口径：${basisText}</span>
+          <span class="meta-label">导出时间：${generatedAt}</span>
+        </div>
+      </div>
+      ${sectionHtml}
+      <section class="report-section totals">
+        <h2>汇总</h2>
+        <table>
+          <thead>
+            <tr><th>项目</th><th class="num">金额</th></tr>
+          </thead>
+          <tbody>${totalsHtml}</tbody>
+        </table>
+      </section>
+    </div>
+  </body>
+</html>`
+}
+
+function formatAmount(amountCents: number): string {
+  return (amountCents / 100).toFixed(2)
+}
+
+function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
+  if (detail.content.tableColumns && detail.content.tableColumns.length > 0) {
+    return ['项目', ...detail.content.tableColumns.map((column) => column.label)]
+  }
+  return ['项目', '金额']
+}
+
+function getExportTableRows(detail: ReportSnapshotDetail): Array<{ section: string; values: string[] }> {
+  return detail.content.sections.flatMap((section) =>
+    section.rows.map((row) => {
+      const label = `${row.lineNo ? `${row.lineNo} ` : ''}${row.code ? `${row.code} ` : ''}${row.label}`
+      const values = detail.content.tableColumns && detail.content.tableColumns.length > 0
+        ? [label, ...detail.content.tableColumns.map((column) => formatAmount(row.cells?.[column.key] ?? 0))]
+        : [label, formatAmount(row.amountCents)]
+
+      return { section: section.title, values }
+    })
+  )
+}
+
+export function buildDefaultReportExportFileName(
+  detail: ReportSnapshotDetail,
+  format: ReportExportFormat
+): string {
+  return `${sanitizeFileName(detail.report_name)}.${format}`
+}
+
+export function writeReportSnapshotHtml(
+  outputDir: string,
+  detail: ReportSnapshotDetail,
+  now: Date = new Date()
+): string {
+  ensureDirectory(outputDir)
+  const fileName = `${sanitizeFileName(detail.report_name)}-${buildTimestampToken(now)}.html`
+  const filePath = path.join(outputDir, fileName)
+  fs.writeFileSync(filePath, buildReportSnapshotHtml(detail), 'utf8')
+  return filePath
+}
+
+export async function writeReportSnapshotExcel(
+  filePath: string,
+  detail: ReportSnapshotDetail
+): Promise<string> {
+  const workbook = new ExcelJS.Workbook()
+  const worksheet = workbook.addWorksheet(detail.content.title, {
+    views: [{ state: 'frozen', ySplit: 4 }]
+  })
+
+  const headers = getExportTableHeaders(detail)
+  const rows = getExportTableRows(detail)
+
+  worksheet.mergeCells(1, 1, 1, headers.length)
+  worksheet.getCell(1, 1).value = detail.content.title
+  worksheet.getCell(1, 1).font = { name: '宋体', size: 16, bold: true }
+  worksheet.getCell(1, 1).alignment = { horizontal: 'center', vertical: 'middle' }
+
+  worksheet.getCell(2, 1).value = `编制单位：${detail.ledger_name}`
+  worksheet.getCell(2, headers.length).value = '单位：元'
+  worksheet.getCell(3, 1).value = `会计期间：${detail.period}`
+  worksheet.getCell(3, headers.length).value =
+    detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证'
+
+  const headerRow = worksheet.getRow(4)
+  headers.forEach((header, index) => {
+    const cell = headerRow.getCell(index + 1)
+    cell.value = header
+    cell.font = { name: '宋体', size: 11, bold: true }
+    cell.alignment = { horizontal: index === 0 ? 'left' : 'right', vertical: 'middle' }
+    cell.border = {
+      top: { style: 'thin' },
+      left: { style: 'thin' },
+      bottom: { style: 'thin' },
+      right: { style: 'thin' }
+    }
+  })
+
+  let rowIndex = 5
+  let currentSection = ''
+  for (const row of rows) {
+    if (row.section !== currentSection) {
+      currentSection = row.section
+      worksheet.mergeCells(rowIndex, 1, rowIndex, headers.length)
+      const sectionCell = worksheet.getCell(rowIndex, 1)
+      sectionCell.value = currentSection
+      sectionCell.font = { name: '宋体', size: 11, bold: true }
+      sectionCell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFF3F4F6' }
+      }
+      sectionCell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      }
+      rowIndex += 1
+    }
+
+    row.values.forEach((value, index) => {
+      const cell = worksheet.getCell(rowIndex, index + 1)
+      cell.value = value
+      cell.font = { name: '宋体', size: 10 }
+      cell.alignment = { horizontal: index === 0 ? 'left' : 'right', vertical: 'middle' }
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      }
+    })
+    rowIndex += 1
+  }
+
+  rowIndex += 1
+  worksheet.mergeCells(rowIndex, 1, rowIndex, headers.length)
+  worksheet.getCell(rowIndex, 1).value = '汇总'
+  worksheet.getCell(rowIndex, 1).font = { name: '宋体', size: 11, bold: true }
+
+  rowIndex += 1
+  detail.content.totals.forEach((total) => {
+    worksheet.getCell(rowIndex, 1).value = total.label
+    worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
+    for (let column = 1; column <= headers.length; column += 1) {
+      const cell = worksheet.getCell(rowIndex, column)
+      cell.font = { name: '宋体', size: 10 }
+      cell.alignment = { horizontal: column === 1 ? 'left' : 'right', vertical: 'middle' }
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'thin' },
+        right: { style: 'thin' }
+      }
+    }
+    rowIndex += 1
+  })
+
+  worksheet.columns = headers.map((header, index) => ({
+    header,
+    width: index === 0 ? 42 : 18
+  }))
+
+  ensureDirectory(path.dirname(filePath))
+  await workbook.xlsx.writeFile(filePath)
+  return filePath
+}
+
+export async function writeReportSnapshotPdf(
+  filePath: string,
+  detail: ReportSnapshotDetail
+): Promise<string> {
+  ensureDirectory(path.dirname(filePath))
+
+  await new Promise<void>((resolve, reject) => {
+    const document = new PDFDocument({
+      size: 'A4',
+      margin: 40,
+      bufferPages: true
+    })
+    const stream = fs.createWriteStream(filePath)
+
+    document.pipe(stream)
+
+    const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right
+    const headers = getExportTableHeaders(detail)
+    const rows = getExportTableRows(detail)
+    const columnWidth = headers.length > 0 ? pageWidth / headers.length : pageWidth
+
+    const drawRow = (
+      values: string[],
+      top: number,
+      options?: { bold?: boolean; fillColor?: string }
+    ): number => {
+      const rowHeight = 24
+        if (options?.fillColor) {
+        document.save()
+        document.fillColor(options.fillColor).rect(document.page.margins.left, top, pageWidth, rowHeight).fill()
+        document.restore()
+      }
+
+        values.forEach((value, index) => {
+          const left = document.page.margins.left + index * columnWidth
+          document.rect(left, top, columnWidth, rowHeight).stroke('#111827')
+          document.fontSize(options?.bold ? 10.5 : 10)
+          document.text(value, left + 6, top + 6, {
+          width: columnWidth - 12,
+          align: index === 0 ? 'left' : 'right'
+        })
+      })
+
+      return top + rowHeight
+    }
+
+    document.fontSize(18).text(detail.content.title, { align: 'center' })
+    document.moveDown(0.5)
+    document.fontSize(10).text(`编制单位：${detail.ledger_name}`, { continued: true })
+    document.text(`单位：元`, { align: 'right' })
+    document.text(`会计期间：${detail.period}`, { continued: true })
+    document.text(
+      detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证',
+      { align: 'right' }
+    )
+    document.text(`取数范围：${detail.content.scope.startDate} 至 ${detail.content.scope.endDate}`)
+    document.moveDown(0.5)
+
+    let top = document.y
+    top = drawRow(headers, top, { bold: true })
+
+    let currentSection = ''
+    for (const row of rows) {
+      if (top > document.page.height - 80) {
+        document.addPage()
+        top = document.page.margins.top
+        top = drawRow(headers, top, { bold: true })
+      }
+
+      if (row.section !== currentSection) {
+        currentSection = row.section
+        top = drawRow([currentSection, ...Array(headers.length - 1).fill('')], top, {
+          bold: true,
+          fillColor: '#f3f4f6'
+        })
+      }
+
+      top = drawRow(row.values, top)
+    }
+
+    if (top > document.page.height - 120) {
+      document.addPage()
+      top = document.page.margins.top
+    }
+
+    document.moveDown()
+    document.fontSize(12).text('汇总', document.page.margins.left, top + 8)
+    top += 28
+    top = drawRow(['项目', '金额'], top, { bold: true })
+    detail.content.totals.forEach((total) => {
+      top = drawRow([total.label, formatAmount(total.amountCents)], top)
+    })
+
+    document.end()
+    stream.on('finish', () => resolve())
+    stream.on('error', reject)
+    document.on('error', reject)
+  })
+
+  return filePath
 }

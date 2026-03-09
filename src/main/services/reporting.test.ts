@@ -1,9 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
+  buildReportSnapshotHtml,
   deleteReportSnapshot,
   generateReportSnapshot,
   getReportSnapshotDetail,
   listReportSnapshots,
+  writeReportSnapshotExcel,
+  writeReportSnapshotPdf,
   type ReportSnapshotDetail,
   type ReportSnapshotTotal
 } from './reporting'
@@ -187,6 +193,23 @@ class FakeReportingDb {
               }
               return left.code.localeCompare(right.code)
             }),
+        run: () => ({ lastInsertRowid: 0, changes: 0 })
+      }
+    }
+
+    if (
+      normalized ===
+      'SELECT id FROM report_snapshots WHERE ledger_id = ? AND report_type = ? AND period = ? LIMIT 1'
+    ) {
+      return {
+        get: (ledgerId, reportType, period) =>
+          this.snapshots.find(
+            (snapshot) =>
+              snapshot.ledger_id === Number(ledgerId) &&
+              snapshot.report_type === String(reportType) &&
+              snapshot.period === String(period)
+          ),
+        all: () => [],
         run: () => ({ lastInsertRowid: 0, changes: 0 })
       }
     }
@@ -458,6 +481,15 @@ function findRow(detail: ReportSnapshotDetail, code: string): { amountCents: num
 }
 
 describe('reporting service', () => {
+  let tempDir = ''
+
+  afterEach(() => {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+      tempDir = ''
+    }
+  })
+
   it('generates balance sheet by month-end and keeps zero-value rows in the snapshot', () => {
     const db = createTestDb()
     const testDb = db as never
@@ -481,11 +513,11 @@ describe('reporting service', () => {
   })
 
   it('includes unposted vouchers in dynamic enterprise reports only when the option is checked', () => {
-    const db = createTestDb()
-    const testDb = db as never
-    seedEnterpriseLedger(db)
+    const postedDb = createTestDb()
+    const postedTestDb = postedDb as never
+    seedEnterpriseLedger(postedDb)
 
-    const postedOnly = generateReportSnapshot(testDb, {
+    const postedOnly = generateReportSnapshot(postedTestDb, {
       ledgerId: 1,
       reportType: 'income_statement',
       startPeriod: '2026-03',
@@ -494,7 +526,12 @@ describe('reporting service', () => {
       generatedBy: 9,
       now: '2026-03-09T10:01:00.000Z'
     })
-    const includeUnposted = generateReportSnapshot(testDb, {
+
+    const unpostedDb = createTestDb()
+    const unpostedTestDb = unpostedDb as never
+    seedEnterpriseLedger(unpostedDb)
+
+    const includeUnposted = generateReportSnapshot(unpostedTestDb, {
       ledgerId: 1,
       reportType: 'income_statement',
       startPeriod: '2026-03',
@@ -595,5 +632,65 @@ describe('reporting service', () => {
     expect(entrustedAssetRow?.lineNo).toBe('21')
     expect(totalRow?.lineNo).toBe('80')
     expect(snapshot.content.tableColumns?.map((column) => column.label)).toEqual(['年初数', '期末数'])
+  })
+
+  it('blocks duplicate report generation and builds export html with official-style headers', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedEnterpriseLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      month: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T12:00:00.000Z'
+    })
+
+    expect(() =>
+      generateReportSnapshot(testDb, {
+        ledgerId: 1,
+        reportType: 'balance_sheet',
+        month: '2026-03',
+        includeUnpostedVouchers: true,
+        generatedBy: 9,
+        now: '2026-03-09T12:01:00.000Z'
+      })
+    ).toThrow('已存在同会计期间同类型的报表，请先删除原报表后再生成')
+
+    const html = buildReportSnapshotHtml(snapshot)
+    expect(html).toContain('<h1>资产负债表</h1>')
+    expect(html).toContain('编制单位：企业测试账套')
+    expect(html).toContain('会计期间：2026.03')
+    expect(html).toContain('单位：元')
+    expect(html).toContain('<table>')
+  })
+
+  it('writes excel and pdf exports for save-as flow', async () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedEnterpriseLedger(db)
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-export-'))
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      month: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T12:10:00.000Z'
+    })
+
+    const excelPath = path.join(tempDir, '资产负债表.xlsx')
+    const pdfPath = path.join(tempDir, '资产负债表.pdf')
+
+    await writeReportSnapshotExcel(excelPath, snapshot)
+    await writeReportSnapshotPdf(pdfPath, snapshot)
+
+    expect(fs.existsSync(excelPath)).toBe(true)
+    expect(fs.statSync(excelPath).size).toBeGreaterThan(0)
+    expect(fs.existsSync(pdfPath)).toBe(true)
+    expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
   })
 })

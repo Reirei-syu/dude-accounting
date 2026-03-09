@@ -20,6 +20,7 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
   const [endPeriod, setEndPeriod] = useState('')
   const [includeUnposted, setIncludeUnposted] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [exportingFormat, setExportingFormat] = useState<'xlsx' | 'pdf' | null>(null)
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
@@ -83,6 +84,40 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
       setError(err instanceof Error ? err.message : '生成报表失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleExport = async (format: 'xlsx' | 'pdf'): Promise<void> => {
+    setError('')
+    setSuccessMessage('')
+    if (!detail) {
+      setError('请先生成报表')
+      return
+    }
+    if (!window.electron) {
+      setError('浏览器预览模式不支持报表导出')
+      return
+    }
+
+    setExportingFormat(format)
+    try {
+      const result = await window.api.reporting.export({
+        snapshotId: detail.id,
+        ledgerId: detail.ledger_id,
+        format
+      })
+      if (result.cancelled) {
+        return
+      }
+      if (!result.success) {
+        setError(result.error || '导出报表失败')
+        return
+      }
+      setSuccessMessage(`报表已导出：${result.filePath}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出报表失败')
+    } finally {
+      setExportingFormat(null)
     }
   }
 
@@ -152,6 +187,24 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
           >
             {loading ? '生成中...' : '生成并保存'}
           </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              className="glass-btn-secondary px-5 py-2 font-semibold"
+              onClick={() => void handleExport('xlsx')}
+              disabled={exportingFormat !== null || !detail}
+            >
+              {exportingFormat === 'xlsx' ? '导出中...' : '导出 Excel'}
+            </button>
+            <button
+              type="button"
+              className="glass-btn-secondary px-5 py-2 font-semibold"
+              onClick={() => void handleExport('pdf')}
+              disabled={exportingFormat !== null || !detail}
+            >
+              {exportingFormat === 'pdf' ? '导出中...' : '导出 PDF'}
+            </button>
+          </div>
         </div>
       </div>
 

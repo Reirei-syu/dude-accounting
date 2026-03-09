@@ -25,7 +25,9 @@ export default function ReportQuery(): JSX.Element {
   const [loadingList, setLoadingList] = useState(false)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [exportingFormat, setExportingFormat] = useState<'xlsx' | 'pdf' | null>(null)
   const [error, setError] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
 
   const filteredRows = filterReportSnapshots(rows, {
     reportTypes: selectedReportTypes,
@@ -35,6 +37,7 @@ export default function ReportQuery(): JSX.Element {
 
   const loadRows = async (): Promise<void> => {
     setError('')
+    setSuccessMessage('')
     setDetail(null)
     setIsDetailOpen(false)
     setSelectedSnapshotId(null)
@@ -63,6 +66,7 @@ export default function ReportQuery(): JSX.Element {
 
   const loadDetail = async (snapshotId: number | null): Promise<void> => {
     setError('')
+    setSuccessMessage('')
     if (!snapshotId || !currentLedger) {
       setError('请先从清单中选择一张报表')
       return
@@ -90,6 +94,7 @@ export default function ReportQuery(): JSX.Element {
 
   const handleDelete = async (): Promise<void> => {
     setError('')
+    setSuccessMessage('')
     if (!selectedSnapshotId || !currentLedger) {
       setError('请先从清单中选择一张报表')
       return
@@ -123,10 +128,45 @@ export default function ReportQuery(): JSX.Element {
         setIsDetailOpen(false)
       }
       setSelectedSnapshotId(null)
+      setSuccessMessage('报表已删除')
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除报表失败')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const handleExport = async (format: 'xlsx' | 'pdf'): Promise<void> => {
+    setError('')
+    setSuccessMessage('')
+    if (!selectedSnapshotId || !currentLedger) {
+      setError('请先从清单中选择一张报表')
+      return
+    }
+    if (!window.electron) {
+      setError('浏览器预览模式不支持报表导出')
+      return
+    }
+
+    setExportingFormat(format)
+    try {
+      const result = await window.api.reporting.export({
+        snapshotId: selectedSnapshotId,
+        ledgerId: currentLedger.id,
+        format
+      })
+      if (result.cancelled) {
+        return
+      }
+      if (!result.success) {
+        setError(result.error || '导出报表失败')
+        return
+      }
+      setSuccessMessage(`报表已导出：${result.filePath}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出报表失败')
+    } finally {
+      setExportingFormat(null)
     }
   }
 
@@ -151,8 +191,9 @@ export default function ReportQuery(): JSX.Element {
   }, [filteredRows, selectedSnapshotId])
 
   return (
-    <div className="h-full flex flex-col gap-4 p-4">
-      <div className="glass-panel-light p-4 flex flex-wrap items-start justify-between gap-4">
+    <div className="h-full overflow-y-auto overflow-x-hidden pr-2">
+      <div className="min-h-full flex flex-col gap-4 p-4">
+        <div className="glass-panel-light shrink-0 p-4 flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
             报表查询
@@ -187,145 +228,171 @@ export default function ReportQuery(): JSX.Element {
           >
             {deleting ? '删除中...' : '删除报表'}
           </button>
+          <button
+            type="button"
+            className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+            onClick={() => void handleExport('xlsx')}
+            disabled={exportingFormat !== null || selectedSnapshotId === null}
+          >
+            {exportingFormat === 'xlsx' ? '导出中...' : '导出 Excel'}
+          </button>
+          <button
+            type="button"
+            className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+            onClick={() => void handleExport('pdf')}
+            disabled={exportingFormat !== null || selectedSnapshotId === null}
+          >
+            {exportingFormat === 'pdf' ? '导出中...' : '导出 PDF'}
+          </button>
         </div>
-      </div>
+        </div>
 
-      <div className="glass-panel-light p-4 flex flex-col gap-4">
-        <div className="flex flex-col gap-3">
-          <div>
-            <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              报表类型筛选
+        <div className="glass-panel-light shrink-0 p-4 flex flex-col gap-4">
+          <div className="flex flex-col gap-3">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                报表类型筛选
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {filterOptions.reportTypes.length > 0 ? (
+                  filterOptions.reportTypes.map((reportType) => {
+                    const selected = selectedReportTypes.includes(reportType)
+                    return (
+                      <button
+                        key={reportType}
+                        type="button"
+                        className="rounded-full px-3 py-1.5 text-sm font-medium border transition"
+                        style={{
+                          borderColor: selected
+                            ? 'rgba(15, 23, 42, 0.35)'
+                            : 'var(--color-glass-border-light)',
+                          background: selected ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.72)',
+                          color: 'var(--color-text-secondary)'
+                        }}
+                        aria-pressed={selected}
+                        onClick={() =>
+                          setSelectedReportTypes((current) => toggleValue(current, reportType))
+                        }
+                      >
+                        {getReportTypeLabel(reportType)}
+                      </button>
+                    )
+                  })
+                ) : (
+                  <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                    暂无可筛选的报表类型
+                  </span>
+                )}
+              </div>
             </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {filterOptions.reportTypes.length > 0 ? (
-                filterOptions.reportTypes.map((reportType) => {
-                  const selected = selectedReportTypes.includes(reportType)
-                  return (
-                    <button
-                      key={reportType}
-                      type="button"
-                      className="rounded-full px-3 py-1.5 text-sm font-medium border transition"
-                      style={{
-                        borderColor: selected
-                          ? 'rgba(15, 23, 42, 0.35)'
-                          : 'var(--color-glass-border-light)',
-                        background: selected ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.72)',
-                        color: 'var(--color-text-secondary)'
-                      }}
-                      aria-pressed={selected}
-                      onClick={() =>
-                        setSelectedReportTypes((current) => toggleValue(current, reportType))
-                      }
-                    >
-                      {getReportTypeLabel(reportType)}
-                    </button>
-                  )
-                })
-              ) : (
-                <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  暂无可筛选的报表类型
-                </span>
-              )}
+
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                会计期间筛选
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {filterOptions.periods.length > 0 ? (
+                  filterOptions.periods.map((period) => {
+                    const selected = selectedPeriods.includes(period)
+                    return (
+                      <button
+                        key={period}
+                        type="button"
+                        className="rounded-full px-3 py-1.5 text-sm font-medium border transition"
+                        style={{
+                          borderColor: selected
+                            ? 'rgba(15, 23, 42, 0.35)'
+                            : 'var(--color-glass-border-light)',
+                          background: selected ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.72)',
+                          color: 'var(--color-text-secondary)'
+                        }}
+                        aria-pressed={selected}
+                        onClick={() => setSelectedPeriods((current) => toggleValue(current, period))}
+                      >
+                        {period}
+                      </button>
+                    )
+                  })
+                ) : (
+                  <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                    暂无可筛选的会计期间
+                  </span>
+                )}
+              </div>
             </div>
           </div>
+        </div>
 
-          <div>
-            <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              会计期间筛选
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {filterOptions.periods.length > 0 ? (
-                filterOptions.periods.map((period) => {
-                  const selected = selectedPeriods.includes(period)
-                  return (
-                    <button
-                      key={period}
-                      type="button"
-                      className="rounded-full px-3 py-1.5 text-sm font-medium border transition"
-                      style={{
-                        borderColor: selected
-                          ? 'rgba(15, 23, 42, 0.35)'
-                          : 'var(--color-glass-border-light)',
-                        background: selected ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.72)',
-                        color: 'var(--color-text-secondary)'
-                      }}
-                      aria-pressed={selected}
-                      onClick={() => setSelectedPeriods((current) => toggleValue(current, period))}
-                    >
-                      {period}
-                    </button>
-                  )
-                })
-              ) : (
-                <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-                  暂无可筛选的会计期间
-                </span>
-              )}
-            </div>
+        <div className="glass-panel min-h-[360px] shrink-0 overflow-hidden">
+          <div
+            className="grid grid-cols-[2fr_1.1fr_1fr_1.4fr] gap-3 border-b px-4 py-3 text-sm font-semibold"
+            style={{
+              borderColor: 'var(--color-glass-border-light)',
+              color: 'var(--color-text-primary)'
+            }}
+          >
+            <div>报表名称</div>
+            <div>报表类型</div>
+            <div>会计期间</div>
+            <div>生成时间</div>
           </div>
-        </div>
-      </div>
 
-      <div className="glass-panel overflow-hidden">
-        <div
-          className="grid grid-cols-[2fr_1.1fr_1fr_1.4fr] gap-3 border-b px-4 py-3 text-sm font-semibold"
-          style={{
-            borderColor: 'var(--color-glass-border-light)',
-            color: 'var(--color-text-primary)'
-          }}
-        >
-          <div>报表名称</div>
-          <div>报表类型</div>
-          <div>会计期间</div>
-          <div>生成时间</div>
-        </div>
+          <div className="max-h-[420px] overflow-y-auto">
+            {filteredRows.map((row) => {
+              const selected = row.id === selectedSnapshotId
+              return (
+                <button
+                  key={row.id}
+                  type="button"
+                  className="grid w-full grid-cols-[2fr_1.1fr_1fr_1.4fr] gap-3 border-b px-4 py-3 text-left text-sm transition"
+                  style={{
+                    borderColor: 'var(--color-glass-border-light)',
+                    background: selected ? 'rgba(15, 23, 42, 0.08)' : 'transparent',
+                    color: 'var(--color-text-secondary)'
+                  }}
+                  onClick={() => setSelectedSnapshotId(row.id)}
+                  onDoubleClick={() => {
+                    setSelectedSnapshotId(row.id)
+                    void loadDetail(row.id)
+                  }}
+                >
+                  <div>{row.report_name}</div>
+                  <div>{getReportTypeLabel(row.report_type)}</div>
+                  <div>{row.period}</div>
+                  <div>{formatGeneratedAt(row.generated_at)}</div>
+                </button>
+              )
+            })}
 
-        <div className="max-h-[320px] overflow-y-auto">
-          {filteredRows.map((row) => {
-            const selected = row.id === selectedSnapshotId
-            return (
-              <button
-                key={row.id}
-                type="button"
-                className="grid w-full grid-cols-[2fr_1.1fr_1fr_1.4fr] gap-3 border-b px-4 py-3 text-left text-sm transition"
-                style={{
-                  borderColor: 'var(--color-glass-border-light)',
-                  background: selected ? 'rgba(15, 23, 42, 0.08)' : 'transparent',
-                  color: 'var(--color-text-secondary)'
-                }}
-                onClick={() => setSelectedSnapshotId(row.id)}
-                onDoubleClick={() => {
-                  setSelectedSnapshotId(row.id)
-                  void loadDetail(row.id)
-                }}
+            {filteredRows.length === 0 && !loadingList && (
+              <div
+                className="px-4 py-8 text-center text-sm"
+                style={{ color: 'var(--color-text-muted)' }}
               >
-                <div>{row.report_name}</div>
-                <div>{getReportTypeLabel(row.report_type)}</div>
-                <div>{row.period}</div>
-                <div>{formatGeneratedAt(row.generated_at)}</div>
-              </button>
-            )
-          })}
-
-          {filteredRows.length === 0 && !loadingList && (
-            <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              暂无匹配的报表记录
-            </div>
-          )}
+                暂无匹配的报表记录
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      {error && (
-        <div className="text-sm" style={{ color: 'var(--color-danger)' }} aria-live="polite">
-          {error}
+        {error && (
+          <div className="shrink-0 text-sm" style={{ color: 'var(--color-danger)' }} aria-live="polite">
+            {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="shrink-0 text-sm" style={{ color: 'var(--color-success)' }} aria-live="polite">
+            {successMessage}
+          </div>
+        )}
+
+        <div
+          className="glass-panel min-h-[96px] shrink-0 flex items-center justify-center text-sm"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          双击清单行，或单击选中后点击“查询详情”，将在悬浮交互框中显示完整报表。
         </div>
-      )}
-
-      <div
-        className="glass-panel flex-1 flex items-center justify-center text-sm"
-        style={{ color: 'var(--color-text-muted)' }}
-      >
-        双击清单行，或单击选中后点击“查询详情”，将在悬浮交互框中显示完整报表。
       </div>
 
       {isDetailOpen && detail && (
@@ -349,13 +416,31 @@ export default function ReportQuery(): JSX.Element {
                   双击清单进入的完整报表悬浮查看框
                 </p>
               </div>
-              <button
-                type="button"
-                className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
-                onClick={() => setIsDetailOpen(false)}
-              >
-                关闭
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                  onClick={() => void handleExport('xlsx')}
+                  disabled={exportingFormat !== null}
+                >
+                  {exportingFormat === 'xlsx' ? '导出中...' : '导出 Excel'}
+                </button>
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                  onClick={() => void handleExport('pdf')}
+                  disabled={exportingFormat !== null}
+                >
+                  {exportingFormat === 'pdf' ? '导出中...' : '导出 PDF'}
+                </button>
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                  onClick={() => setIsDetailOpen(false)}
+                >
+                  关闭
+                </button>
+              </div>
             </div>
             <ReportSnapshotViewer detail={detail} />
           </div>
