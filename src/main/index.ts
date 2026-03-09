@@ -17,6 +17,7 @@ import { registerAuditLogHandlers } from './ipc/auditLog'
 import { registerBackupHandlers } from './ipc/backup'
 import { registerArchiveHandlers } from './ipc/archive'
 import { registerElectronicVoucherHandlers } from './ipc/eVoucher'
+import { registerReportingHandlers } from './ipc/reporting'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -74,6 +75,7 @@ app.whenReady().then(() => {
   registerBackupHandlers()
   registerArchiveHandlers()
   registerElectronicVoucherHandlers()
+  registerReportingHandlers()
 
   createWindow()
 

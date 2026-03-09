@@ -300,6 +300,25 @@ export function initializeDatabase(): void {
       validated_at TEXT DEFAULT NULL
     );
 
+    -- 报表快照记录
+    CREATE TABLE IF NOT EXISTS report_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      report_type TEXT NOT NULL
+        CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement')),
+      report_name TEXT NOT NULL,
+      period TEXT NOT NULL,
+      start_period TEXT NOT NULL DEFAULT '',
+      end_period TEXT NOT NULL DEFAULT '',
+      as_of_date TEXT DEFAULT NULL,
+      include_unposted_vouchers INTEGER NOT NULL DEFAULT 0,
+      generated_by INTEGER DEFAULT NULL,
+      generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      content_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+      FOREIGN KEY (generated_by) REFERENCES users(id)
+    );
+
     -- 创建索引
     CREATE INDEX IF NOT EXISTS idx_subjects_ledger ON subjects(ledger_id);
     CREATE INDEX IF NOT EXISTS idx_subject_aux_categories_subject ON subject_auxiliary_categories(subject_id);
@@ -322,12 +341,17 @@ export function initializeDatabase(): void {
       ON voucher_source_links(source_type, source_record_id);
     CREATE INDEX IF NOT EXISTS idx_archive_exports_ledger_year ON archive_exports(ledger_id, fiscal_year);
     CREATE INDEX IF NOT EXISTS idx_backup_packages_ledger_year ON backup_packages(ledger_id, fiscal_year);
+    CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_period
+      ON report_snapshots(ledger_id, period);
+    CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_type
+      ON report_snapshots(ledger_id, report_type);
   `)
 
   ensureVoucherSchema(db)
   ensureInitialBalanceSchema(db)
   ensureCashFlowMappingSchema(db)
   ensureComplianceSchema(db)
+  ensureReportingSchema(db)
 
   // Seed default data
   seedAdminUser(db)
@@ -537,6 +561,78 @@ export function ensureCashFlowMappingSchema(db: Database.Database): void {
   db.prepare(
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_flow_mappings_unique
      ON cash_flow_mappings(ledger_id, subject_code, counterpart_subject_code, entry_direction)`
+  ).run()
+}
+
+export function ensureReportingSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS report_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ledger_id INTEGER NOT NULL,
+      report_type TEXT NOT NULL
+        CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement')),
+      report_name TEXT NOT NULL,
+      period TEXT NOT NULL,
+      start_period TEXT NOT NULL DEFAULT '',
+      end_period TEXT NOT NULL DEFAULT '',
+      as_of_date TEXT DEFAULT NULL,
+      include_unposted_vouchers INTEGER NOT NULL DEFAULT 0,
+      generated_by INTEGER DEFAULT NULL,
+      generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      content_json TEXT NOT NULL DEFAULT '{}',
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+      FOREIGN KEY (generated_by) REFERENCES users(id)
+    );
+  `)
+
+  const columns = db.prepare("PRAGMA table_info('report_snapshots')").all() as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'start_period')) {
+    db.exec("ALTER TABLE report_snapshots ADD COLUMN start_period TEXT NOT NULL DEFAULT ''")
+  }
+  if (!columns.some((column) => column.name === 'end_period')) {
+    db.exec("ALTER TABLE report_snapshots ADD COLUMN end_period TEXT NOT NULL DEFAULT ''")
+  }
+  if (!columns.some((column) => column.name === 'as_of_date')) {
+    db.exec("ALTER TABLE report_snapshots ADD COLUMN as_of_date TEXT DEFAULT NULL")
+  }
+  if (!columns.some((column) => column.name === 'include_unposted_vouchers')) {
+    db.exec(
+      'ALTER TABLE report_snapshots ADD COLUMN include_unposted_vouchers INTEGER NOT NULL DEFAULT 0'
+    )
+  }
+
+  db.exec(`
+    UPDATE report_snapshots
+       SET start_period = REPLACE(period, '.', '-')
+     WHERE start_period = ''
+       AND period GLOB '????-??';
+  `)
+  db.exec(`
+    UPDATE report_snapshots
+       SET end_period = REPLACE(period, '.', '-')
+     WHERE end_period = ''
+       AND period GLOB '????-??';
+  `)
+  db.exec(`
+    UPDATE report_snapshots
+       SET start_period = substr(REPLACE(period, '.', '-'), 1, 7),
+           end_period = substr(REPLACE(period, '.', '-'), 9, 7)
+     WHERE (start_period = '' OR end_period = '')
+       AND REPLACE(period, '.', '-') GLOB '????-??-????-??';
+  `)
+  db.exec(`
+    UPDATE report_snapshots
+       SET as_of_date = date(start_period || '-01', '+1 month', '-1 day')
+     WHERE as_of_date IS NULL
+       AND report_type = 'balance_sheet'
+       AND start_period GLOB '????-??';
+  `)
+
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_period ON report_snapshots(ledger_id, period)'
+  ).run()
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_type ON report_snapshots(ledger_id, report_type)'
   ).run()
 }
 

@@ -640,6 +640,93 @@ interface ElectronicVoucherAPI {
   }>
 }
 
+type ReportType = 'balance_sheet' | 'income_statement' | 'activity_statement' | 'cashflow_statement'
+
+interface ReportSnapshotLine {
+  key: string
+  label: string
+  amountCents: number
+  code?: string
+}
+
+interface ReportSnapshotSection {
+  key: string
+  title: string
+  rows: ReportSnapshotLine[]
+}
+
+interface ReportSnapshotTotal {
+  key: string
+  label: string
+  amountCents: number
+}
+
+interface ReportSnapshotContent {
+  title: string
+  reportType: ReportType
+  period: string
+  ledgerName: string
+  standardType: 'enterprise' | 'npo'
+  generatedAt: string
+  scope: {
+    mode: 'month' | 'range'
+    startPeriod: string
+    endPeriod: string
+    periodLabel: string
+    startDate: string
+    endDate: string
+    asOfDate: string | null
+    includeUnpostedVouchers: boolean
+  }
+  sections: ReportSnapshotSection[]
+  totals: ReportSnapshotTotal[]
+}
+
+interface ReportSnapshotSummary {
+  id: number
+  ledger_id: number
+  report_type: ReportType
+  report_name: string
+  period: string
+  start_period: string
+  end_period: string
+  as_of_date: string | null
+  include_unposted_vouchers: number
+  generated_by: number | null
+  generated_at: string
+  ledger_name: string
+  standard_type: 'enterprise' | 'npo'
+}
+
+interface ReportSnapshotDetail extends ReportSnapshotSummary {
+  content: ReportSnapshotContent
+}
+
+interface ReportingAPI {
+  generate: (payload: {
+    ledgerId: number
+    reportType: ReportType
+    month?: string
+    startPeriod?: string
+    endPeriod?: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<{
+    success: boolean
+    error?: string
+    snapshot?: ReportSnapshotDetail
+  }>
+  list: (filters: {
+    ledgerId: number
+    reportTypes?: ReportType[]
+    periods?: string[]
+  }) => Promise<ReportSnapshotSummary[]>
+  getDetail: (payload: { snapshotId: number; ledgerId?: number }) => Promise<ReportSnapshotDetail>
+  delete: (payload: { snapshotId: number; ledgerId: number }) => Promise<{
+    success: boolean
+    error?: string
+  }>
+}
+
 interface DudeAPI {
   auth: AuthAPI
   ledger: LedgerAPI
@@ -655,6 +742,7 @@ interface DudeAPI {
   backup: BackupAPI
   archive: ArchiveAPI
   eVoucher: ElectronicVoucherAPI
+  reporting: ReportingAPI
 }
 
 declare global {

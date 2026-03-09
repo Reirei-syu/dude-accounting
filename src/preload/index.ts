@@ -234,6 +234,31 @@ const api = {
     }) => ipcRenderer.invoke('eVoucher:parse', payload),
     convert: (payload: { recordId: number; voucherDate?: string; voucherWord?: string }) =>
       ipcRenderer.invoke('eVoucher:convert', payload)
+  },
+  reporting: {
+    generate: (payload: {
+      ledgerId: number
+      reportType:
+        | 'balance_sheet'
+        | 'income_statement'
+        | 'activity_statement'
+        | 'cashflow_statement'
+      month?: string
+      startPeriod?: string
+      endPeriod?: string
+      includeUnpostedVouchers?: boolean
+    }) => ipcRenderer.invoke('reporting:generate', payload),
+    list: (filters: {
+      ledgerId: number
+      reportTypes?: Array<
+        'balance_sheet' | 'income_statement' | 'activity_statement' | 'cashflow_statement'
+      >
+      periods?: string[]
+    }) => ipcRenderer.invoke('reporting:list', filters),
+    getDetail: (payload: { snapshotId: number; ledgerId?: number }) =>
+      ipcRenderer.invoke('reporting:getDetail', payload),
+    delete: (payload: { snapshotId: number; ledgerId: number }) =>
+      ipcRenderer.invoke('reporting:delete', payload)
   }
 }
 
