@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import ExcelJS from 'exceljs'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildReportSnapshotHtml,
@@ -615,12 +616,12 @@ describe('reporting service', () => {
     const activityTable = (snapshot.content as { tables?: Array<{ columns: Array<{ label: string }>; rows: Array<{ cells: Array<{ value: string | number | null }> }> }> }).tables?.[0]
     expect(activityTable?.columns.map((column) => column.label)).toEqual([
       '项目',
-      '本月数（非限定性）',
-      '本月数（限定性）',
-      '本月数（合计）',
-      '本年累计数（非限定性）',
-      '本年累计数（限定性）',
-      '本年累计数（合计）'
+      '本月数\n（非限定性）',
+      '本月数\n（限定性）',
+      '本月数\n（合计）',
+      '本年累计数\n（非限定性）',
+      '本年累计数\n（限定性）',
+      '本年累计数\n（合计）'
     ])
     expect(
       activityTable?.rows.some(
@@ -844,10 +845,53 @@ describe('reporting service', () => {
     const html = buildReportSnapshotHtml(snapshot)
     expect(html).toContain('<h1>资产负债表</h1>')
     expect(html).toContain('编制单位：企业测试账套')
-    expect(html).toContain('会计期间：2026.03')
+    expect(html).toContain('会计期间：2026年3月31日')
     expect(html).toContain('单位：元')
     expect(html).toContain('<table>')
     expect(html).not.toContain('<h2>汇总</h2>')
+    expect(html).not.toContain('取数范围：')
+    expect(html).not.toContain('统计口径：')
+    expect(html).not.toContain('导出时间：')
+    expect(html).not.toContain('会民非01表')
+  })
+
+  it('formats dynamic export period labels in chinese month style', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedEnterpriseLedger(db)
+
+    const sameMonthSnapshot = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'income_statement',
+      startPeriod: '2026-03',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T12:02:00.000Z'
+    })
+    expect(buildReportSnapshotHtml(sameMonthSnapshot)).toContain('会计期间：2026年3月')
+
+    const sameYearSnapshot = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'income_statement',
+      startPeriod: '2026-01',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T12:03:00.000Z'
+    })
+    expect(buildReportSnapshotHtml(sameYearSnapshot)).toContain('会计期间：2026年1-3月')
+
+    const crossYearSnapshot = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'income_statement',
+      startPeriod: '2025-12',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T12:04:00.000Z'
+    })
+    expect(buildReportSnapshotHtml(crossYearSnapshot)).toContain('会计期间：2025年12月-2026年3月')
   })
 
   it('writes excel and pdf exports for save-as flow', async () => {
@@ -871,9 +915,20 @@ describe('reporting service', () => {
     await writeReportSnapshotExcel(excelPath, snapshot)
     await writeReportSnapshotPdf(pdfPath, snapshot)
 
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(excelPath)
+    const worksheet = workbook.worksheets[0]
+
     expect(fs.existsSync(excelPath)).toBe(true)
     expect(fs.statSync(excelPath).size).toBeGreaterThan(0)
     expect(fs.existsSync(pdfPath)).toBe(true)
     expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+    expect(worksheet.getCell(1, 1).value).toBe('资产负债表')
+    expect(worksheet.getCell(2, 1).value).toBe('编制单位：企业测试账套')
+    expect(worksheet.getCell(2, 2).value).toBe('单位：元')
+    expect(worksheet.getCell(3, 1).value).toBe('会计期间：2026年3月31日')
+    expect(worksheet.getCell(4, 1).alignment?.horizontal).toBe('center')
+    expect(worksheet.getCell(4, 1).alignment?.vertical).toBe('middle')
+    expect(worksheet.getCell(4, 2).alignment?.horizontal).toBe('center')
   })
 })

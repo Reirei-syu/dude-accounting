@@ -217,6 +217,39 @@ function formatPeriodLabel(period: string): string {
   return `${year}.${month}`
 }
 
+function formatChineseMonth(period: string): string {
+  assertPeriod(period)
+  const [year, month] = period.split('-')
+  return `${year}年${Number(month)}月`
+}
+
+function formatChineseDate(date: string): string {
+  const matched = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+  if (!matched) {
+    return date
+  }
+  const [, year, month, day] = matched
+  return `${year}年${Number(month)}月${Number(day)}日`
+}
+
+function formatExportPeriodLabel(scope: ReportSnapshotScope): string {
+  if (scope.mode === 'month') {
+    return formatChineseDate(scope.asOfDate ?? scope.endDate)
+  }
+
+  if (scope.startPeriod === scope.endPeriod) {
+    return formatChineseMonth(scope.startPeriod)
+  }
+
+  const [startYear, startMonth] = scope.startPeriod.split('-')
+  const [endYear, endMonth] = scope.endPeriod.split('-')
+  if (startYear === endYear) {
+    return `${startYear}年${Number(startMonth)}-${Number(endMonth)}月`
+  }
+
+  return `${startYear}年${Number(startMonth)}月-${endYear}年${Number(endMonth)}月`
+}
+
 function getPeriodStartDate(period: string): string {
   assertPeriod(period)
   return `${period}-01`
@@ -489,6 +522,10 @@ function createTextCell(value: string | null = ''): ReportSnapshotTableCell {
 
 function createAmountCell(value: number): ReportSnapshotTableCell {
   return { value, isAmount: true }
+}
+
+function insertHeaderBreakBeforeParenthesis(label: string): string {
+  return label.replace('（', '\n（')
 }
 
 function shiftPeriod(period: string, yearDelta: number): string {
@@ -1237,12 +1274,12 @@ function buildNgoActivityStatementSnapshot(
         key: 'ngo-activity-statement',
         columns: [
           { key: 'item', label: '项目' },
-          { key: 'current_unrestricted', label: '本月数（非限定性）' },
-          { key: 'current_restricted', label: '本月数（限定性）' },
-          { key: 'current_total', label: '本月数（合计）' },
-          { key: 'cumulative_unrestricted', label: '本年累计数（非限定性）' },
-          { key: 'cumulative_restricted', label: '本年累计数（限定性）' },
-          { key: 'cumulative_total', label: '本年累计数（合计）' }
+          { key: 'current_unrestricted', label: insertHeaderBreakBeforeParenthesis('本月数（非限定性）') },
+          { key: 'current_restricted', label: insertHeaderBreakBeforeParenthesis('本月数（限定性）') },
+          { key: 'current_total', label: insertHeaderBreakBeforeParenthesis('本月数（合计）') },
+          { key: 'cumulative_unrestricted', label: insertHeaderBreakBeforeParenthesis('本年累计数（非限定性）') },
+          { key: 'cumulative_restricted', label: insertHeaderBreakBeforeParenthesis('本年累计数（限定性）') },
+          { key: 'cumulative_total', label: insertHeaderBreakBeforeParenthesis('本年累计数（合计）') }
         ],
         rows: tableRows
       }
@@ -2081,29 +2118,14 @@ export function deleteReportSnapshot(
 export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   const title = escapeHtml(detail.content.title)
   const ledgerName = escapeHtml(detail.ledger_name)
-  const period = escapeHtml(detail.period)
-  const generatedAt = escapeHtml(detail.generated_at)
-  const formCodeHtml = detail.content.formCode
-    ? `<div class="form-code">${escapeHtml(detail.content.formCode)}</div>`
-    : ''
-  const scopeText = escapeHtml(
-    `${detail.content.scope.startDate} 至 ${detail.content.scope.endDate}${
-      detail.content.scope.asOfDate ? `（截至 ${detail.content.scope.asOfDate}）` : ''
-    }`
-  )
-  const basisText = escapeHtml(
-    detail.content.scope.includeUnpostedVouchers ? '含未记账凭证' : '仅已记账凭证'
-  )
+  const period = escapeHtml(formatExportPeriodLabel(detail.content.scope))
 
   const sectionHtml =
     detail.content.tables && detail.content.tables.length > 0
       ? detail.content.tables
           .map((table) => {
             const headerCells = table.columns
-              .map(
-                (column, index) =>
-                  `<th${index === 0 ? '' : ' class="num"'}>${escapeHtml(column.label)}</th>`
-              )
+              .map((column) => `<th>${escapeHtml(column.label)}</th>`)
               .join('')
             const bodyRows = table.rows
               .map((row) => {
@@ -2141,9 +2163,9 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
 
             const headerCells = multiColumn
               ? `<th>项目</th>${columns
-                  ?.map((column) => `<th class="num">${escapeHtml(column.label)}</th>`)
+                  ?.map((column) => `<th>${escapeHtml(column.label)}</th>`)
                   .join('')}`
-              : '<th>项目</th><th class="num">金额</th>'
+              : '<th>项目</th><th>金额</th>'
 
             const bodyRows = section.rows
               .map((row) => {
@@ -2222,23 +2244,12 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
         font-weight: 700;
         letter-spacing: 0.08em;
       }
-      .form-code {
-        margin-bottom: 8px;
-        text-align: center;
-        font-size: 12px;
-        font-weight: 700;
-      }
       .meta {
         margin-bottom: 12px;
         display: flex;
-        flex-wrap: wrap;
-        gap: 8px 16px;
         justify-content: space-between;
-      }
-      .meta-row {
-        width: 100%;
-        display: flex;
-        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
       }
       .meta-label {
         color: #374151;
@@ -2265,7 +2276,10 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
       th {
         text-align: center;
         font-weight: 700;
+        vertical-align: middle;
+        white-space: pre-line;
       }
+      th.num { text-align: center; }
       .num {
         text-align: right;
         font-variant-numeric: tabular-nums;
@@ -2278,18 +2292,10 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   <body>
     <div class="page">
       <h1>${title}</h1>
-      ${formCodeHtml}
       <div class="meta">
-        <div class="meta-row">
-          <span class="meta-label">编制单位：${ledgerName}</span>
-          <span class="meta-label">会计期间：${period}</span>
-          <span class="meta-label">单位：元</span>
-        </div>
-        <div class="meta-row">
-          <span class="meta-label">取数范围：${scopeText}</span>
-          <span class="meta-label">统计口径：${basisText}</span>
-          <span class="meta-label">导出时间：${generatedAt}</span>
-        </div>
+        <span class="meta-label">编制单位：${ledgerName}</span>
+        <span class="meta-label">会计期间：${period}</span>
+        <span class="meta-label">单位：元</span>
       </div>
       ${sectionHtml}
       ${totalsSectionHtml}
@@ -2367,6 +2373,7 @@ export async function writeReportSnapshotExcel(
   const headers = getExportTableHeaders(detail)
   const rows = getExportTableRows(detail)
   const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
+  const exportPeriod = formatExportPeriodLabel(detail.content.scope)
 
   worksheet.mergeCells(1, 1, 1, headers.length)
   worksheet.getCell(1, 1).value = detail.content.title
@@ -2375,28 +2382,18 @@ export async function writeReportSnapshotExcel(
 
   worksheet.getCell(2, 1).value = `编制单位：${detail.ledger_name}`
   worksheet.getCell(2, headers.length).value = '单位：元'
-  worksheet.getCell(3, 1).value = `会计期间：${detail.period}`
-  worksheet.getCell(3, headers.length).value =
-    detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证'
-  if (detail.content.formCode) {
-    worksheet.mergeCells(2, 1, 2, headers.length)
-    worksheet.getCell(2, 1).value = detail.content.formCode
-    worksheet.getCell(2, 1).font = { name: '宋体', size: 11, bold: true }
-    worksheet.getCell(2, 1).alignment = { horizontal: 'center', vertical: 'middle' }
-    worksheet.getCell(3, 1).value = `编制单位：${detail.ledger_name}`
-    worksheet.getCell(3, headers.length).value = '单位：元'
-    worksheet.getCell(4, 1).value = `会计期间：${detail.period}`
-    worksheet.getCell(4, headers.length).value =
-      detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证'
-  }
+  worksheet.mergeCells(3, 1, 3, headers.length)
+  worksheet.getCell(3, 1).value = `会计期间：${exportPeriod}`
+  worksheet.getCell(3, 1).alignment = { horizontal: 'center', vertical: 'middle' }
 
-  const headerRowIndex = detail.content.formCode ? 5 : 4
+  const headerRowIndex = 4
   const headerRow = worksheet.getRow(headerRowIndex)
+  headerRow.height = headers.some((header) => header.includes('\n')) ? 40 : 24
   headers.forEach((header, index) => {
     const cell = headerRow.getCell(index + 1)
     cell.value = header
     cell.font = { name: '宋体', size: 11, bold: true }
-    cell.alignment = { horizontal: index === 0 ? 'left' : 'right', vertical: 'middle' }
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
     cell.border = {
       top: { style: 'thin' },
       left: { style: 'thin' },
@@ -2468,8 +2465,8 @@ export async function writeReportSnapshotExcel(
     })
   }
 
-  worksheet.columns = headers.map((header, index) => ({
-    header,
+  worksheet.columns = headers.map((_, index) => ({
+    key: `col_${index + 1}`,
     width: index === 0 ? 42 : 18
   }))
 
@@ -2499,26 +2496,27 @@ export async function writeReportSnapshotPdf(
     const rows = getExportTableRows(detail)
     const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
     const columnWidth = headers.length > 0 ? pageWidth / headers.length : pageWidth
+    const exportPeriod = formatExportPeriodLabel(detail.content.scope)
 
     const drawRow = (
       values: string[],
       top: number,
-      options?: { bold?: boolean; fillColor?: string }
+      options?: { bold?: boolean; fillColor?: string; header?: boolean }
     ): number => {
       const rowHeight = 24
-        if (options?.fillColor) {
+      if (options?.fillColor) {
         document.save()
         document.fillColor(options.fillColor).rect(document.page.margins.left, top, pageWidth, rowHeight).fill()
         document.restore()
       }
 
-        values.forEach((value, index) => {
-          const left = document.page.margins.left + index * columnWidth
-          document.rect(left, top, columnWidth, rowHeight).stroke('#111827')
-          document.fontSize(options?.bold ? 10.5 : 10)
-          document.text(value, left + 6, top + 6, {
+      values.forEach((value, index) => {
+        const left = document.page.margins.left + index * columnWidth
+        document.rect(left, top, columnWidth, rowHeight).stroke('#111827')
+        document.fontSize(options?.bold ? 10.5 : 10)
+        document.text(value, left + 6, top + 6, {
           width: columnWidth - 12,
-          align: index === 0 ? 'left' : 'right'
+          align: options?.header ? 'center' : index === 0 ? 'left' : 'right'
         })
       })
 
@@ -2527,22 +2525,13 @@ export async function writeReportSnapshotPdf(
 
     document.fontSize(18).text(detail.content.title, { align: 'center' })
     document.moveDown(0.5)
-    if (detail.content.formCode) {
-      document.fontSize(10).text(detail.content.formCode, { align: 'center' })
-      document.moveDown(0.25)
-    }
     document.fontSize(10).text(`编制单位：${detail.ledger_name}`, { continued: true })
     document.text(`单位：元`, { align: 'right' })
-    document.text(`会计期间：${detail.period}`, { continued: true })
-    document.text(
-      detail.content.scope.includeUnpostedVouchers ? '统计口径：含未记账凭证' : '统计口径：仅已记账凭证',
-      { align: 'right' }
-    )
-    document.text(`取数范围：${detail.content.scope.startDate} 至 ${detail.content.scope.endDate}`)
+    document.text(`会计期间：${exportPeriod}`, { align: 'center' })
     document.moveDown(0.5)
 
     let top = document.y
-    top = drawRow(headers, top, { bold: true })
+    top = drawRow(headers, top, { bold: true, header: true })
 
     let currentSection = ''
     for (const row of rows) {

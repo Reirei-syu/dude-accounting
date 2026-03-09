@@ -16,8 +16,36 @@ import {
 } from '../services/reporting'
 import { requireAuth } from './session'
 
+const REPORT_EXPORT_LAST_DIR_KEY = 'report_export_last_dir'
+
 function getReportExportDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '报表导出')
+}
+
+function getLastReportExportDir(db: ReturnType<typeof getDatabase>): string | null {
+  const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(REPORT_EXPORT_LAST_DIR_KEY) as
+    | { value: string }
+    | undefined
+  return row?.value ?? null
+}
+
+function rememberReportExportDir(db: ReturnType<typeof getDatabase>, targetPath: string): void {
+  const directoryPath = path.extname(targetPath) ? path.dirname(targetPath) : targetPath
+  db.prepare(
+    `INSERT INTO system_settings (key, value, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(REPORT_EXPORT_LAST_DIR_KEY, directoryPath)
+}
+
+async function exportReportSnapshotToPath(
+  detail: ReturnType<typeof getReportSnapshotDetail>,
+  format: ReportExportFormat,
+  filePath: string
+): Promise<string> {
+  return format === 'xlsx'
+    ? writeReportSnapshotExcel(filePath, detail)
+    : printReportHtmlToPdf(filePath, buildReportSnapshotHtml(detail))
 }
 
 async function printReportHtmlToPdf(filePath: string, html: string): Promise<string> {
@@ -74,8 +102,9 @@ export function registerReportingHandlers(): void {
       const user = requireAuth(event)
       const db = getDatabase()
       const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+      const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
       const defaultPath = path.join(
-        getReportExportDir(),
+        preferredDir,
         buildDefaultReportExportFileName(detail, payload.format)
       )
       const browserWindow = BrowserWindow.fromWebContents(event.sender)
@@ -106,10 +135,8 @@ export function registerReportingHandlers(): void {
         }
       }
 
-      const exportPath =
-        payload.format === 'xlsx'
-          ? await writeReportSnapshotExcel(saveResult.filePath, detail)
-          : await printReportHtmlToPdf(saveResult.filePath, buildReportSnapshotHtml(detail))
+      const exportPath = await exportReportSnapshotToPath(detail, payload.format, saveResult.filePath)
+      rememberReportExportDir(db, exportPath)
 
       appendOperationLog(db, {
         ledgerId: detail.ledger_id,
@@ -138,6 +165,86 @@ export function registerReportingHandlers(): void {
         error: error instanceof Error ? error.message : '导出报表失败'
       }
     }
+    }
+  )
+
+  ipcMain.handle(
+    'reporting:exportBatch',
+    async (
+      event,
+      payload: {
+        snapshotIds: number[]
+        ledgerId?: number
+        format: ReportExportFormat
+        directoryPath?: string
+      }
+    ) => {
+      try {
+        const user = requireAuth(event)
+        const db = getDatabase()
+
+        if (!Array.isArray(payload.snapshotIds) || payload.snapshotIds.length === 0) {
+          return { success: false, error: '请先选择至少一张报表' }
+        }
+
+        const details = payload.snapshotIds.map((snapshotId) =>
+          getReportSnapshotDetail(db, snapshotId, payload.ledgerId)
+        )
+        const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
+        const browserWindow = BrowserWindow.fromWebContents(event.sender)
+        const openResult = payload.directoryPath
+          ? { canceled: false, filePaths: [payload.directoryPath] }
+          : browserWindow
+            ? await dialog.showOpenDialog(browserWindow, {
+                defaultPath: preferredDir,
+                properties: ['openDirectory', 'createDirectory']
+              })
+            : await dialog.showOpenDialog({
+                defaultPath: preferredDir,
+                properties: ['openDirectory', 'createDirectory']
+              })
+
+        if (openResult.canceled || openResult.filePaths.length === 0) {
+          return { success: false, cancelled: true }
+        }
+
+        const directoryPath = openResult.filePaths[0]
+        const filePaths: string[] = []
+        for (const detail of details) {
+          const filePath = path.join(
+            directoryPath,
+            buildDefaultReportExportFileName(detail, payload.format)
+          )
+          filePaths.push(await exportReportSnapshotToPath(detail, payload.format, filePath))
+        }
+        rememberReportExportDir(db, directoryPath)
+
+        appendOperationLog(db, {
+          ledgerId: details[0]?.ledger_id ?? null,
+          userId: user.id,
+          username: user.username,
+          module: 'reporting',
+          action: 'export_snapshot_batch',
+          targetType: 'report_snapshot_batch',
+          targetId: payload.snapshotIds.join(','),
+          details: {
+            reportCount: details.length,
+            format: payload.format,
+            directoryPath
+          }
+        })
+
+        return {
+          success: true,
+          directoryPath,
+          filePaths
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '批量导出报表失败'
+        }
+      }
     }
   )
 

@@ -259,6 +259,12 @@ const api = {
       ipcRenderer.invoke('reporting:getDetail', payload),
     export: (payload: { snapshotId: number; ledgerId?: number; format: 'xlsx' | 'pdf' }) =>
       ipcRenderer.invoke('reporting:export', payload),
+    exportBatch: (payload: {
+      snapshotIds: number[]
+      ledgerId?: number
+      format: 'xlsx' | 'pdf'
+      directoryPath?: string
+    }) => ipcRenderer.invoke('reporting:exportBatch', payload),
     delete: (payload: { snapshotId: number; ledgerId: number }) =>
       ipcRenderer.invoke('reporting:delete', payload)
   }

@@ -757,6 +757,18 @@ interface ReportingAPI {
     error?: string
     filePath?: string
   }>
+  exportBatch: (payload: {
+    snapshotIds: number[]
+    ledgerId?: number
+    format: 'xlsx' | 'pdf'
+    directoryPath?: string
+  }) => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    directoryPath?: string
+    filePaths?: string[]
+  }>
   delete: (payload: { snapshotId: number; ledgerId: number }) => Promise<{
     success: boolean
     error?: string

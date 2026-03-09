@@ -211,14 +211,14 @@ export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
                   <table className="min-w-full border-collapse text-sm">
                     <thead>
                       <tr>
-                        {table.columns.map((column, index) => (
+                        {table.columns.map((column) => (
                           <th
                             key={column.key}
-                            className={`border-b px-4 py-3 font-semibold ${index === 0 ? 'text-left' : 'text-right'}`}
+                            className="border-b px-4 py-3 font-semibold text-center align-middle"
                             style={{
                               borderColor: 'var(--color-glass-border-light)',
                               color: 'var(--color-text-primary)',
-                              whiteSpace: 'nowrap'
+                              whiteSpace: 'pre-line'
                             }}
                           >
                             {column.label}
