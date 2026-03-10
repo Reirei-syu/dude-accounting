@@ -3,6 +3,7 @@ export type ReportType =
   | 'income_statement'
   | 'activity_statement'
   | 'cashflow_statement'
+  | 'equity_statement'
 
 export interface ReportSnapshotSummaryLike {
   id: number

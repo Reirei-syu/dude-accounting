@@ -11,6 +11,7 @@ export type ReportType =
   | 'income_statement'
   | 'activity_statement'
   | 'cashflow_statement'
+  | 'equity_statement'
 
 export interface ReportSnapshotLine {
   key: string
@@ -179,6 +180,7 @@ const BALANCE_SHEET_TITLE = '资产负债表'
 const INCOME_STATEMENT_TITLE = '利润表'
 const ACTIVITY_STATEMENT_TITLE = '业务活动表'
 const CASHFLOW_STATEMENT_TITLE = '现金流量表'
+const EQUITY_STATEMENT_TITLE = '所有者权益变动表'
 
 function normalizeTimestamp(input?: string | Date): string {
   if (typeof input === 'string' && input.trim()) {
@@ -199,6 +201,12 @@ function assertPeriod(period: string): void {
 function getReportTitle(reportType: ReportType, standardType: AccountingStandardType): string {
   if (reportType === 'balance_sheet') return BALANCE_SHEET_TITLE
   if (reportType === 'cashflow_statement') return CASHFLOW_STATEMENT_TITLE
+  if (reportType === 'equity_statement') {
+    if (standardType !== 'enterprise') {
+      throw new Error('当前账套不支持生成所有者权益变动表')
+    }
+    return EQUITY_STATEMENT_TITLE
+  }
   if (reportType === 'income_statement') {
     if (standardType !== 'enterprise') {
       throw new Error('当前账套不支持生成利润表')
@@ -441,18 +449,6 @@ function addAmount(map: Map<string, number>, key: string, amount: number): void 
   map.set(key, (map.get(key) ?? 0) + amount)
 }
 
-function buildRows(
-  subjects: SubjectRow[],
-  amountBySubject: Map<string, number>
-): ReportSnapshotLine[] {
-  return subjects.map((subject) => ({
-    key: subject.code,
-    label: subject.name,
-    amountCents: amountBySubject.get(subject.code) ?? 0,
-    code: subject.code
-  }))
-}
-
 function getOpeningBalance(subject: SubjectRow, opening: InitialBalanceRow | undefined): number {
   return subject.balance_direction === 1
     ? (opening?.debit_amount ?? 0) - (opening?.credit_amount ?? 0)
@@ -532,6 +528,378 @@ function shiftPeriod(period: string, yearDelta: number): string {
   assertPeriod(period)
   const [yearText, monthText] = period.split('-')
   return `${String(Number(yearText) + yearDelta).padStart(4, '0')}-${monthText}`
+}
+
+type PrefixSpec = { code: string; sign?: 1 | -1 }
+
+type EnterpriseBalancePoint = {
+  balanceMap: Map<string, number>
+  unsettledProfitLossNet: number
+}
+
+type EnterpriseProfitStatementAmounts = {
+  operatingRevenue: number
+  operatingCost: number
+  taxesAndSurcharges: number
+  sellingExpenses: number
+  administrativeExpenses: number
+  researchExpenses: number
+  financeExpenses: number
+  interestExpenses: number
+  interestIncome: number
+  otherIncome: number
+  investmentIncome: number
+  associateInvestmentIncome: number
+  derecognitionGain: number
+  hedgeGain: number
+  fairValueChangeGain: number
+  creditImpairmentLoss: number
+  assetImpairmentLoss: number
+  assetDisposalGain: number
+  nonOperatingIncome: number
+  nonOperatingExpense: number
+  incomeTaxExpense: number
+  otherComprehensiveIncome: number
+  operatingProfit: number
+  totalProfit: number
+  netProfit: number
+  comprehensiveIncomeTotal: number
+}
+
+type EquityColumnState = {
+  paidInCapital: number
+  otherEquityInstruments: number
+  preferredShares: number
+  perpetualBonds: number
+  otherEquityInstrumentsOther: number
+  capitalReserve: number
+  treasuryStock: number
+  otherComprehensiveIncome: number
+  specialReserve: number
+  surplusReserve: number
+  generalRiskReserve: number
+  undistributedProfit: number
+  totalEquity: number
+}
+
+const ENTERPRISE_CASH_SUBJECT_PREFIXES = ['1001', '1002', '1012']
+
+function matchesPrefix(subjectCode: string, prefix: string): boolean {
+  return subjectCode === prefix || subjectCode.startsWith(prefix)
+}
+
+function sumEntriesByPrefixSpecs(
+  entries: EntryWithVoucher[],
+  specs: PrefixSpec[],
+  mode: 'credit_minus_debit' | 'debit_minus_credit'
+): number {
+  return entries.reduce((sum, entry) => {
+    const spec = specs.find((candidate) => matchesPrefix(entry.subject_code, candidate.code))
+    if (!spec) {
+      return sum
+    }
+    const amount =
+      mode === 'credit_minus_debit'
+        ? entry.credit_amount - entry.debit_amount
+        : entry.debit_amount - entry.credit_amount
+    return sum + amount * (spec.sign ?? 1)
+  }, 0)
+}
+
+function listEffectiveEntries(
+  db: Database.Database,
+  ledgerId: number,
+  startDate: string,
+  endDate: string,
+  includeUnpostedVouchers: boolean
+): EntryWithVoucher[] {
+  const vouchers = selectEffectiveVouchers(
+    listVouchersInDateRange(db, ledgerId, startDate, endDate),
+    includeUnpostedVouchers
+  )
+  return mergeEntriesWithVouchers(
+    vouchers,
+    listVoucherEntriesByVoucherIds(
+      db,
+      vouchers.map((voucher) => voucher.id)
+    )
+  )
+}
+
+function buildEnterpriseBalancePoint(
+  db: Database.Database,
+  ledger: LedgerRow,
+  subjects: SubjectRow[],
+  targetPeriod: string,
+  includeUnpostedVouchers: boolean
+): EnterpriseBalancePoint {
+  const openingBySubject = listInitialBalances(db, ledger.id, targetPeriod)
+  const targetDate = getPeriodEndDate(targetPeriod)
+  const entriesBySubject = groupEntriesBySubject(
+    listEffectiveEntries(
+      db,
+      ledger.id,
+      getPeriodStartDate(ledger.start_period),
+      targetDate,
+      includeUnpostedVouchers
+    )
+  )
+  const balanceMap = buildSubjectBalanceMap(
+    subjects,
+    openingBySubject,
+    entriesBySubject,
+    ledger.start_period,
+    targetDate
+  )
+  const unsettledProfitLossNet = subjects
+    .filter((subject) => subject.category === 'profit_loss')
+    .reduce((sum, subject) => {
+      const amount = balanceMap.get(subject.code) ?? 0
+      return sum + (subject.balance_direction === -1 ? amount : -amount)
+    }, 0)
+
+  return {
+    balanceMap,
+    unsettledProfitLossNet
+  }
+}
+
+function getPreviousPeriod(period: string): string {
+  assertPeriod(period)
+  const [yearText, monthText] = period.split('-')
+  const date = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, 1))
+  date.setUTCMonth(date.getUTCMonth() - 1)
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+function createEnterpriseComparableRow(
+  key: string,
+  label: string,
+  lineNo: string,
+  priorYearEnd: number,
+  ending: number
+): ReportSnapshotLine {
+  return {
+    key,
+    label,
+    lineNo,
+    amountCents: ending,
+    cells: {
+      prior_year_end: priorYearEnd,
+      ending
+    }
+  }
+}
+
+function createEnterpriseMovementRow(
+  key: string,
+  label: string,
+  currentAmount: number,
+  priorAmount: number
+): ReportSnapshotTableRow {
+  return {
+    key,
+    cells: [createTextCell(label), createAmountCell(currentAmount), createAmountCell(priorAmount)]
+  }
+}
+
+function buildEnterpriseProfitAmounts(entries: EntryWithVoucher[]): EnterpriseProfitStatementAmounts {
+  const operatingRevenue = sumEntriesByPrefixSpecs(
+    entries,
+    [
+      { code: '6001' },
+      { code: '6021' },
+      { code: '6031' },
+      { code: '6041' },
+      { code: '6051' }
+    ],
+    'credit_minus_debit'
+  )
+  const operatingCost = sumEntriesByPrefixSpecs(
+    entries,
+    [{ code: '6401' }, { code: '6402' }],
+    'debit_minus_credit'
+  )
+  const taxesAndSurcharges = sumEntriesByPrefixSpecs(entries, [{ code: '6403' }], 'debit_minus_credit')
+  const sellingExpenses = sumEntriesByPrefixSpecs(entries, [{ code: '6601' }], 'debit_minus_credit')
+  const administrativeExpenses = sumEntriesByPrefixSpecs(entries, [{ code: '6602' }], 'debit_minus_credit')
+  const researchExpenses = sumEntriesByPrefixSpecs(entries, [{ code: '5301' }], 'debit_minus_credit')
+  const financeExpenses = sumEntriesByPrefixSpecs(entries, [{ code: '6603' }], 'debit_minus_credit')
+  const interestExpenses = sumEntriesByPrefixSpecs(entries, [{ code: '6411' }], 'debit_minus_credit')
+  const interestIncome = sumEntriesByPrefixSpecs(entries, [{ code: '6011' }], 'credit_minus_debit')
+  const otherIncome = 0
+  const investmentIncome = sumEntriesByPrefixSpecs(entries, [{ code: '6111' }], 'credit_minus_debit')
+  const associateInvestmentIncome = 0
+  const derecognitionGain = 0
+  const hedgeGain = 0
+  const fairValueChangeGain = sumEntriesByPrefixSpecs(entries, [{ code: '6101' }], 'credit_minus_debit')
+  const creditImpairmentLoss = 0
+  const assetImpairmentLoss = sumEntriesByPrefixSpecs(entries, [{ code: '6701' }], 'debit_minus_credit')
+  const assetDisposalGain = 0
+  const nonOperatingIncome = sumEntriesByPrefixSpecs(entries, [{ code: '6301' }], 'credit_minus_debit')
+  const nonOperatingExpense = sumEntriesByPrefixSpecs(entries, [{ code: '6711' }], 'debit_minus_credit')
+  const incomeTaxExpense = sumEntriesByPrefixSpecs(entries, [{ code: '6801' }], 'debit_minus_credit')
+  const otherComprehensiveIncome = 0
+
+  const operatingProfit =
+    operatingRevenue -
+    operatingCost -
+    taxesAndSurcharges -
+    sellingExpenses -
+    administrativeExpenses -
+    researchExpenses -
+    financeExpenses +
+    otherIncome +
+    investmentIncome +
+    associateInvestmentIncome +
+    derecognitionGain +
+    hedgeGain +
+    fairValueChangeGain -
+    creditImpairmentLoss -
+    assetImpairmentLoss +
+    assetDisposalGain
+  const totalProfit = operatingProfit + nonOperatingIncome - nonOperatingExpense
+  const netProfit = totalProfit - incomeTaxExpense
+  const comprehensiveIncomeTotal = netProfit + otherComprehensiveIncome
+
+  return {
+    operatingRevenue,
+    operatingCost,
+    taxesAndSurcharges,
+    sellingExpenses,
+    administrativeExpenses,
+    researchExpenses,
+    financeExpenses,
+    interestExpenses,
+    interestIncome,
+    otherIncome,
+    investmentIncome,
+    associateInvestmentIncome,
+    derecognitionGain,
+    hedgeGain,
+    fairValueChangeGain,
+    creditImpairmentLoss,
+    assetImpairmentLoss,
+    assetDisposalGain,
+    nonOperatingIncome,
+    nonOperatingExpense,
+    incomeTaxExpense,
+    otherComprehensiveIncome,
+    operatingProfit,
+    totalProfit,
+    netProfit,
+    comprehensiveIncomeTotal
+  }
+}
+
+function buildEnterpriseEquityState(point: EnterpriseBalancePoint): EquityColumnState {
+  const paidInCapital = sumTemplateAmount(point.balanceMap, [{ code: '4001' }])
+  const capitalReserve = sumTemplateAmount(point.balanceMap, [{ code: '4002' }])
+  const treasuryStock = sumTemplateAmount(point.balanceMap, [{ code: '4201' }])
+  const surplusReserve = sumTemplateAmount(point.balanceMap, [{ code: '4101' }])
+  const generalRiskReserve = sumTemplateAmount(point.balanceMap, [{ code: '4102' }])
+  const undistributedProfit =
+    sumTemplateAmount(point.balanceMap, [{ code: '4103' }, { code: '4104' }]) +
+    point.unsettledProfitLossNet
+  const otherComprehensiveIncome = 0
+  const otherEquityInstruments = 0
+  const preferredShares = 0
+  const perpetualBonds = 0
+  const otherEquityInstrumentsOther = 0
+  const specialReserve = 0
+  const totalEquity =
+    paidInCapital +
+    capitalReserve +
+    otherComprehensiveIncome +
+    specialReserve +
+    surplusReserve +
+    generalRiskReserve +
+    undistributedProfit -
+    treasuryStock
+
+  return {
+    paidInCapital,
+    otherEquityInstruments,
+    preferredShares,
+    perpetualBonds,
+    otherEquityInstrumentsOther,
+    capitalReserve,
+    treasuryStock,
+    otherComprehensiveIncome,
+    specialReserve,
+    surplusReserve,
+    generalRiskReserve,
+    undistributedProfit,
+    totalEquity
+  }
+}
+
+function equityStateToCells(values: EquityColumnState): ReportSnapshotTableCell[] {
+  return [
+    createAmountCell(values.paidInCapital),
+    createAmountCell(values.otherEquityInstruments),
+    createAmountCell(values.preferredShares),
+    createAmountCell(values.perpetualBonds),
+    createAmountCell(values.otherEquityInstrumentsOther),
+    createAmountCell(values.capitalReserve),
+    createAmountCell(values.treasuryStock),
+    createAmountCell(values.otherComprehensiveIncome),
+    createAmountCell(values.specialReserve),
+    createAmountCell(values.surplusReserve),
+    createAmountCell(values.generalRiskReserve),
+    createAmountCell(values.undistributedProfit),
+    createAmountCell(values.totalEquity)
+  ]
+}
+
+function subtractEquityStates(left: EquityColumnState, right: EquityColumnState): EquityColumnState {
+  return {
+    paidInCapital: left.paidInCapital - right.paidInCapital,
+    otherEquityInstruments: left.otherEquityInstruments - right.otherEquityInstruments,
+    preferredShares: left.preferredShares - right.preferredShares,
+    perpetualBonds: left.perpetualBonds - right.perpetualBonds,
+    otherEquityInstrumentsOther: left.otherEquityInstrumentsOther - right.otherEquityInstrumentsOther,
+    capitalReserve: left.capitalReserve - right.capitalReserve,
+    treasuryStock: left.treasuryStock - right.treasuryStock,
+    otherComprehensiveIncome: left.otherComprehensiveIncome - right.otherComprehensiveIncome,
+    specialReserve: left.specialReserve - right.specialReserve,
+    surplusReserve: left.surplusReserve - right.surplusReserve,
+    generalRiskReserve: left.generalRiskReserve - right.generalRiskReserve,
+    undistributedProfit: left.undistributedProfit - right.undistributedProfit,
+    totalEquity: left.totalEquity - right.totalEquity
+  }
+}
+
+function emptyEquityState(): EquityColumnState {
+  return {
+    paidInCapital: 0,
+    otherEquityInstruments: 0,
+    preferredShares: 0,
+    perpetualBonds: 0,
+    otherEquityInstrumentsOther: 0,
+    capitalReserve: 0,
+    treasuryStock: 0,
+    otherComprehensiveIncome: 0,
+    specialReserve: 0,
+    surplusReserve: 0,
+    generalRiskReserve: 0,
+    undistributedProfit: 0,
+    totalEquity: 0
+  }
+}
+
+function buildCashBalanceAtPeriodEnd(
+  db: Database.Database,
+  ledger: LedgerRow,
+  subjects: SubjectRow[],
+  targetPeriod: string,
+  includeUnpostedVouchers: boolean
+): number {
+  const point = buildEnterpriseBalancePoint(db, ledger, subjects, targetPeriod, includeUnpostedVouchers)
+  return sumTemplateAmount(
+    point.balanceMap,
+    ENTERPRISE_CASH_SUBJECT_PREFIXES.map((code) => ({ code }))
+  )
 }
 
 function buildNgoBalanceSheetSnapshot(
@@ -981,10 +1349,6 @@ function buildBalanceSheetSnapshot(
   )
   const entriesBySubject = groupEntriesBySubject(entries)
 
-  const assetSubjects = subjects.filter((subject) => subject.category === 'asset')
-  const liabilitySubjects = subjects.filter((subject) => subject.category === 'liability')
-  const equitySubjects = subjects.filter((subject) => subject.category === 'equity')
-  const commonSubjects = subjects.filter((subject) => subject.category === 'common')
   const profitLossSubjects = subjects.filter((subject) => subject.category === 'profit_loss')
 
   const closingBalanceMap = buildSubjectBalanceMap(
@@ -1028,82 +1392,471 @@ function buildBalanceSheetSnapshot(
       ngoRestrictedNetChange
     )
   }
-
-  const assetAmounts = new Map<string, number>()
-  const liabilityAmounts = new Map<string, number>()
-  const equityAmounts = new Map<string, number>()
-  const commonAmounts = new Map<string, number>()
-
-  for (const subject of assetSubjects) {
-    addAmount(assetAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
+  const currentPoint: EnterpriseBalancePoint = {
+    balanceMap: closingBalanceMap,
+    unsettledProfitLossNet: profitLossSubjects.reduce((sum, subject) => {
+      const amount = toSubjectBalance(
+        subject,
+        openingBySubject.get(subject.code),
+        entriesBySubject.get(subject.code) ?? [],
+        ledger.start_period,
+        scope.endDate
+      )
+      return sum + (subject.balance_direction === -1 ? amount : -amount)
+    }, 0)
   }
+  const priorYear = String(Number(scope.endPeriod.slice(0, 4)) - 1).padStart(4, '0')
+  const priorYearEndPoint = buildEnterpriseBalancePoint(
+    db,
+    ledger,
+    subjects,
+    `${priorYear}-12`,
+    scope.includeUnpostedVouchers
+  )
 
-  for (const subject of liabilitySubjects) {
-    addAmount(liabilityAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
-  }
-
-  for (const subject of equitySubjects) {
-    addAmount(equityAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
-  }
-
-  for (const subject of commonSubjects) {
-    addAmount(commonAmounts, subject.code, closingBalanceMap.get(subject.code) ?? 0)
-  }
-
-  const profitLossNet = profitLossSubjects.reduce((sum, subject) => {
-    const amount = toSubjectBalance(
-      subject,
-      openingBySubject.get(subject.code),
-      entriesBySubject.get(subject.code) ?? [],
-      ledger.start_period,
-      scope.endDate
+  const buildRow = (key: string, label: string, specs: PrefixSpec[]): ReportSnapshotLine =>
+    createEnterpriseComparableRow(
+      key,
+      label,
+      '',
+      sumTemplateAmount(priorYearEndPoint.balanceMap, specs),
+      sumTemplateAmount(currentPoint.balanceMap, specs)
     )
-    return sum + (subject.balance_direction === -1 ? amount : -amount)
-  }, 0)
 
-  const assetRows = buildRows(assetSubjects, assetAmounts)
-  const liabilityRows = buildRows(liabilitySubjects, liabilityAmounts)
-  const equityRows = buildRows(equitySubjects, equityAmounts)
-  const commonRows = buildRows(commonSubjects, commonAmounts)
+  const buildSumRow = (key: string, label: string, rows: ReportSnapshotLine[]): ReportSnapshotLine =>
+    createEnterpriseComparableRow(
+      key,
+      label,
+      '',
+      rows.reduce((sum, row) => sum + (row.cells?.prior_year_end ?? 0), 0),
+      rows.reduce((sum, row) => sum + (row.cells?.ending ?? 0), 0)
+    )
 
-  equityRows.push({
-    key: 'period_net_result',
-    label: '本期净利润',
-    amountCents: profitLossNet
+  const headingRow = (key: string, label: string): ReportSnapshotLine => ({
+    key,
+    label,
+    amountCents: 0
   })
 
-  const assetsTotal = assetRows.reduce((sum, row) => sum + row.amountCents, 0)
-  const liabilitiesTotal = liabilityRows.reduce((sum, row) => sum + row.amountCents, 0)
-  const equityTotal = equityRows.reduce((sum, row) => sum + row.amountCents, 0)
-  const commonTotal = commonRows.reduce((sum, row) => sum + row.amountCents, 0)
+  const cashRow = buildRow('cash', '货币资金', [
+    { code: '1001' },
+    { code: '1002' },
+    { code: '1012' }
+  ])
+  const tradingAssetRow = buildRow('trading_asset', '交易性金融资产', [{ code: '1101' }])
+  const derivativeAssetRow = buildRow('derivative_asset', '衍生金融资产', [{ code: '3101' }])
+  const notesReceivableRow = buildRow('notes_receivable', '应收票据', [{ code: '1121' }])
+  const accountsReceivableRow = buildRow('accounts_receivable', '应收账款', [{ code: '1122' }])
+  const receivablesFinancingRow = buildRow('receivables_financing', '应收款项融资', [])
+  const prepaymentRow = buildRow('prepayments', '预付款项', [{ code: '1123' }])
+  const contractAssetRow = buildRow('contract_assets', '合同资产', [])
+  const otherReceivableRow = buildRow('other_receivables', '其他应收款', [
+    { code: '1131' },
+    { code: '1132' },
+    { code: '1221' },
+    { code: '1231', sign: -1 }
+  ])
+  const inventoryRow = buildRow('inventory', '存货', [
+    { code: '1401' },
+    { code: '1402' },
+    { code: '1403' },
+    { code: '1404' },
+    { code: '1405' },
+    { code: '1406' },
+    { code: '1407', sign: -1 },
+    { code: '1408' },
+    { code: '1411' },
+    { code: '1421' },
+    { code: '1431' },
+    { code: '1441' },
+    { code: '1451' },
+    { code: '1471', sign: -1 }
+  ])
+  const heldForSaleAssetRow = buildRow('held_for_sale_assets', '持有待售资产', [])
+  const oneYearNonCurrentAssetRow = buildRow('one_year_noncurrent_assets', '一年内到期的非流动资产', [])
+  const otherCurrentAssetRow = buildRow('other_current_assets', '其他流动资产', [
+    { code: '1021' },
+    { code: '1031' },
+    { code: '1111' },
+    { code: '1201' },
+    { code: '1211' },
+    { code: '1212' },
+    { code: '1301' },
+    { code: '1302' },
+    { code: '1303' },
+    { code: '1304', sign: -1 },
+    { code: '1311' },
+    { code: '1321' },
+    { code: '1901' }
+  ])
+  const totalCurrentAssetsRow = buildSumRow('total_current_assets', '流动资产合计', [
+    cashRow,
+    tradingAssetRow,
+    derivativeAssetRow,
+    notesReceivableRow,
+    accountsReceivableRow,
+    receivablesFinancingRow,
+    prepaymentRow,
+    contractAssetRow,
+    otherReceivableRow,
+    inventoryRow,
+    heldForSaleAssetRow,
+    oneYearNonCurrentAssetRow,
+    otherCurrentAssetRow
+  ])
 
-  const sections: ReportSnapshotSection[] = [
-    { key: 'assets', title: '资产项目', rows: assetRows },
-    { key: 'liabilities', title: '负债项目', rows: liabilityRows },
-    {
-      key: 'equity',
-      title: '所有者权益项目',
-      rows: equityRows
-    }
+  const debtInvestmentRow = buildRow('debt_investment', '债权投资', [
+    { code: '1501' },
+    { code: '1502', sign: -1 }
+  ])
+  const otherDebtInvestmentRow = buildRow('other_debt_investment', '其他债权投资', [{ code: '1503' }])
+  const longTermReceivableRow = buildRow('long_term_receivable', '长期应收款', [
+    { code: '1531' },
+    { code: '1532', sign: -1 }
+  ])
+  const longTermEquityInvestmentRow = buildRow('long_term_equity_investment', '长期股权投资', [
+    { code: '1511' },
+    { code: '1512', sign: -1 }
+  ])
+  const otherEquityInvestmentRow = buildRow('other_equity_investment', '其他权益工具投资', [])
+  const otherNonCurrentFinancialAssetRow = buildRow(
+    'other_noncurrent_financial_assets',
+    '其他非流动金融资产',
+    [{ code: '1541' }]
+  )
+  const investmentPropertyRow = buildRow('investment_property', '投资性房地产', [{ code: '1521' }])
+  const fixedAssetRow = buildRow('fixed_assets', '固定资产', [
+    { code: '1601' },
+    { code: '1602', sign: -1 },
+    { code: '1603', sign: -1 }
+  ])
+  const constructionRow = buildRow('construction', '在建工程', [{ code: '1604' }])
+  const biologicalAssetRow = buildRow('biological_assets', '生产性生物资产', [
+    { code: '1621' },
+    { code: '1622', sign: -1 }
+  ])
+  const oilGasRow = buildRow('oil_gas_assets', '油气资产', [
+    { code: '1631' },
+    { code: '1632', sign: -1 }
+  ])
+  const rightOfUseRow = buildRow('right_of_use_assets', '使用权资产', [])
+  const intangibleRow = buildRow('intangible_assets', '无形资产', [
+    { code: '1701' },
+    { code: '1702', sign: -1 },
+    { code: '1703', sign: -1 }
+  ])
+  const developmentRow = buildRow('development_expenditure', '开发支出', [])
+  const goodwillRow = buildRow('goodwill', '商誉', [{ code: '1711' }])
+  const longDeferredExpenseRow = buildRow('long_deferred_expenses', '长期待摊费用', [{ code: '1801' }])
+  const deferredTaxAssetRow = buildRow('deferred_tax_assets', '递延所得税资产', [{ code: '1811' }])
+  const otherNonCurrentAssetRow = buildRow('other_noncurrent_assets', '其他非流动资产', [
+    { code: '1611' },
+    { code: '1821' }
+  ])
+  const totalNonCurrentAssetsRow = buildSumRow('total_noncurrent_assets', '非流动资产合计', [
+    debtInvestmentRow,
+    otherDebtInvestmentRow,
+    longTermReceivableRow,
+    longTermEquityInvestmentRow,
+    otherEquityInvestmentRow,
+    otherNonCurrentFinancialAssetRow,
+    investmentPropertyRow,
+    fixedAssetRow,
+    constructionRow,
+    biologicalAssetRow,
+    oilGasRow,
+    rightOfUseRow,
+    intangibleRow,
+    developmentRow,
+    goodwillRow,
+    longDeferredExpenseRow,
+    deferredTaxAssetRow,
+    otherNonCurrentAssetRow
+  ])
+  const totalAssetsRow = buildSumRow('total_assets', '资产总计', [
+    totalCurrentAssetsRow,
+    totalNonCurrentAssetsRow
+  ])
+
+  const shortTermLoanRow = buildRow('short_term_loans', '短期借款', [{ code: '2001' }])
+  const tradingLiabilityRow = buildRow('trading_liabilities', '交易性金融负债', [{ code: '2101' }])
+  const derivativeLiabilityRow = buildRow('derivative_liabilities', '衍生金融负债', [
+    { code: '3101', sign: -1 }
+  ])
+  const notesPayableRow = buildRow('notes_payable', '应付票据', [{ code: '2201' }])
+  const accountsPayableRow = buildRow('accounts_payable', '应付账款', [{ code: '2202' }])
+  const advanceReceiptRow = buildRow('advance_receipts', '预收款项', [{ code: '2203' }])
+  const contractLiabilityRow = buildRow('contract_liabilities', '合同负债', [])
+  const payrollRow = buildRow('employee_compensation', '应付职工薪酬', [{ code: '2211' }])
+  const taxesRow = buildRow('taxes_payable', '应交税费', [{ code: '2221' }])
+  const otherPayableRow = buildRow('other_payables', '其他应付款', [
+    { code: '2231' },
+    { code: '2232' },
+    { code: '2241' }
+  ])
+  const heldForSaleLiabilityRow = buildRow('held_for_sale_liabilities', '持有待售负债', [])
+  const oneYearNonCurrentLiabilityRow = buildRow(
+    'one_year_noncurrent_liabilities',
+    '一年内到期的非流动负债',
+    []
+  )
+  const otherCurrentLiabilityRow = buildRow('other_current_liabilities', '其他流动负债', [
+    { code: '2002' },
+    { code: '2003' },
+    { code: '2004' },
+    { code: '2011' },
+    { code: '2012' },
+    { code: '2021' },
+    { code: '2251' },
+    { code: '2261' },
+    { code: '2311' },
+    { code: '2312' },
+    { code: '2313' },
+    { code: '2314' }
+  ])
+  const totalCurrentLiabilitiesRow = buildSumRow(
+    'total_current_liabilities',
+    '流动负债合计',
+    [
+      shortTermLoanRow,
+      tradingLiabilityRow,
+      derivativeLiabilityRow,
+      notesPayableRow,
+      accountsPayableRow,
+      advanceReceiptRow,
+      contractLiabilityRow,
+      payrollRow,
+      taxesRow,
+      otherPayableRow,
+      heldForSaleLiabilityRow,
+      oneYearNonCurrentLiabilityRow,
+      otherCurrentLiabilityRow
+    ]
+  )
+
+  const longTermLoanRow = buildRow('long_term_loans', '长期借款', [{ code: '2501' }])
+  const bondsPayableRow = buildRow('bonds_payable', '应付债券', [{ code: '2502' }])
+  const preferredShareRow = buildRow('preferred_share', '  其中：优先股', [])
+  const perpetualBondRow = buildRow('perpetual_bond', '  永续债', [])
+  const leaseLiabilityRow = buildRow('lease_liability', '租赁负债', [])
+  const longTermPayableRow = buildRow('long_term_payables', '长期应付款', [
+    { code: '2701' },
+    { code: '2702', sign: -1 }
+  ])
+  const estimatedLiabilityRow = buildRow('estimated_liabilities', '预计负债', [{ code: '2801' }])
+  const deferredIncomeRow = buildRow('deferred_income', '递延收益', [{ code: '2401' }])
+  const deferredTaxLiabilityRow = buildRow('deferred_tax_liabilities', '递延所得税负债', [
+    { code: '2901' }
+  ])
+  const otherNonCurrentLiabilityRow = buildRow(
+    'other_noncurrent_liabilities',
+    '其他非流动负债',
+    [{ code: '2601' }, { code: '2602' }, { code: '2611' }, { code: '2621' }, { code: '2711' }]
+  )
+  const totalNonCurrentLiabilitiesRow = buildSumRow(
+    'total_noncurrent_liabilities',
+    '非流动负债合计',
+    [
+      longTermLoanRow,
+      bondsPayableRow,
+      leaseLiabilityRow,
+      longTermPayableRow,
+      estimatedLiabilityRow,
+      deferredIncomeRow,
+      deferredTaxLiabilityRow,
+      otherNonCurrentLiabilityRow
+    ]
+  )
+  const totalLiabilitiesRow = buildSumRow('total_liabilities', '负债合计', [
+    totalCurrentLiabilitiesRow,
+    totalNonCurrentLiabilitiesRow
+  ])
+
+  const paidInCapitalRow = buildRow('paid_in_capital', '实收资本（或股本）', [{ code: '4001' }])
+  const otherEquityInstrumentRow = buildRow('other_equity_instruments', '其他权益工具', [])
+  const otherPreferredShareRow = buildRow('other_equity_preferred', '  其中：优先股', [])
+  const otherPerpetualBondRow = buildRow('other_equity_perpetual', '  永续债', [])
+  const capitalReserveRow = buildRow('capital_reserve', '资本公积', [{ code: '4002' }])
+  const treasuryStockRow = buildRow('treasury_stock', '减：库存股', [{ code: '4201' }])
+  const ociRow = buildRow('other_comprehensive_income', '其他综合收益', [])
+  const specialReserveRow = buildRow('special_reserve', '专项储备', [])
+  const surplusReserveRow = buildRow('surplus_reserve', '盈余公积', [{ code: '4101' }])
+  const undistributedProfitRow = createEnterpriseComparableRow(
+    'undistributed_profit',
+    '未分配利润',
+    '',
+    sumTemplateAmount(priorYearEndPoint.balanceMap, [{ code: '4103' }, { code: '4104' }]) +
+      priorYearEndPoint.unsettledProfitLossNet,
+    sumTemplateAmount(currentPoint.balanceMap, [{ code: '4103' }, { code: '4104' }]) +
+      currentPoint.unsettledProfitLossNet
+  )
+  const totalEquityRow = createEnterpriseComparableRow(
+    'total_equity',
+    '所有者权益（或股东权益）合计',
+    '',
+    (paidInCapitalRow.cells?.prior_year_end ?? 0) +
+      (capitalReserveRow.cells?.prior_year_end ?? 0) +
+      (ociRow.cells?.prior_year_end ?? 0) +
+      (specialReserveRow.cells?.prior_year_end ?? 0) +
+      (surplusReserveRow.cells?.prior_year_end ?? 0) +
+      undistributedProfitRow.cells!.prior_year_end -
+      (treasuryStockRow.cells?.prior_year_end ?? 0),
+    (paidInCapitalRow.cells?.ending ?? 0) +
+      (capitalReserveRow.cells?.ending ?? 0) +
+      (ociRow.cells?.ending ?? 0) +
+      (specialReserveRow.cells?.ending ?? 0) +
+      (surplusReserveRow.cells?.ending ?? 0) +
+      undistributedProfitRow.cells!.ending -
+      (treasuryStockRow.cells?.ending ?? 0)
+  )
+  const totalLiabilitiesAndEquityRow = buildSumRow(
+    'total_liabilities_equity',
+    '负债和所有者权益（或股东权益）总计',
+    [totalLiabilitiesRow, totalEquityRow]
+  )
+
+  const assetSectionRows = [
+    cashRow,
+    tradingAssetRow,
+    derivativeAssetRow,
+    notesReceivableRow,
+    accountsReceivableRow,
+    receivablesFinancingRow,
+    prepaymentRow,
+    contractAssetRow,
+    otherReceivableRow,
+    inventoryRow,
+    heldForSaleAssetRow,
+    oneYearNonCurrentAssetRow,
+    otherCurrentAssetRow,
+    totalCurrentAssetsRow,
+    debtInvestmentRow,
+    otherDebtInvestmentRow,
+    longTermReceivableRow,
+    longTermEquityInvestmentRow,
+    otherEquityInvestmentRow,
+    otherNonCurrentFinancialAssetRow,
+    investmentPropertyRow,
+    fixedAssetRow,
+    constructionRow,
+    biologicalAssetRow,
+    oilGasRow,
+    rightOfUseRow,
+    intangibleRow,
+    developmentRow,
+    goodwillRow,
+    longDeferredExpenseRow,
+    deferredTaxAssetRow,
+    otherNonCurrentAssetRow,
+    totalNonCurrentAssetsRow,
+    totalAssetsRow
+  ]
+  const liabilityEquitySectionRows = [
+    shortTermLoanRow,
+    tradingLiabilityRow,
+    derivativeLiabilityRow,
+    notesPayableRow,
+    accountsPayableRow,
+    advanceReceiptRow,
+    contractLiabilityRow,
+    payrollRow,
+    taxesRow,
+    otherPayableRow,
+    heldForSaleLiabilityRow,
+    oneYearNonCurrentLiabilityRow,
+    otherCurrentLiabilityRow,
+    totalCurrentLiabilitiesRow,
+    longTermLoanRow,
+    bondsPayableRow,
+    preferredShareRow,
+    perpetualBondRow,
+    leaseLiabilityRow,
+    longTermPayableRow,
+    estimatedLiabilityRow,
+    deferredIncomeRow,
+    deferredTaxLiabilityRow,
+    otherNonCurrentLiabilityRow,
+    totalNonCurrentLiabilitiesRow,
+    totalLiabilitiesRow,
+    paidInCapitalRow,
+    otherEquityInstrumentRow,
+    otherPreferredShareRow,
+    otherPerpetualBondRow,
+    capitalReserveRow,
+    treasuryStockRow,
+    ociRow,
+    specialReserveRow,
+    surplusReserveRow,
+    undistributedProfitRow,
+    totalEquityRow,
+    totalLiabilitiesAndEquityRow
   ]
 
-  if (commonRows.length > 0) {
-    sections.push({ key: 'common', title: '共同类项目', rows: commonRows })
-  }
+  const amountCellsForRow = (row?: ReportSnapshotLine): ReportSnapshotTableCell[] =>
+    row?.cells
+      ? [
+          createAmountCell(row.cells.ending ?? 0),
+          createAmountCell(row.cells.prior_year_end ?? 0)
+        ]
+      : [createTextCell(''), createTextCell('')]
 
-  const totals: ReportSnapshotTotal[] = [
-    { key: 'assets', label: '资产合计', amountCents: assetsTotal },
-    { key: 'liabilities', label: '负债合计', amountCents: liabilitiesTotal },
-    {
-      key: 'equity',
-      label: '所有者权益合计',
-      amountCents: equityTotal
-    }
+  const pairRow = (
+    key: string,
+    left: ReportSnapshotLine | undefined,
+    right: ReportSnapshotLine | undefined
+  ): ReportSnapshotTableRow => ({
+    key,
+    cells: [
+      createTextCell(left?.label ?? ''),
+      ...amountCellsForRow(left),
+      createTextCell(right?.label ?? ''),
+      ...amountCellsForRow(right)
+    ]
+  })
+
+  const officialRows: ReportSnapshotTableRow[] = [
+    pairRow('bs-1', headingRow('asset-current', '一、流动资产：'), headingRow('liability-current', '一、流动负债：')),
+    pairRow('bs-2', cashRow, shortTermLoanRow),
+    pairRow('bs-3', tradingAssetRow, tradingLiabilityRow),
+    pairRow('bs-4', derivativeAssetRow, derivativeLiabilityRow),
+    pairRow('bs-5', notesReceivableRow, notesPayableRow),
+    pairRow('bs-6', accountsReceivableRow, accountsPayableRow),
+    pairRow('bs-7', receivablesFinancingRow, advanceReceiptRow),
+    pairRow('bs-8', prepaymentRow, contractLiabilityRow),
+    pairRow('bs-9', contractAssetRow, payrollRow),
+    pairRow('bs-10', otherReceivableRow, taxesRow),
+    pairRow('bs-11', inventoryRow, otherPayableRow),
+    pairRow('bs-12', heldForSaleAssetRow, heldForSaleLiabilityRow),
+    pairRow('bs-13', oneYearNonCurrentAssetRow, oneYearNonCurrentLiabilityRow),
+    pairRow('bs-14', otherCurrentAssetRow, otherCurrentLiabilityRow),
+    pairRow('bs-15', totalCurrentAssetsRow, totalCurrentLiabilitiesRow),
+    pairRow('bs-16', headingRow('asset-noncurrent', '二、非流动资产：'), headingRow('liability-noncurrent', '二、非流动负债：')),
+    pairRow('bs-17', debtInvestmentRow, longTermLoanRow),
+    pairRow('bs-18', otherDebtInvestmentRow, bondsPayableRow),
+    pairRow('bs-19', longTermReceivableRow, preferredShareRow),
+    pairRow('bs-20', longTermEquityInvestmentRow, perpetualBondRow),
+    pairRow('bs-21', otherEquityInvestmentRow, leaseLiabilityRow),
+    pairRow('bs-22', otherNonCurrentFinancialAssetRow, longTermPayableRow),
+    pairRow('bs-23', investmentPropertyRow, estimatedLiabilityRow),
+    pairRow('bs-24', fixedAssetRow, deferredIncomeRow),
+    pairRow('bs-25', constructionRow, deferredTaxLiabilityRow),
+    pairRow('bs-26', biologicalAssetRow, otherNonCurrentLiabilityRow),
+    pairRow('bs-27', oilGasRow, totalNonCurrentLiabilitiesRow),
+    pairRow('bs-28', rightOfUseRow, totalLiabilitiesRow),
+    pairRow('bs-29', intangibleRow, headingRow('equity-heading', '三、所有者权益（或股东权益）：')),
+    pairRow('bs-30', developmentRow, paidInCapitalRow),
+    pairRow('bs-31', goodwillRow, otherEquityInstrumentRow),
+    pairRow('bs-32', longDeferredExpenseRow, otherPreferredShareRow),
+    pairRow('bs-33', deferredTaxAssetRow, otherPerpetualBondRow),
+    pairRow('bs-34', otherNonCurrentAssetRow, capitalReserveRow),
+    pairRow('bs-35', totalNonCurrentAssetsRow, treasuryStockRow),
+    pairRow('bs-36', totalAssetsRow, ociRow),
+    pairRow('bs-37', undefined, specialReserveRow),
+    pairRow('bs-38', undefined, surplusReserveRow),
+    pairRow('bs-39', undefined, undistributedProfitRow),
+    pairRow('bs-40', undefined, totalEquityRow),
+    pairRow('bs-41', undefined, totalLiabilitiesAndEquityRow)
   ]
-
-  if (commonRows.length > 0) {
-    totals.push({ key: 'common', label: '共同类合计', amountCents: commonTotal })
-  }
 
   return {
     title: BALANCE_SHEET_TITLE,
@@ -1113,8 +1866,30 @@ function buildBalanceSheetSnapshot(
     standardType: ledger.standard_type,
     generatedAt,
     scope,
-    sections,
-    totals
+    formCode: '会企01表',
+    tables: [
+      {
+        key: 'enterprise-balance-sheet',
+        columns: [
+          { key: 'left_label', label: '资产' },
+          { key: 'left_ending', label: '期末余额' },
+          { key: 'left_prior', label: '上年年末余额' },
+          { key: 'right_label', label: '负债和所有者权益（或股东权益）' },
+          { key: 'right_ending', label: '期末余额' },
+          { key: 'right_prior', label: '上年年末余额' }
+        ],
+        rows: officialRows
+      }
+    ],
+    sections: [
+      { key: 'assets', title: '资产', rows: assetSectionRows },
+      { key: 'liabilities_equity', title: '负债和所有者权益', rows: liabilityEquitySectionRows }
+    ],
+    totals: [
+      { key: 'assets', label: '资产总计', amountCents: totalAssetsRow.amountCents },
+      { key: 'liabilities', label: '负债合计', amountCents: totalLiabilitiesRow.amountCents },
+      { key: 'equity', label: '所有者权益合计', amountCents: totalEquityRow.amountCents }
+    ]
   }
 }
 
@@ -1658,68 +2433,85 @@ function buildProfitLossSnapshot(
   generatedAt: string,
   title: string
 ): ReportSnapshotContent {
-  const subjects = listSubjects(db, ledger.id).filter((subject) => subject.category === 'profit_loss')
-  const vouchers = selectEffectiveVouchers(
-    listVouchersInDateRange(db, ledger.id, scope.startDate, scope.endDate),
+  const currentEntries = listEffectiveEntries(
+    db,
+    ledger.id,
+    scope.startDate,
+    scope.endDate,
     scope.includeUnpostedVouchers
   )
-  const entries = mergeEntriesWithVouchers(
-    vouchers,
-    listVoucherEntriesByVoucherIds(
-      db,
-      vouchers.map((voucher) => voucher.id)
-    )
+  const previousEntries = listEffectiveEntries(
+    db,
+    ledger.id,
+    getPeriodStartDate(shiftPeriod(scope.startPeriod, -1)),
+    getPeriodEndDate(shiftPeriod(scope.endPeriod, -1)),
+    scope.includeUnpostedVouchers
   )
-  const entriesBySubject = groupEntriesBySubject(entries)
 
-  const incomeSubjects = subjects.filter((subject) => subject.balance_direction === -1)
-  const expenseSubjects = subjects.filter((subject) => subject.balance_direction !== -1)
+  const current = buildEnterpriseProfitAmounts(currentEntries)
+  const previous = buildEnterpriseProfitAmounts(previousEntries)
 
-  const incomeBySubject = new Map<string, number>()
-  const expenseBySubject = new Map<string, number>()
-
-  for (const subject of incomeSubjects) {
-    const amount = (entriesBySubject.get(subject.code) ?? []).reduce(
-      (sum, row) => sum + (row.credit_amount - row.debit_amount),
-      0
-    )
-    incomeBySubject.set(subject.code, amount)
-  }
-
-  for (const subject of expenseSubjects) {
-    const amount = (entriesBySubject.get(subject.code) ?? []).reduce(
-      (sum, row) => sum + (row.debit_amount - row.credit_amount),
-      0
-    )
-    expenseBySubject.set(subject.code, amount)
-  }
-
-  const incomeRows = buildRows(incomeSubjects, incomeBySubject)
-  const expenseRows = buildRows(expenseSubjects, expenseBySubject)
-  const incomeTotal = incomeRows.reduce((sum, row) => sum + row.amountCents, 0)
-  const expenseTotal = expenseRows.reduce((sum, row) => sum + row.amountCents, 0)
-  const netAmount = incomeTotal - expenseTotal
+  const rows: ReportSnapshotTableRow[] = [
+    createEnterpriseMovementRow('operating_revenue', '一、营业收入', current.operatingRevenue, previous.operatingRevenue),
+    createEnterpriseMovementRow('operating_cost', '减：营业成本', current.operatingCost, previous.operatingCost),
+    createEnterpriseMovementRow('taxes_and_surcharges', '税金及附加', current.taxesAndSurcharges, previous.taxesAndSurcharges),
+    createEnterpriseMovementRow('selling_expenses', '销售费用', current.sellingExpenses, previous.sellingExpenses),
+    createEnterpriseMovementRow('administrative_expenses', '管理费用', current.administrativeExpenses, previous.administrativeExpenses),
+    createEnterpriseMovementRow('research_expenses', '研发费用', current.researchExpenses, previous.researchExpenses),
+    createEnterpriseMovementRow('finance_expenses', '财务费用', current.financeExpenses, previous.financeExpenses),
+    createEnterpriseMovementRow('interest_expenses', '  其中：利息费用', current.interestExpenses, previous.interestExpenses),
+    createEnterpriseMovementRow('interest_income', '  利息收入', current.interestIncome, previous.interestIncome),
+    createEnterpriseMovementRow('other_income', '加：其他收益', current.otherIncome, previous.otherIncome),
+    createEnterpriseMovementRow('investment_income', '投资收益（损失以“-”号填列）', current.investmentIncome, previous.investmentIncome),
+    createEnterpriseMovementRow('associate_investment_income', '  其中：对联营企业和合营企业的投资收益', current.associateInvestmentIncome, previous.associateInvestmentIncome),
+    createEnterpriseMovementRow('derecognition_gain', '以摊余成本计量的金融资产终止确认收益', current.derecognitionGain, previous.derecognitionGain),
+    createEnterpriseMovementRow('hedge_gain', '净敞口套期收益', current.hedgeGain, previous.hedgeGain),
+    createEnterpriseMovementRow('fair_value_gain', '公允价值变动收益', current.fairValueChangeGain, previous.fairValueChangeGain),
+    createEnterpriseMovementRow('credit_impairment_loss', '信用减值损失', current.creditImpairmentLoss, previous.creditImpairmentLoss),
+    createEnterpriseMovementRow('asset_impairment_loss', '资产减值损失', current.assetImpairmentLoss, previous.assetImpairmentLoss),
+    createEnterpriseMovementRow('asset_disposal_gain', '资产处置收益', current.assetDisposalGain, previous.assetDisposalGain),
+    createEnterpriseMovementRow('operating_profit', '二、营业利润（亏损以“-”号填列）', current.operatingProfit, previous.operatingProfit),
+    createEnterpriseMovementRow('non_operating_income', '加：营业外收入', current.nonOperatingIncome, previous.nonOperatingIncome),
+    createEnterpriseMovementRow('non_operating_expense', '减：营业外支出', current.nonOperatingExpense, previous.nonOperatingExpense),
+    createEnterpriseMovementRow('total_profit', '三、利润总额（亏损总额以“-”号填列）', current.totalProfit, previous.totalProfit),
+    createEnterpriseMovementRow('income_tax', '减：所得税费用', current.incomeTaxExpense, previous.incomeTaxExpense),
+    createEnterpriseMovementRow('net_profit', '四、净利润（净亏损以“-”号填列）', current.netProfit, previous.netProfit),
+    createEnterpriseMovementRow('going_concern_profit', '  （一）持续经营净利润', current.netProfit, previous.netProfit),
+    createEnterpriseMovementRow('discontinued_profit', '  （二）终止经营净利润', 0, 0),
+    createEnterpriseMovementRow('other_comprehensive_income', '五、其他综合收益的税后净额', current.otherComprehensiveIncome, previous.otherComprehensiveIncome),
+    createEnterpriseMovementRow('other_comprehensive_nonreclass', '  （一）不能重分类进损益的其他综合收益', 0, 0),
+    createEnterpriseMovementRow('other_comprehensive_reclass', '  （二）将重分类进损益的其他综合收益', 0, 0),
+    createEnterpriseMovementRow('comprehensive_income_total', '六、综合收益总额', current.comprehensiveIncomeTotal, previous.comprehensiveIncomeTotal),
+    createEnterpriseMovementRow('earnings_per_share_header', '七、每股收益：', 0, 0),
+    createEnterpriseMovementRow('basic_eps', '  （一）基本每股收益', 0, 0),
+    createEnterpriseMovementRow('diluted_eps', '  （二）稀释每股收益', 0, 0)
+  ]
 
   return {
     title,
-    reportType: title === ACTIVITY_STATEMENT_TITLE ? 'activity_statement' : 'income_statement',
+    reportType: 'income_statement',
     period: scope.periodLabel,
     ledgerName: ledger.name,
     standardType: ledger.standard_type,
     generatedAt,
     scope,
-    sections: [
-      { key: 'income', title: '收入项目', rows: incomeRows },
-      { key: 'expense', title: '费用项目', rows: expenseRows }
-    ],
-    totals: [
-      { key: 'income_total', label: '收入合计', amountCents: incomeTotal },
-      { key: 'expense_total', label: '费用合计', amountCents: expenseTotal },
+    formCode: '会企02表',
+    tables: [
       {
-        key: title === ACTIVITY_STATEMENT_TITLE ? 'net_assets_change' : 'net_profit',
-        label: title === ACTIVITY_STATEMENT_TITLE ? '净资产变动额' : '净利润',
-        amountCents: netAmount
+        key: 'enterprise-income-statement',
+        columns: [
+          { key: 'item', label: '项目' },
+          { key: 'current', label: '本期金额' },
+          { key: 'previous', label: '上期金额' }
+        ],
+        rows
       }
+    ],
+    sections: [],
+    totals: [
+      { key: 'operating_revenue', label: '营业收入', amountCents: current.operatingRevenue },
+      { key: 'operating_cost', label: '营业成本', amountCents: current.operatingCost },
+      { key: 'net_profit', label: '净利润', amountCents: current.netProfit }
     ]
   }
 }
@@ -1730,103 +2522,159 @@ function buildCashFlowSnapshot(
   scope: ReportSnapshotScope,
   generatedAt: string
 ): ReportSnapshotContent {
-  const vouchers = selectEffectiveVouchers(
-    listVouchersInDateRange(db, ledger.id, scope.startDate, scope.endDate),
+  const subjects = listSubjects(db, ledger.id)
+  const currentItems = listCashFlowItems(db, ledger.id)
+  const currentEntries = listEffectiveEntries(
+    db,
+    ledger.id,
+    scope.startDate,
+    scope.endDate,
     scope.includeUnpostedVouchers
   )
-  const entries = mergeEntriesWithVouchers(
-    vouchers,
-    listVoucherEntriesByVoucherIds(
-      db,
-      vouchers.map((voucher) => voucher.id)
-    )
+  const previousEntries = listEffectiveEntries(
+    db,
+    ledger.id,
+    getPeriodStartDate(shiftPeriod(scope.startPeriod, -1)),
+    getPeriodEndDate(shiftPeriod(scope.endPeriod, -1)),
+    scope.includeUnpostedVouchers
   )
-  const cashFlowItems = listCashFlowItems(db, ledger.id)
-  const amountByItemId = new Map<string, number>()
 
-  for (const entry of entries) {
-    if (entry.cash_flow_item_id === null) {
-      continue
+  const buildAmountByCode = (entries: EntryWithVoucher[]): Map<string, number> => {
+    const amountByCode = new Map<string, number>()
+    const itemById = new Map(currentItems.map((item) => [item.id, item]))
+    for (const entry of entries) {
+      if (entry.cash_flow_item_id === null) {
+        continue
+      }
+      const item = itemById.get(entry.cash_flow_item_id)
+      if (!item) {
+        continue
+      }
+      addAmount(amountByCode, item.code, entry.debit_amount > 0 ? entry.debit_amount : entry.credit_amount)
     }
-    addAmount(
-      amountByItemId,
-      String(entry.cash_flow_item_id),
-      entry.debit_amount > 0 ? entry.debit_amount : entry.credit_amount
-    )
+    return amountByCode
   }
 
-  const categories: Array<{
-    key: 'operating' | 'investing' | 'financing'
-    title: string
-    netKey: string
-    netLabel: string
-  }> = [
-    {
-      key: 'operating',
-      title: '经营活动现金流',
-      netKey: 'operating_net',
-      netLabel: '经营活动现金流量净额'
-    },
-    {
-      key: 'investing',
-      title: '投资活动现金流',
-      netKey: 'investing_net',
-      netLabel: '投资活动现金流量净额'
-    },
-    {
-      key: 'financing',
-      title: '筹资活动现金流',
-      netKey: 'financing_net',
-      netLabel: '筹资活动现金流量净额'
-    }
+  const currentByCode = buildAmountByCode(currentEntries)
+  const previousByCode = buildAmountByCode(previousEntries)
+  const amountBy = (map: Map<string, number>, code: string): number => map.get(code) ?? 0
+
+  const currentOperatingIn =
+    amountBy(currentByCode, 'CF01') + amountBy(currentByCode, 'CF02') + amountBy(currentByCode, 'CF03')
+  const previousOperatingIn =
+    amountBy(previousByCode, 'CF01') + amountBy(previousByCode, 'CF02') + amountBy(previousByCode, 'CF03')
+  const currentOperatingOut =
+    amountBy(currentByCode, 'CF04') +
+    amountBy(currentByCode, 'CF05') +
+    amountBy(currentByCode, 'CF06') +
+    amountBy(currentByCode, 'CF07')
+  const previousOperatingOut =
+    amountBy(previousByCode, 'CF04') +
+    amountBy(previousByCode, 'CF05') +
+    amountBy(previousByCode, 'CF06') +
+    amountBy(previousByCode, 'CF07')
+  const currentInvestingIn =
+    amountBy(currentByCode, 'CF08') +
+    amountBy(currentByCode, 'CF09') +
+    amountBy(currentByCode, 'CF10') +
+    amountBy(currentByCode, 'CF11')
+  const previousInvestingIn =
+    amountBy(previousByCode, 'CF08') +
+    amountBy(previousByCode, 'CF09') +
+    amountBy(previousByCode, 'CF10') +
+    amountBy(previousByCode, 'CF11')
+  const currentInvestingOut =
+    amountBy(currentByCode, 'CF12') + amountBy(currentByCode, 'CF13') + amountBy(currentByCode, 'CF14')
+  const previousInvestingOut =
+    amountBy(previousByCode, 'CF12') + amountBy(previousByCode, 'CF13') + amountBy(previousByCode, 'CF14')
+  const currentFinancingIn =
+    amountBy(currentByCode, 'CF15') + amountBy(currentByCode, 'CF16') + amountBy(currentByCode, 'CF17')
+  const previousFinancingIn =
+    amountBy(previousByCode, 'CF15') + amountBy(previousByCode, 'CF16') + amountBy(previousByCode, 'CF17')
+  const currentFinancingOut =
+    amountBy(currentByCode, 'CF18') + amountBy(currentByCode, 'CF19') + amountBy(currentByCode, 'CF20')
+  const previousFinancingOut =
+    amountBy(previousByCode, 'CF18') + amountBy(previousByCode, 'CF19') + amountBy(previousByCode, 'CF20')
+
+  const currentBeginningCash = buildCashBalanceAtPeriodEnd(
+    db,
+    ledger,
+    subjects,
+    getPreviousPeriod(scope.startPeriod),
+    scope.includeUnpostedVouchers
+  )
+  const previousBeginningCash = buildCashBalanceAtPeriodEnd(
+    db,
+    ledger,
+    subjects,
+    getPreviousPeriod(shiftPeriod(scope.startPeriod, -1)),
+    scope.includeUnpostedVouchers
+  )
+  const currentEndingCash = buildCashBalanceAtPeriodEnd(
+    db,
+    ledger,
+    subjects,
+    scope.endPeriod,
+    scope.includeUnpostedVouchers
+  )
+  const previousEndingCash = buildCashBalanceAtPeriodEnd(
+    db,
+    ledger,
+    subjects,
+    shiftPeriod(scope.endPeriod, -1),
+    scope.includeUnpostedVouchers
+  )
+  const currentNetCash =
+    currentOperatingIn -
+    currentOperatingOut +
+    (currentInvestingIn - currentInvestingOut) +
+    (currentFinancingIn - currentFinancingOut)
+  const previousNetCash =
+    previousOperatingIn -
+    previousOperatingOut +
+    (previousInvestingIn - previousInvestingOut) +
+    (previousFinancingIn - previousFinancingOut)
+
+  const rows: ReportSnapshotTableRow[] = [
+    createEnterpriseMovementRow('operating_header', '一、经营活动产生的现金流量：', 0, 0),
+    createEnterpriseMovementRow('cf01', '销售商品、提供劳务收到的现金', amountBy(currentByCode, 'CF01'), amountBy(previousByCode, 'CF01')),
+    createEnterpriseMovementRow('cf02', '收到的税费返还', amountBy(currentByCode, 'CF02'), amountBy(previousByCode, 'CF02')),
+    createEnterpriseMovementRow('cf03', '收到其他与经营活动有关的现金', amountBy(currentByCode, 'CF03'), amountBy(previousByCode, 'CF03')),
+    createEnterpriseMovementRow('operating_in', '经营活动现金流入小计', currentOperatingIn, previousOperatingIn),
+    createEnterpriseMovementRow('cf04', '购买商品、接受劳务支付的现金', amountBy(currentByCode, 'CF04'), amountBy(previousByCode, 'CF04')),
+    createEnterpriseMovementRow('cf05', '支付给职工以及为职工支付的现金', amountBy(currentByCode, 'CF05'), amountBy(previousByCode, 'CF05')),
+    createEnterpriseMovementRow('cf06', '支付的各项税费', amountBy(currentByCode, 'CF06'), amountBy(previousByCode, 'CF06')),
+    createEnterpriseMovementRow('cf07', '支付其他与经营活动有关的现金', amountBy(currentByCode, 'CF07'), amountBy(previousByCode, 'CF07')),
+    createEnterpriseMovementRow('operating_out', '经营活动现金流出小计', currentOperatingOut, previousOperatingOut),
+    createEnterpriseMovementRow('operating_net', '经营活动产生的现金流量净额', currentOperatingIn - currentOperatingOut, previousOperatingIn - previousOperatingOut),
+    createEnterpriseMovementRow('investing_header', '二、投资活动产生的现金流量：', 0, 0),
+    createEnterpriseMovementRow('cf08', '收回投资收到的现金', amountBy(currentByCode, 'CF08'), amountBy(previousByCode, 'CF08')),
+    createEnterpriseMovementRow('cf09', '取得投资收益收到的现金', amountBy(currentByCode, 'CF09'), amountBy(previousByCode, 'CF09')),
+    createEnterpriseMovementRow('cf10', '处置固定资产、无形资产和其他长期资产收回的现金净额', amountBy(currentByCode, 'CF10'), amountBy(previousByCode, 'CF10')),
+    createEnterpriseMovementRow('investing_subsidiary_in', '处置子公司及其他营业单位收到的现金净额', 0, 0),
+    createEnterpriseMovementRow('cf11', '收到其他与投资活动有关的现金', amountBy(currentByCode, 'CF11'), amountBy(previousByCode, 'CF11')),
+    createEnterpriseMovementRow('investing_in', '投资活动现金流入小计', currentInvestingIn, previousInvestingIn),
+    createEnterpriseMovementRow('cf12', '购建固定资产、无形资产和其他长期资产支付的现金', amountBy(currentByCode, 'CF12'), amountBy(previousByCode, 'CF12')),
+    createEnterpriseMovementRow('cf13', '投资支付的现金', amountBy(currentByCode, 'CF13'), amountBy(previousByCode, 'CF13')),
+    createEnterpriseMovementRow('investing_subsidiary_out', '取得子公司及其他营业单位支付的现金净额', 0, 0),
+    createEnterpriseMovementRow('cf14', '支付其他与投资活动有关的现金', amountBy(currentByCode, 'CF14'), amountBy(previousByCode, 'CF14')),
+    createEnterpriseMovementRow('investing_out', '投资活动现金流出小计', currentInvestingOut, previousInvestingOut),
+    createEnterpriseMovementRow('investing_net', '投资活动产生的现金流量净额', currentInvestingIn - currentInvestingOut, previousInvestingIn - previousInvestingOut),
+    createEnterpriseMovementRow('financing_header', '三、筹资活动产生的现金流量：', 0, 0),
+    createEnterpriseMovementRow('cf15', '吸收投资收到的现金', amountBy(currentByCode, 'CF15'), amountBy(previousByCode, 'CF15')),
+    createEnterpriseMovementRow('cf16', '取得借款收到的现金', amountBy(currentByCode, 'CF16'), amountBy(previousByCode, 'CF16')),
+    createEnterpriseMovementRow('cf17', '收到其他与筹资活动有关的现金', amountBy(currentByCode, 'CF17'), amountBy(previousByCode, 'CF17')),
+    createEnterpriseMovementRow('financing_in', '筹资活动现金流入小计', currentFinancingIn, previousFinancingIn),
+    createEnterpriseMovementRow('cf18', '偿还债务支付的现金', amountBy(currentByCode, 'CF18'), amountBy(previousByCode, 'CF18')),
+    createEnterpriseMovementRow('cf19', '分配股利、利润或偿付利息支付的现金', amountBy(currentByCode, 'CF19'), amountBy(previousByCode, 'CF19')),
+    createEnterpriseMovementRow('cf20', '支付其他与筹资活动有关的现金', amountBy(currentByCode, 'CF20'), amountBy(previousByCode, 'CF20')),
+    createEnterpriseMovementRow('financing_out', '筹资活动现金流出小计', currentFinancingOut, previousFinancingOut),
+    createEnterpriseMovementRow('financing_net', '筹资活动产生的现金流量净额', currentFinancingIn - currentFinancingOut, previousFinancingIn - previousFinancingOut),
+    createEnterpriseMovementRow('exchange_effect', '四、汇率变动对现金及现金等价物的影响', 0, 0),
+    createEnterpriseMovementRow('net_cash', '五、现金及现金等价物净增加额', currentNetCash, previousNetCash),
+    createEnterpriseMovementRow('beginning_cash', '加：期初现金及现金等价物余额', currentBeginningCash, previousBeginningCash),
+    createEnterpriseMovementRow('ending_cash', '六、期末现金及现金等价物余额', currentEndingCash, previousEndingCash)
   ]
-
-  const sections: ReportSnapshotSection[] = []
-  const totals: ReportSnapshotTotal[] = []
-  let netCashFlow = 0
-
-  for (const category of categories) {
-    const rows = cashFlowItems
-      .filter((item) => item.category === category.key)
-      .map((item) => ({
-        key: `${item.direction}:${item.code}`,
-        label: `${item.direction === 'inflow' ? '流入' : '流出'} | ${item.name}`,
-        amountCents: amountByItemId.get(String(item.id)) ?? 0,
-        code: item.code
-      }))
-
-    const inflowTotal = rows
-      .filter((row) => row.key.startsWith('inflow:'))
-      .reduce((sum, row) => sum + row.amountCents, 0)
-    const outflowTotal = rows
-      .filter((row) => row.key.startsWith('outflow:'))
-      .reduce((sum, row) => sum + row.amountCents, 0)
-    const netAmount = inflowTotal - outflowTotal
-
-    netCashFlow += netAmount
-    sections.push({ key: category.key, title: category.title, rows })
-    totals.push({
-      key: `${category.key}_inflow`,
-      label: `${category.title}流入小计`,
-      amountCents: inflowTotal
-    })
-    totals.push({
-      key: `${category.key}_outflow`,
-      label: `${category.title}流出小计`,
-      amountCents: outflowTotal
-    })
-    totals.push({
-      key: category.netKey,
-      label: category.netLabel,
-      amountCents: netAmount
-    })
-  }
-
-  totals.push({
-    key: 'net_cash_flow',
-    label: '现金及现金等价物净增加额',
-    amountCents: netCashFlow
-  })
 
   return {
     title: CASHFLOW_STATEMENT_TITLE,
@@ -1836,8 +2684,227 @@ function buildCashFlowSnapshot(
     standardType: ledger.standard_type,
     generatedAt,
     scope,
-    sections,
-    totals
+    formCode: '会企03表',
+    tables: [
+      {
+        key: 'enterprise-cashflow-statement',
+        columns: [
+          { key: 'item', label: '项目' },
+          { key: 'current', label: '本期金额' },
+          { key: 'previous', label: '上期金额' }
+        ],
+        rows
+      }
+    ],
+    sections: [],
+    totals: [
+      { key: 'operating_net', label: '经营活动现金流量净额', amountCents: currentOperatingIn - currentOperatingOut },
+      { key: 'investing_net', label: '投资活动现金流量净额', amountCents: currentInvestingIn - currentInvestingOut },
+      { key: 'financing_net', label: '筹资活动现金流量净额', amountCents: currentFinancingIn - currentFinancingOut },
+      { key: 'net_cash_flow', label: '现金及现金等价物净增加额', amountCents: currentNetCash }
+    ]
+  }
+}
+
+function buildEnterpriseEquityStatementSnapshot(
+  db: Database.Database,
+  ledger: LedgerRow,
+  scope: ReportSnapshotScope,
+  generatedAt: string
+): ReportSnapshotContent {
+  const subjects = listSubjects(db, ledger.id)
+  const currentOpening = buildEnterpriseEquityState(
+    buildEnterpriseBalancePoint(
+      db,
+      ledger,
+      subjects,
+      getPreviousPeriod(scope.startPeriod),
+      scope.includeUnpostedVouchers
+    )
+  )
+  const currentEnding = buildEnterpriseEquityState(
+    buildEnterpriseBalancePoint(db, ledger, subjects, scope.endPeriod, scope.includeUnpostedVouchers)
+  )
+  const priorOpening = buildEnterpriseEquityState(
+    buildEnterpriseBalancePoint(
+      db,
+      ledger,
+      subjects,
+      getPreviousPeriod(shiftPeriod(scope.startPeriod, -1)),
+      scope.includeUnpostedVouchers
+    )
+  )
+  const priorEnding = buildEnterpriseEquityState(
+    buildEnterpriseBalancePoint(
+      db,
+      ledger,
+      subjects,
+      shiftPeriod(scope.endPeriod, -1),
+      scope.includeUnpostedVouchers
+    )
+  )
+  const currentChanges = subtractEquityStates(currentEnding, currentOpening)
+  const priorChanges = subtractEquityStates(priorEnding, priorOpening)
+  const currentProfit = buildEnterpriseProfitAmounts(
+    listEffectiveEntries(db, ledger.id, scope.startDate, scope.endDate, scope.includeUnpostedVouchers)
+  )
+  const priorProfit = buildEnterpriseProfitAmounts(
+    listEffectiveEntries(
+      db,
+      ledger.id,
+      getPeriodStartDate(shiftPeriod(scope.startPeriod, -1)),
+      getPeriodEndDate(shiftPeriod(scope.endPeriod, -1)),
+      scope.includeUnpostedVouchers
+    )
+  )
+
+  const contributionState = (changes: EquityColumnState): EquityColumnState => ({
+    ...emptyEquityState(),
+    paidInCapital: changes.paidInCapital,
+    otherEquityInstruments: changes.otherEquityInstruments,
+    preferredShares: changes.preferredShares,
+    perpetualBonds: changes.perpetualBonds,
+    otherEquityInstrumentsOther: changes.otherEquityInstrumentsOther,
+    capitalReserve: changes.capitalReserve,
+    treasuryStock: changes.treasuryStock,
+    totalEquity:
+      changes.paidInCapital +
+      changes.otherEquityInstruments +
+      changes.preferredShares +
+      changes.perpetualBonds +
+      changes.otherEquityInstrumentsOther +
+      changes.capitalReserve -
+      changes.treasuryStock
+  })
+  const profitDistributionState = (changes: EquityColumnState): EquityColumnState => ({
+    ...emptyEquityState(),
+    surplusReserve: changes.surplusReserve,
+    generalRiskReserve: changes.generalRiskReserve,
+    totalEquity: changes.surplusReserve + changes.generalRiskReserve
+  })
+  const comprehensiveState = (profit: EnterpriseProfitStatementAmounts): EquityColumnState => ({
+    ...emptyEquityState(),
+    otherComprehensiveIncome: profit.otherComprehensiveIncome,
+    undistributedProfit: profit.netProfit,
+    totalEquity: profit.comprehensiveIncomeTotal
+  })
+  const currentContribution = contributionState(currentChanges)
+  const priorContribution = contributionState(priorChanges)
+  const currentDistribution = profitDistributionState(currentChanges)
+  const priorDistribution = profitDistributionState(priorChanges)
+  const currentComprehensive = comprehensiveState(currentProfit)
+  const priorComprehensive = comprehensiveState(priorProfit)
+  const currentResidual = subtractEquityStates(
+    subtractEquityStates(subtractEquityStates(currentChanges, currentComprehensive), currentContribution),
+    currentDistribution
+  )
+  const priorResidual = subtractEquityStates(
+    subtractEquityStates(subtractEquityStates(priorChanges, priorComprehensive), priorContribution),
+    priorDistribution
+  )
+  const zero = emptyEquityState()
+  const blockHeadingRow = (key: string, label: string): ReportSnapshotTableRow => ({
+    key,
+    cells: [createTextCell(label), ...Array.from({ length: 13 }, () => createTextCell(''))]
+  })
+  const stateRow = (key: string, label: string, values: EquityColumnState): ReportSnapshotTableRow => ({
+    key,
+    cells: [createTextCell(label), ...equityStateToCells(values)]
+  })
+
+  const buildBlockRows = (
+    prefix: 'current' | 'prior',
+    opening: EquityColumnState,
+    changes: EquityColumnState,
+    comprehensive: EquityColumnState,
+    contribution: EquityColumnState,
+    distribution: EquityColumnState,
+    residual: EquityColumnState,
+    ending: EquityColumnState
+  ): ReportSnapshotTableRow[] => [
+    blockHeadingRow(`${prefix}-block-heading`, prefix === 'current' ? '本年金额' : '上年金额'),
+    stateRow(`${prefix}-last-year-end`, '一、上年年末余额', opening),
+    stateRow(`${prefix}-policy-change`, '加：会计政策变更', zero),
+    stateRow(`${prefix}-error-correction`, '前期差错更正', zero),
+    stateRow(`${prefix}-other-adjustments`, '其他', zero),
+    stateRow(`${prefix}-beginning`, '二、本年年初余额', opening),
+    stateRow(`${prefix}-total-change`, '三、本年增减变动金额（减少以“-”号填列）', changes),
+    stateRow(`${prefix}-comprehensive`, '（一）综合收益总额', comprehensive),
+    stateRow(`${prefix}-capital-change`, '（二）所有者投入和减少资本', contribution),
+    stateRow(`${prefix}-ordinary-share`, '1．所有者投入的普通股', { ...zero, paidInCapital: contribution.paidInCapital, totalEquity: contribution.paidInCapital }),
+    stateRow(`${prefix}-other-equity`, '2．其他权益工具持有者投入资本', {
+      ...zero,
+      otherEquityInstruments: contribution.otherEquityInstruments,
+      preferredShares: contribution.preferredShares,
+      perpetualBonds: contribution.perpetualBonds,
+      otherEquityInstrumentsOther: contribution.otherEquityInstrumentsOther,
+      totalEquity:
+        contribution.otherEquityInstruments +
+        contribution.preferredShares +
+        contribution.perpetualBonds +
+        contribution.otherEquityInstrumentsOther
+    }),
+    stateRow(`${prefix}-share-payment`, '3．股份支付计入所有者权益的金额', { ...zero, capitalReserve: contribution.capitalReserve, totalEquity: contribution.capitalReserve }),
+    stateRow(`${prefix}-capital-other`, '4．其他', { ...zero, treasuryStock: contribution.treasuryStock, totalEquity: -contribution.treasuryStock }),
+    stateRow(`${prefix}-profit-distribution`, '（三）利润分配', distribution),
+    stateRow(`${prefix}-surplus`, '1．提取盈余公积', { ...zero, surplusReserve: distribution.surplusReserve, totalEquity: distribution.surplusReserve }),
+    stateRow(`${prefix}-risk-reserve`, '2．提取一般风险准备', { ...zero, generalRiskReserve: distribution.generalRiskReserve, totalEquity: distribution.generalRiskReserve }),
+    stateRow(`${prefix}-owner-distribution`, '3．对所有者（或股东）的分配', zero),
+    stateRow(`${prefix}-profit-other`, '4．其他', zero),
+    stateRow(`${prefix}-internal-carry`, '（四）所有者权益内部结转', residual),
+    stateRow(`${prefix}-capital-reserve-transfer`, '1．资本公积转增资本（或股本）', zero),
+    stateRow(`${prefix}-surplus-transfer`, '2．盈余公积转增资本（或股本）', zero),
+    stateRow(`${prefix}-surplus-offset`, '3．盈余公积弥补亏损', zero),
+    stateRow(`${prefix}-benefit-plan`, '4．设定受益计划变动额结转留存收益', zero),
+    stateRow(`${prefix}-oci-carry`, '5．其他综合收益结转留存收益', {
+      ...zero,
+      otherComprehensiveIncome: residual.otherComprehensiveIncome,
+      undistributedProfit: residual.undistributedProfit,
+      totalEquity: residual.otherComprehensiveIncome + residual.undistributedProfit
+    }),
+    stateRow(`${prefix}-internal-other`, '6．其他', residual),
+    stateRow(`${prefix}-ending`, '四、本年年末余额', ending)
+  ]
+
+  return {
+    title: EQUITY_STATEMENT_TITLE,
+    reportType: 'equity_statement',
+    period: scope.periodLabel,
+    ledgerName: ledger.name,
+    standardType: ledger.standard_type,
+    generatedAt,
+    scope,
+    formCode: '会企04表',
+    tables: [
+      {
+        key: 'enterprise-equity-statement',
+        columns: [
+          { key: 'item', label: '项目' },
+          { key: 'paid_in_capital', label: '实收资本（或股本）' },
+          { key: 'other_equity_instruments', label: '其他权益工具' },
+          { key: 'preferred_shares', label: '优先股' },
+          { key: 'perpetual_bonds', label: '永续债' },
+          { key: 'other_equity_instruments_other', label: '其他' },
+          { key: 'capital_reserve', label: '资本公积' },
+          { key: 'treasury_stock', label: '减：库存股' },
+          { key: 'other_comprehensive_income', label: '其他综合收益' },
+          { key: 'special_reserve', label: '专项储备' },
+          { key: 'surplus_reserve', label: '盈余公积' },
+          { key: 'general_risk_reserve', label: '一般风险准备' },
+          { key: 'undistributed_profit', label: '未分配利润' },
+          { key: 'total_equity', label: '所有者权益合计' }
+        ],
+        rows: [
+          ...buildBlockRows('current', currentOpening, currentChanges, currentComprehensive, currentContribution, currentDistribution, currentResidual, currentEnding),
+          ...buildBlockRows('prior', priorOpening, priorChanges, priorComprehensive, priorContribution, priorDistribution, priorResidual, priorEnding)
+        ]
+      }
+    ],
+    sections: [],
+    totals: [
+      { key: 'current_total_equity', label: '本年年末所有者权益合计', amountCents: currentEnding.totalEquity },
+      { key: 'prior_total_equity', label: '上年年末所有者权益合计', amountCents: priorEnding.totalEquity }
+    ]
   }
 }
 
@@ -1851,6 +2918,9 @@ function buildSnapshotContent(
   const title = getReportTitle(reportType, ledger.standard_type)
   if (reportType === 'balance_sheet') {
     return buildBalanceSheetSnapshot(db, ledger, scope, generatedAt)
+  }
+  if (reportType === 'equity_statement') {
+    return buildEnterpriseEquityStatementSnapshot(db, ledger, scope, generatedAt)
   }
   if (ledger.standard_type === 'npo' && reportType === 'activity_statement') {
     return buildNgoActivityStatementSnapshot(db, ledger, scope, generatedAt)
@@ -2119,6 +3189,10 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   const title = escapeHtml(detail.content.title)
   const ledgerName = escapeHtml(detail.ledger_name)
   const period = escapeHtml(formatExportPeriodLabel(detail.content.scope))
+  const pageSize = detail.report_type === 'equity_statement' ? 'A4 landscape' : 'A4 portrait'
+  const bodyFontSize = detail.report_type === 'equity_statement' ? 10 : 12
+  const titleFontSize = detail.report_type === 'equity_statement' ? 18 : 20
+  const cellPadding = detail.report_type === 'equity_statement' ? '4px 6px' : '6px 8px'
 
   const sectionHtml =
     detail.content.tables && detail.content.tables.length > 0
@@ -2225,13 +3299,13 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
     <meta charset="utf-8" />
     <title>${title}</title>
     <style>
-      @page { size: A4 portrait; margin: 16mm 14mm; }
+      @page { size: ${pageSize}; margin: 16mm 14mm; }
       body {
         margin: 0;
         color: #111827;
         background: #ffffff;
         font-family: "SimSun", "Songti SC", serif;
-        font-size: 12px;
+        font-size: ${bodyFontSize}px;
         line-height: 1.45;
       }
       .page {
@@ -2240,7 +3314,7 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
       h1 {
         margin: 0 0 8px;
         text-align: center;
-        font-size: 20px;
+        font-size: ${titleFontSize}px;
         font-weight: 700;
         letter-spacing: 0.08em;
       }
@@ -2269,7 +3343,7 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
       }
       th, td {
         border: 1px solid #111827;
-        padding: 6px 8px;
+        padding: ${cellPadding};
         vertical-align: middle;
         word-break: break-word;
       }

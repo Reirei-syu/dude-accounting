@@ -29,13 +29,18 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
   const isDynamicReport = reportType !== 'balance_sheet'
 
   useEffect(() => {
+    const defaultStartPeriod =
+      reportType === 'equity_statement' && currentPeriod
+        ? `${currentPeriod.slice(0, 4)}-01`
+        : currentPeriod || ''
+
     setDetail(null)
     setError('')
     setSuccessMessage('')
     setIncludeUnposted(false)
     setIsDetailOpen(false)
     setMonth(currentPeriod || '')
-    setStartPeriod(currentPeriod || '')
+    setStartPeriod(defaultStartPeriod)
     setEndPeriod(currentPeriod || '')
   }, [currentLedger?.id, currentPeriod, reportType])
 

@@ -305,7 +305,7 @@ export function initializeDatabase(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ledger_id INTEGER NOT NULL,
       report_type TEXT NOT NULL
-        CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement')),
+        CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement', 'equity_statement')),
       report_name TEXT NOT NULL,
       period TEXT NOT NULL,
       start_period TEXT NOT NULL DEFAULT '',
@@ -570,7 +570,7 @@ export function ensureReportingSchema(db: Database.Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ledger_id INTEGER NOT NULL,
       report_type TEXT NOT NULL
-        CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement')),
+        CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement', 'equity_statement')),
       report_name TEXT NOT NULL,
       period TEXT NOT NULL,
       start_period TEXT NOT NULL DEFAULT '',
@@ -586,6 +586,9 @@ export function ensureReportingSchema(db: Database.Database): void {
   `)
 
   const columns = db.prepare("PRAGMA table_info('report_snapshots')").all() as Array<{ name: string }>
+  const reportSnapshotTableSql = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'report_snapshots'")
+    .get() as { sql: string } | undefined
   if (!columns.some((column) => column.name === 'start_period')) {
     db.exec("ALTER TABLE report_snapshots ADD COLUMN start_period TEXT NOT NULL DEFAULT ''")
   }
@@ -599,6 +602,72 @@ export function ensureReportingSchema(db: Database.Database): void {
     db.exec(
       'ALTER TABLE report_snapshots ADD COLUMN include_unposted_vouchers INTEGER NOT NULL DEFAULT 0'
     )
+  }
+  const supportsEquityStatement =
+    reportSnapshotTableSql?.sql.includes("'equity_statement'") ?? false
+
+  if (!supportsEquityStatement) {
+    const hasStartPeriod = columns.some((column) => column.name === 'start_period')
+    const hasEndPeriod = columns.some((column) => column.name === 'end_period')
+    const hasAsOfDate = columns.some((column) => column.name === 'as_of_date')
+    const hasIncludeUnposted = columns.some((column) => column.name === 'include_unposted_vouchers')
+    const hasContentJson = columns.some((column) => column.name === 'content_json')
+
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE report_snapshots_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ledger_id INTEGER NOT NULL,
+          report_type TEXT NOT NULL
+            CHECK(report_type IN ('balance_sheet', 'income_statement', 'activity_statement', 'cashflow_statement', 'equity_statement')),
+          report_name TEXT NOT NULL,
+          period TEXT NOT NULL,
+          start_period TEXT NOT NULL DEFAULT '',
+          end_period TEXT NOT NULL DEFAULT '',
+          as_of_date TEXT DEFAULT NULL,
+          include_unposted_vouchers INTEGER NOT NULL DEFAULT 0,
+          generated_by INTEGER DEFAULT NULL,
+          generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          content_json TEXT NOT NULL DEFAULT '{}',
+          FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE,
+          FOREIGN KEY (generated_by) REFERENCES users(id)
+        );
+      `)
+      db.exec(`
+        INSERT INTO report_snapshots_new (
+          id,
+          ledger_id,
+          report_type,
+          report_name,
+          period,
+          start_period,
+          end_period,
+          as_of_date,
+          include_unposted_vouchers,
+          generated_by,
+          generated_at,
+          content_json
+        )
+        SELECT
+          id,
+          ledger_id,
+          report_type,
+          report_name,
+          period,
+          ${hasStartPeriod ? 'start_period' : "''"},
+          ${hasEndPeriod ? 'end_period' : "''"},
+          ${hasAsOfDate ? 'as_of_date' : 'NULL'},
+          ${hasIncludeUnposted ? 'include_unposted_vouchers' : '0'},
+          generated_by,
+          generated_at,
+          ${hasContentJson ? 'content_json' : "'{}'"}
+        FROM report_snapshots;
+      `)
+      db.exec('DROP TABLE report_snapshots;')
+      db.exec('ALTER TABLE report_snapshots_new RENAME TO report_snapshots;')
+    })
+
+    migrate()
   }
 
   db.exec(`

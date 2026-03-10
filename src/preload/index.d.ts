@@ -643,7 +643,12 @@ interface ElectronicVoucherAPI {
   }>
 }
 
-type ReportType = 'balance_sheet' | 'income_statement' | 'activity_statement' | 'cashflow_statement'
+type ReportType =
+  | 'balance_sheet'
+  | 'income_statement'
+  | 'activity_statement'
+  | 'cashflow_statement'
+  | 'equity_statement'
 
 interface ReportSnapshotLine {
   key: string

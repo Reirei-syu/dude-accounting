@@ -43,6 +43,7 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   IncomeStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   ActivityStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   CashFlowStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
+  EquityStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   ReportQuery: ReportQuery as React.ComponentType<WorkspaceComponentProps>
 }
 

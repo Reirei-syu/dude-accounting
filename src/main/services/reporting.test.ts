@@ -496,8 +496,15 @@ function readTotal(totals: ReportSnapshotTotal[], key: string): number {
   return totals.find((item) => item.key === key)?.amountCents ?? 0
 }
 
-function findRow(detail: ReportSnapshotDetail, code: string): { amountCents: number } | undefined {
-  return detail.content.sections.flatMap((section) => section.rows).find((row) => row.code === code)
+function findTableRow(
+  detail: ReportSnapshotDetail,
+  label: string
+): { cells: Array<{ value: string | number | null }> } | undefined {
+  return (
+    detail.content.tables
+      ?.flatMap((table) => table.rows)
+      .find((row) => row.cells.some((cell) => cell.value === label))
+  )
 }
 
 describe('reporting service', () => {
@@ -510,7 +517,7 @@ describe('reporting service', () => {
     }
   })
 
-  it('generates balance sheet by month-end and keeps zero-value rows in the snapshot', () => {
+  it('generates enterprise balance sheet with the official parallel table structure', () => {
     const db = createTestDb()
     const testDb = db as never
     seedEnterpriseLedger(db)
@@ -524,12 +531,23 @@ describe('reporting service', () => {
       now: '2026-03-09T10:00:00.000Z'
     })
 
+    const balanceTable = balanceSheet.content.tables?.[0]
     expect(balanceSheet.period).toBe('2026.03')
     expect(balanceSheet.as_of_date).toBe('2026-03-31')
-    expect(balanceSheet.include_unposted_vouchers).toBe(0)
-    expect(balanceSheet.content.scope.endDate).toBe('2026-03-31')
+    expect(balanceSheet.content.formCode).toBe('会企01表')
+    expect(balanceTable?.columns.map((column) => column.label)).toEqual([
+      '资产',
+      '期末余额',
+      '上年年末余额',
+      '负债和所有者权益（或股东权益）',
+      '期末余额',
+      '上年年末余额'
+    ])
+    expect(findTableRow(balanceSheet, '货币资金')?.cells[1]?.value).toBe(144_300)
+    expect(findTableRow(balanceSheet, '货币资金')?.cells[2]?.value).toBe(101_500)
+    expect(findTableRow(balanceSheet, '应付票据')?.cells[4]?.value).toBe(0)
+    expect(findTableRow(balanceSheet, '未分配利润')?.cells[4]?.value).toBe(40_800)
     expect(readTotal(balanceSheet.content.totals, 'assets')).toBe(144_300)
-    expect(findRow(balanceSheet, '2201')?.amountCents).toBe(0)
   })
 
   it('includes unposted vouchers in dynamic enterprise reports only when the option is checked', () => {
@@ -561,14 +579,32 @@ describe('reporting service', () => {
       now: '2026-03-09T10:02:00.000Z'
     })
 
+    const postedTable = postedOnly.content.tables?.[0]
+    const unpostedTable = includeUnposted.content.tables?.[0]
+
     expect(postedOnly.period).toBe('2026.03-2026.03')
+    expect(postedOnly.content.formCode).toBe('会企02表')
     expect(postedOnly.content.scope.startDate).toBe('2026-03-01')
     expect(postedOnly.content.scope.endDate).toBe('2026-03-31')
     expect(readTotal(postedOnly.content.totals, 'net_profit')).toBe(40_000)
+    expect(
+      postedTable?.rows.some(
+        (row) => row.cells[0]?.value === '一、营业收入' && row.cells[1]?.value === 50_000
+      )
+    ).toBe(true)
+    expect(
+      postedTable?.rows.some(
+        (row) => row.cells[0]?.value === '管理费用' && row.cells[1]?.value === 10_000
+      )
+    ).toBe(true)
 
     expect(includeUnposted.include_unposted_vouchers).toBe(1)
     expect(readTotal(includeUnposted.content.totals, 'net_profit')).toBe(45_000)
-    expect(findRow(includeUnposted, '6051')?.amountCents).toBe(0)
+    expect(
+      unpostedTable?.rows.some(
+        (row) => row.cells[0]?.value === '一、营业收入' && row.cells[1]?.value === 57_000
+      )
+    ).toBe(true)
   })
 
   it('supports cross-year dynamic ranges with inclusive first-day and month-end boundaries', () => {
@@ -586,12 +622,63 @@ describe('reporting service', () => {
       now: '2026-03-09T10:03:00.000Z'
     })
 
+    const incomeTable = incomeStatement.content.tables?.[0]
+
     expect(incomeStatement.period).toBe('2025.12-2026.01')
     expect(incomeStatement.content.scope.startDate).toBe('2025-12-01')
     expect(incomeStatement.content.scope.endDate).toBe('2026-01-31')
-    expect(readTotal(incomeStatement.content.totals, 'income_total')).toBe(1_000)
-    expect(readTotal(incomeStatement.content.totals, 'expense_total')).toBe(200)
+    expect(readTotal(incomeStatement.content.totals, 'operating_revenue')).toBe(1_000)
+    expect(readTotal(incomeStatement.content.totals, 'operating_cost')).toBe(0)
     expect(readTotal(incomeStatement.content.totals, 'net_profit')).toBe(800)
+    expect(
+      incomeTable?.rows.some(
+        (row) => row.cells[0]?.value === '二、营业利润（亏损以“-”号填列）' && row.cells[1]?.value === 800
+      )
+    ).toBe(true)
+  })
+
+  it('adds enterprise equity statements with dual year blocks and official columns', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedEnterpriseLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'equity_statement',
+      startPeriod: '2026-01',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T10:05:00.000Z'
+    })
+
+    const equityTable = snapshot.content.tables?.[0]
+    expect(snapshot.content.title).toBe('所有者权益变动表')
+    expect(snapshot.content.formCode).toBe('会企04表')
+    expect(equityTable?.columns.map((column) => column.label)).toEqual([
+      '项目',
+      '实收资本（或股本）',
+      '其他权益工具',
+      '优先股',
+      '永续债',
+      '其他',
+      '资本公积',
+      '减：库存股',
+      '其他综合收益',
+      '专项储备',
+      '盈余公积',
+      '一般风险准备',
+      '未分配利润',
+      '所有者权益合计'
+    ])
+    expect(equityTable?.rows.some((row) => row.cells[0]?.value === '本年金额')).toBe(true)
+    expect(equityTable?.rows.some((row) => row.cells[0]?.value === '上年金额')).toBe(true)
+    expect(
+      equityTable?.rows.some(
+        (row) => row.cells[0]?.value === '（一）综合收益总额' && row.cells[12]?.value === 39_800
+      )
+    ).toBe(true)
+    expect(readTotal(snapshot.content.totals, 'current_total_equity')).toBe(120_800)
   })
 
   it('generates npo activity statements and supports deleting saved report snapshots', () => {
@@ -925,7 +1012,7 @@ describe('reporting service', () => {
     expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
     expect(worksheet.getCell(1, 1).value).toBe('资产负债表')
     expect(worksheet.getCell(2, 1).value).toBe('编制单位：企业测试账套')
-    expect(worksheet.getCell(2, 2).value).toBe('单位：元')
+    expect(worksheet.getCell(2, 6).value).toBe('单位：元')
     expect(worksheet.getCell(3, 1).value).toBe('会计期间：2026年3月31日')
     expect(worksheet.getCell(4, 1).alignment?.horizontal).toBe('center')
     expect(worksheet.getCell(4, 1).alignment?.vertical).toBe('middle')

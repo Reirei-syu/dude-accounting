@@ -243,6 +243,7 @@ const api = {
         | 'income_statement'
         | 'activity_statement'
         | 'cashflow_statement'
+        | 'equity_statement'
       month?: string
       startPeriod?: string
       endPeriod?: string
@@ -251,7 +252,11 @@ const api = {
     list: (filters: {
       ledgerId: number
       reportTypes?: Array<
-        'balance_sheet' | 'income_statement' | 'activity_statement' | 'cashflow_statement'
+        | 'balance_sheet'
+        | 'income_statement'
+        | 'activity_statement'
+        | 'cashflow_statement'
+        | 'equity_statement'
       >
       periods?: string[]
     }) => ipcRenderer.invoke('reporting:list', filters),

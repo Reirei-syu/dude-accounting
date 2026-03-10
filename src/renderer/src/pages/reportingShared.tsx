@@ -6,6 +6,7 @@ export type ReportType =
   | 'income_statement'
   | 'activity_statement'
   | 'cashflow_statement'
+  | 'equity_statement'
 
 export interface ReportSnapshotLine {
   key: string
@@ -98,14 +99,16 @@ const REPORT_TYPE_LABELS: Record<ReportType, string> = {
   balance_sheet: '资产负债表',
   income_statement: '利润表',
   activity_statement: '业务活动表',
-  cashflow_statement: '现金流量表'
+  cashflow_statement: '现金流量表',
+  equity_statement: '所有者权益变动表'
 }
 
 const COMPONENT_TYPE_TO_REPORT_TYPE: Record<string, ReportType> = {
   BalanceSheet: 'balance_sheet',
   IncomeStatement: 'income_statement',
   ActivityStatement: 'activity_statement',
-  CashFlowStatement: 'cashflow_statement'
+  CashFlowStatement: 'cashflow_statement',
+  EquityStatement: 'equity_statement'
 }
 
 export function getReportTypeLabel(reportType: ReportType): string {

@@ -25,7 +25,8 @@ const REPORT_SUB_MENUS: Record<AccountingStandardType, SubMenuItem[]> = {
     { id: 'report-query', title: '报表查询', componentType: 'ReportQuery' },
     { id: 'balance-sheet', title: '资产负债表', componentType: 'BalanceSheet' },
     { id: 'income-statement', title: '利润表', componentType: 'IncomeStatement' },
-    { id: 'cashflow-statement', title: '现金流量表', componentType: 'CashFlowStatement' }
+    { id: 'cashflow-statement', title: '现金流量表', componentType: 'CashFlowStatement' },
+    { id: 'equity-statement', title: '所有者权益变动表', componentType: 'EquityStatement' }
   ],
   npo: [
     { id: 'report-query', title: '报表查询', componentType: 'ReportQuery' },
