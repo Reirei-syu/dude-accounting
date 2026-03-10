@@ -299,7 +299,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     }
   }
 
-  const openVoucherQuery = (row: DetailLedgerRow): void => {
+  const openVoucherEntry = (row: DetailLedgerRow): void => {
     if (!row.voucher_id || !row.voucher_date) {
       return
     }
@@ -307,15 +307,12 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     setIsPreviewOpen(false)
     setContextMenu(null)
     openTab({
-      id: 'voucher-query',
-      title: '凭证查询',
-      componentType: 'VoucherQuery',
+      id: 'voucher-entry',
+      title: '凭证录入',
+      componentType: 'VoucherEntry',
       params: {
-        presetVoucherId: row.voucher_id,
-        presetDateFrom: row.voucher_date,
-        presetDateTo: row.voucher_date,
-        autoQuery: true,
-        queryRequestKey: Date.now()
+        editVoucherId: row.voucher_id,
+        editRequestKey: Date.now()
       }
     })
   }
@@ -429,7 +426,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
-            openVoucherQuery(contextMenu.row)
+            openVoucherEntry(contextMenu.row)
           }}
         >
           查询凭证
@@ -556,7 +553,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
               type="button"
               className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={contextMenu!.row.row_type !== 'entry' || !contextMenu!.row.voucher_id}
-              onClick={() => openVoucherQuery(contextMenu!.row)}
+              onClick={() => openVoucherEntry(contextMenu!.row)}
             >
               查询凭证
             </button>
