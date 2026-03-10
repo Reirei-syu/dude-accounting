@@ -1413,6 +1413,8 @@ function buildBalanceSheetSnapshot(
     `${priorYear}-12`,
     scope.includeUnpostedVouchers
   )
+  const currentEquityState = buildEnterpriseEquityState(currentPoint)
+  const priorYearEndEquityState = buildEnterpriseEquityState(priorYearEndPoint)
 
   const buildRow = (key: string, label: string, specs: PrefixSpec[]): ReportSnapshotLine =>
     createEnterpriseComparableRow(
@@ -1672,42 +1674,82 @@ function buildBalanceSheetSnapshot(
     totalNonCurrentLiabilitiesRow
   ])
 
-  const paidInCapitalRow = buildRow('paid_in_capital', '实收资本（或股本）', [{ code: '4001' }])
-  const otherEquityInstrumentRow = buildRow('other_equity_instruments', '其他权益工具', [])
-  const otherPreferredShareRow = buildRow('other_equity_preferred', '  其中：优先股', [])
-  const otherPerpetualBondRow = buildRow('other_equity_perpetual', '  永续债', [])
-  const capitalReserveRow = buildRow('capital_reserve', '资本公积', [{ code: '4002' }])
-  const treasuryStockRow = buildRow('treasury_stock', '减：库存股', [{ code: '4201' }])
-  const ociRow = buildRow('other_comprehensive_income', '其他综合收益', [])
-  const specialReserveRow = buildRow('special_reserve', '专项储备', [])
-  const surplusReserveRow = buildRow('surplus_reserve', '盈余公积', [{ code: '4101' }])
+  const paidInCapitalRow = createEnterpriseComparableRow(
+    'paid_in_capital',
+    '实收资本（或股本）',
+    '',
+    priorYearEndEquityState.paidInCapital,
+    currentEquityState.paidInCapital
+  )
+  const otherEquityInstrumentRow = createEnterpriseComparableRow(
+    'other_equity_instruments',
+    '其他权益工具',
+    '',
+    priorYearEndEquityState.otherEquityInstruments,
+    currentEquityState.otherEquityInstruments
+  )
+  const otherPreferredShareRow = createEnterpriseComparableRow(
+    'other_equity_preferred',
+    '  其中：优先股',
+    '',
+    priorYearEndEquityState.preferredShares,
+    currentEquityState.preferredShares
+  )
+  const otherPerpetualBondRow = createEnterpriseComparableRow(
+    'other_equity_perpetual',
+    '  永续债',
+    '',
+    priorYearEndEquityState.perpetualBonds,
+    currentEquityState.perpetualBonds
+  )
+  const capitalReserveRow = createEnterpriseComparableRow(
+    'capital_reserve',
+    '资本公积',
+    '',
+    priorYearEndEquityState.capitalReserve,
+    currentEquityState.capitalReserve
+  )
+  const treasuryStockRow = createEnterpriseComparableRow(
+    'treasury_stock',
+    '减：库存股',
+    '',
+    priorYearEndEquityState.treasuryStock,
+    currentEquityState.treasuryStock
+  )
+  const ociRow = createEnterpriseComparableRow(
+    'other_comprehensive_income',
+    '其他综合收益',
+    '',
+    priorYearEndEquityState.otherComprehensiveIncome,
+    currentEquityState.otherComprehensiveIncome
+  )
+  const specialReserveRow = createEnterpriseComparableRow(
+    'special_reserve',
+    '专项储备',
+    '',
+    priorYearEndEquityState.specialReserve,
+    currentEquityState.specialReserve
+  )
+  const surplusReserveRow = createEnterpriseComparableRow(
+    'surplus_reserve',
+    '盈余公积',
+    '',
+    priorYearEndEquityState.surplusReserve,
+    currentEquityState.surplusReserve
+  )
   const undistributedProfitRow = createEnterpriseComparableRow(
     'undistributed_profit',
     '未分配利润',
     '',
-    sumTemplateAmount(priorYearEndPoint.balanceMap, [{ code: '4103' }, { code: '4104' }]) +
-      priorYearEndPoint.unsettledProfitLossNet,
-    sumTemplateAmount(currentPoint.balanceMap, [{ code: '4103' }, { code: '4104' }]) +
-      currentPoint.unsettledProfitLossNet
+    priorYearEndEquityState.undistributedProfit,
+    currentEquityState.undistributedProfit
   )
   const totalEquityRow = createEnterpriseComparableRow(
     'total_equity',
     '所有者权益（或股东权益）合计',
     '',
-    (paidInCapitalRow.cells?.prior_year_end ?? 0) +
-      (capitalReserveRow.cells?.prior_year_end ?? 0) +
-      (ociRow.cells?.prior_year_end ?? 0) +
-      (specialReserveRow.cells?.prior_year_end ?? 0) +
-      (surplusReserveRow.cells?.prior_year_end ?? 0) +
-      undistributedProfitRow.cells!.prior_year_end -
-      (treasuryStockRow.cells?.prior_year_end ?? 0),
-    (paidInCapitalRow.cells?.ending ?? 0) +
-      (capitalReserveRow.cells?.ending ?? 0) +
-      (ociRow.cells?.ending ?? 0) +
-      (specialReserveRow.cells?.ending ?? 0) +
-      (surplusReserveRow.cells?.ending ?? 0) +
-      undistributedProfitRow.cells!.ending -
-      (treasuryStockRow.cells?.ending ?? 0)
+    priorYearEndEquityState.totalEquity,
+    currentEquityState.totalEquity
   )
   const totalLiabilitiesAndEquityRow = buildSumRow(
     'total_liabilities_equity',

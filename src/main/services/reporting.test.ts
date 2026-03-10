@@ -550,6 +550,41 @@ describe('reporting service', () => {
     expect(readTotal(balanceSheet.content.totals, 'assets')).toBe(144_300)
   })
 
+  it('includes general risk reserve in enterprise balance sheet equity totals', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedEnterpriseLedger(db)
+
+    db.subjects.push({
+      ledger_id: 1,
+      code: '4102',
+      name: '一般风险准备',
+      category: 'equity',
+      balance_direction: -1
+    })
+    db.initialBalances.push(
+      { ledger_id: 1, period: '2025-12', subject_code: '1002', debit_amount: 105_000, credit_amount: 0 },
+      { ledger_id: 1, period: '2025-12', subject_code: '4102', debit_amount: 0, credit_amount: 5_000 }
+    )
+
+    const balanceSheet = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      month: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-10T10:00:00.000Z'
+    })
+
+    expect(readTotal(balanceSheet.content.totals, 'assets')).toBe(149_300)
+    expect(readTotal(balanceSheet.content.totals, 'liabilities')).toBe(23_500)
+    expect(readTotal(balanceSheet.content.totals, 'equity')).toBe(125_800)
+    expect(
+      readTotal(balanceSheet.content.totals, 'liabilities') +
+        readTotal(balanceSheet.content.totals, 'equity')
+    ).toBe(149_300)
+  })
+
   it('includes unposted vouchers in dynamic enterprise reports only when the option is checked', () => {
     const postedDb = createTestDb()
     const postedTestDb = postedDb as never
