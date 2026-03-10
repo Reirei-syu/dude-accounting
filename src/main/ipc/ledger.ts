@@ -11,11 +11,54 @@ import { appendOperationLog } from '../services/auditLog'
 import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
 import { requireAuth, requirePermission } from './session'
 
+function normalizeLedgerStartPeriods(db: ReturnType<typeof getDatabase>): void {
+  const ledgers = db.prepare('SELECT id, start_period, current_period FROM ledgers').all() as Array<{
+    id: number
+    start_period: string
+    current_period: string
+  }>
+
+  const selectEarliestPeriodStmt = db.prepare(
+    `SELECT MIN(period) AS period
+     FROM (
+       SELECT period FROM periods WHERE ledger_id = ?
+       UNION ALL
+       SELECT period FROM vouchers WHERE ledger_id = ?
+       UNION ALL
+       SELECT period FROM initial_balances WHERE ledger_id = ?
+     )`
+  )
+  const updateStartPeriodStmt = db.prepare('UPDATE ledgers SET start_period = ? WHERE id = ?')
+
+  const normalize = db.transaction(() => {
+    for (const ledger of ledgers) {
+      const earliestRow = selectEarliestPeriodStmt.get(ledger.id, ledger.id, ledger.id) as
+        | { period: string | null }
+        | undefined
+      const candidates = [ledger.start_period, ledger.current_period, earliestRow?.period ?? ''].filter(
+        (period) => /^\d{4}-(0[1-9]|1[0-2])$/.test(period)
+      )
+
+      if (candidates.length === 0) {
+        continue
+      }
+
+      const normalizedStartPeriod = candidates.sort()[0]
+      if (normalizedStartPeriod < ledger.start_period) {
+        updateStartPeriodStmt.run(normalizedStartPeriod, ledger.id)
+      }
+    }
+  })
+
+  normalize()
+}
+
 export function registerLedgerHandlers(): void {
   const db = getDatabase()
 
   ipcMain.handle('ledger:getAll', (event) => {
     requireAuth(event)
+    normalizeLedgerStartPeriods(db)
     return db.prepare('SELECT * FROM ledgers ORDER BY created_at DESC').all()
   })
 
@@ -78,7 +121,19 @@ export function registerLedgerHandlers(): void {
           db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(data.name, data.id)
         }
         if (data.currentPeriod !== undefined) {
-          db.prepare('UPDATE ledgers SET current_period = ? WHERE id = ?').run(
+          const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(data.id) as
+            | { start_period: string }
+            | undefined
+
+          if (!ledger) {
+            throw new Error('账套不存在')
+          }
+
+          const nextStartPeriod =
+            data.currentPeriod < ledger.start_period ? data.currentPeriod : ledger.start_period
+
+          db.prepare('UPDATE ledgers SET start_period = ?, current_period = ? WHERE id = ?').run(
+            nextStartPeriod,
             data.currentPeriod,
             data.id
           )

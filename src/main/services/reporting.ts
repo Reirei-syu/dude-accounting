@@ -129,6 +129,7 @@ type LedgerRow = {
   name: string
   standard_type: AccountingStandardType
   start_period: string
+  current_period: string
 }
 
 type SubjectRow = {
@@ -280,7 +281,7 @@ function comparePeriods(left: string, right: string): number {
 function getLedger(db: Database.Database, ledgerId: number): LedgerRow {
   const ledger = db
     .prepare(
-      `SELECT id, name, standard_type, start_period
+      `SELECT id, name, standard_type, start_period, current_period
        FROM ledgers
        WHERE id = ?`
     )
@@ -291,6 +292,14 @@ function getLedger(db: Database.Database, ledgerId: number): LedgerRow {
   }
 
   return ledger
+}
+
+function getEffectiveLedgerStartPeriod(ledger: LedgerRow, targetPeriod: string): string {
+  const candidates = [ledger.start_period, ledger.current_period, targetPeriod].filter((period) =>
+    /^\d{4}-(0[1-9]|1[0-2])$/.test(period)
+  )
+
+  return candidates.sort(comparePeriods)[0] ?? ledger.start_period
 }
 
 function listSubjects(db: Database.Database, ledgerId: number): SubjectRow[] {
@@ -633,13 +642,14 @@ function buildEnterpriseBalancePoint(
   targetPeriod: string,
   includeUnpostedVouchers: boolean
 ): EnterpriseBalancePoint {
+  const effectiveLedgerStartPeriod = getEffectiveLedgerStartPeriod(ledger, targetPeriod)
   const openingBySubject = listInitialBalances(db, ledger.id, targetPeriod)
   const targetDate = getPeriodEndDate(targetPeriod)
   const entriesBySubject = groupEntriesBySubject(
     listEffectiveEntries(
       db,
       ledger.id,
-      getPeriodStartDate(ledger.start_period),
+      getPeriodStartDate(effectiveLedgerStartPeriod),
       targetDate,
       includeUnpostedVouchers
     )
@@ -648,7 +658,7 @@ function buildEnterpriseBalancePoint(
     subjects,
     openingBySubject,
     entriesBySubject,
-    ledger.start_period,
+    effectiveLedgerStartPeriod,
     targetDate
   )
   const unsettledProfitLossNet = subjects
@@ -1335,9 +1345,15 @@ function buildBalanceSheetSnapshot(
   generatedAt: string
 ): ReportSnapshotContent {
   const subjects = listSubjects(db, ledger.id)
+  const effectiveLedgerStartPeriod = getEffectiveLedgerStartPeriod(ledger, scope.endPeriod)
   const openingBySubject = listInitialBalances(db, ledger.id, scope.endPeriod)
   const vouchers = selectEffectiveVouchers(
-    listVouchersInDateRange(db, ledger.id, getPeriodStartDate(ledger.start_period), scope.endDate),
+    listVouchersInDateRange(
+      db,
+      ledger.id,
+      getPeriodStartDate(effectiveLedgerStartPeriod),
+      scope.endDate
+    ),
     scope.includeUnpostedVouchers
   )
   const entries = mergeEntriesWithVouchers(
@@ -1355,7 +1371,7 @@ function buildBalanceSheetSnapshot(
     subjects,
     openingBySubject,
     entriesBySubject,
-    ledger.start_period,
+    effectiveLedgerStartPeriod,
     scope.endDate
   )
   const openingBalanceMap = new Map<string, number>()
@@ -1399,7 +1415,7 @@ function buildBalanceSheetSnapshot(
         subject,
         openingBySubject.get(subject.code),
         entriesBySubject.get(subject.code) ?? [],
-        ledger.start_period,
+        effectiveLedgerStartPeriod,
         scope.endDate
       )
       return sum + (subject.balance_direction === -1 ? amount : -amount)

@@ -99,7 +99,10 @@ class FakeReportingDb {
   } {
     const normalized = sql.replace(/\s+/g, ' ').trim()
 
-    if (normalized === 'SELECT id, name, standard_type, start_period FROM ledgers WHERE id = ?') {
+    if (
+      normalized ===
+      'SELECT id, name, standard_type, start_period, current_period FROM ledgers WHERE id = ?'
+    ) {
       return {
         get: (ledgerId) => this.ledgers.find((ledger) => ledger.id === Number(ledgerId)),
         all: () => [],
@@ -583,6 +586,48 @@ describe('reporting service', () => {
       readTotal(balanceSheet.content.totals, 'liabilities') +
         readTotal(balanceSheet.content.totals, 'equity')
     ).toBe(149_300)
+  })
+
+  it('still picks january posted vouchers when ledger current period is earlier than stored start period', () => {
+    const db = createTestDb()
+    const testDb = db as never
+
+    db.ledgers.push({
+      id: 1,
+      name: '默认账套',
+      standard_type: 'enterprise',
+      start_period: '2026-03',
+      current_period: '2026-01'
+    })
+    db.subjects.push(
+      { ledger_id: 1, code: '1002', name: '银行存款', category: 'asset', balance_direction: 1 },
+      { ledger_id: 1, code: '4103', name: '本年利润', category: 'equity', balance_direction: -1 },
+      { ledger_id: 1, code: '6001', name: '主营业务收入', category: 'profit_loss', balance_direction: -1 }
+    )
+    db.vouchers.push({
+      id: 501,
+      ledger_id: 1,
+      period: '2026-01',
+      voucher_date: '2026-01-01',
+      status: 2,
+      is_carry_forward: 0
+    })
+    db.voucherEntries.push(
+      { id: 5011, voucher_id: 501, row_order: 1, subject_code: '1002', debit_amount: 10_000, credit_amount: 0, cash_flow_item_id: null },
+      { id: 5012, voucher_id: 501, row_order: 2, subject_code: '6001', debit_amount: 0, credit_amount: 10_000, cash_flow_item_id: null }
+    )
+
+    const balanceSheet = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      month: '2026-01',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-10T11:00:00.000Z'
+    })
+
+    expect(findTableRow(balanceSheet, '货币资金')?.cells[1]?.value).toBe(10_000)
+    expect(readTotal(balanceSheet.content.totals, 'assets')).toBe(10_000)
   })
 
   it('includes unposted vouchers in dynamic enterprise reports only when the option is checked', () => {
