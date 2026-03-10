@@ -225,6 +225,7 @@ export default function VoucherList(): JSX.Element {
   const currentUser = useAuthStore((state) => state.user)
   const openTab = useUIStore((state) => state.openTab)
   const activeTabId = useUIStore((state) => state.activeTabId)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const [allRows, setAllRows] = useState<VoucherRow[]>([])
   const [activeStatusTab, setActiveStatusTab] = useState<VoucherStatusTab>('all')
   const [selected, setSelected] = useState<number[]>([])
@@ -239,6 +240,7 @@ export default function VoucherList(): JSX.Element {
   const [periodStatus, setPeriodStatus] = useState<PeriodStatusSummary | null>(null)
   const [refreshSummary, setRefreshSummary] = useState('')
   const [lastRefreshAt, setLastRefreshAt] = useState('')
+  const [headerFade, setHeaderFade] = useState(0)
   const previousRowsRef = useRef<Map<number, VoucherRow> | null>(null)
   const selectAllRef = useRef<HTMLInputElement | null>(null)
 
@@ -694,183 +696,251 @@ export default function VoucherList(): JSX.Element {
     return '当前期间暂无凭证'
   }, [activeStatusTab])
 
+  const compactToolbarOpacity = headerFade
+  const compactToolbarTranslateY = `${(1 - headerFade) * -10}px`
+  const headerOpacity = 1 - headerFade
+  const headerTranslateY = `${headerFade * -14}px`
+
+  const renderActionButtons = (compact = false): JSX.Element => (
+    <div className={`flex flex-wrap ${compact ? 'gap-2' : 'gap-3'}`}>
+      {actionButtons.map((button) => (
+        <button
+          key={button.key}
+          type="button"
+          className={`glass-btn-secondary ${compact ? 'px-4 py-2 text-sm font-semibold' : ''}`}
+          onClick={button.onClick}
+          disabled={button.disabled}
+          title={button.title}
+        >
+          {button.label}
+        </button>
+      ))}
+    </div>
+  )
+
   return (
-    <div className="h-full flex flex-col p-4 gap-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          凭证管理
-        </h2>
-        <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-          当前筛选共 {displayRows.length} 张，已勾选 {selectedRows.length} 张
-        </div>
-      </div>
-
-      <div className="glass-panel-light p-3">
-        <div className="flex gap-2 flex-wrap">
-          {actionButtons.map((button) => (
-            <button
-              key={button.key}
-              className="glass-btn-secondary"
-              onClick={button.onClick}
-              disabled={button.disabled}
-              title={button.title}
-            >
-              {button.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {isClosedPeriod && (
+    <div
+      ref={containerRef}
+      className="h-full overflow-y-auto overflow-x-hidden pr-2"
+      onScroll={(event) => {
+        const nextFade = Math.max(0, Math.min(event.currentTarget.scrollTop / 120, 1))
+        setHeaderFade(nextFade)
+      }}
+    >
+      <div className="min-h-full flex flex-col gap-4 p-4">
         <div
-          className="glass-panel-light px-4 py-3 text-sm"
-          style={{ color: 'var(--color-danger)' }}
+          className="sticky top-0 z-[90]"
+          style={{
+            opacity: compactToolbarOpacity,
+            transform: `translateY(${compactToolbarTranslateY})`,
+            pointerEvents: compactToolbarOpacity > 0.05 ? 'auto' : 'none',
+            transition: 'opacity 180ms ease, transform 180ms ease'
+          }}
         >
-          {closedPeriodMessage}
-        </div>
-      )}
-
-      {refreshSummary && (
-        <div className="text-xs px-1" style={{ color: 'var(--color-text-secondary)' }}>
-          <span>{lastRefreshAt ? `最近刷新：${lastRefreshAt}；` : ''}</span>
-          <span>{refreshSummary}</span>
-        </div>
-      )}
-
-      <div className="glass-panel flex-1 overflow-hidden flex flex-col">
-        <div
-          className="border-b px-4 py-3"
-          style={{ borderColor: 'var(--color-glass-border-light)' }}
-        >
-          <div className="flex flex-wrap gap-2">
-            {tabMetrics.map((tab) => {
-              const isActive = activeStatusTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className="cursor-pointer rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors duration-200"
-                  style={{
-                    borderColor: isActive
-                      ? 'var(--color-primary)'
-                      : 'var(--color-glass-border-light)',
-                    background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255, 255, 255, 0.45)',
-                    color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)'
-                  }}
-                  onClick={() => {
-                    setActiveStatusTab(tab.id)
-                    setMessage(null)
-                  }}
-                >
-                  {tab.label}
-                  <span className="ml-1 opacity-80">{tab.total}</span>
-                </button>
-              )
-            })}
+          <div
+            className="w-full p-4 flex flex-wrap items-start justify-start gap-4 rounded-b-2xl border-b"
+            style={{
+              backdropFilter: 'blur(24px) saturate(160%)',
+              WebkitBackdropFilter: 'blur(24px) saturate(160%)',
+              background:
+                'linear-gradient(180deg, rgba(248, 250, 252, 0.96) 0%, rgba(248, 250, 252, 0.9) 72%, rgba(248, 250, 252, 0.82) 100%)',
+              borderColor: 'rgba(148, 163, 184, 0.18)',
+              boxShadow: '0 18px 42px rgba(15, 23, 42, 0.16)'
+            }}
+          >
+            {renderActionButtons(true)}
           </div>
         </div>
 
-        <div className="flex-1 overflow-x-auto">
-          <div className="min-w-[1120px] h-full flex flex-col">
-            <div
-              className="grid py-2 px-3 border-b text-sm font-semibold"
-              style={{
-                gridTemplateColumns: VOUCHER_GRID_TEMPLATE,
-                borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-primary)'
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  className="h-5 w-5 shrink-0"
-                  checked={allVisibleSelected}
-                  onChange={toggleSelectAll}
-                  disabled={displayRows.length === 0}
-                  aria-label="全选当前列表凭证"
-                />
-                <span>选择</span>
+        <div
+          className="glass-panel-light shrink-0 p-4 flex flex-wrap items-start justify-between gap-4"
+          style={{
+            opacity: headerOpacity,
+            transform: `translateY(${headerTranslateY})`,
+            transition: 'opacity 180ms ease, transform 180ms ease'
+          }}
+        >
+          <div className="space-y-2">
+            <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+              凭证管理
+            </h2>
+            <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              当前账套：{currentLedger?.name || '未选择'} | 会计期间：{currentPeriod || '未选择'}
+            </p>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              支持按状态筛选、批量审核、记账、反审核、反记账、删除，并可双击凭证进入查看或编辑流程。
+            </p>
+          </div>
+
+          {renderActionButtons()}
+        </div>
+
+        <div className="glass-panel-light shrink-0 p-4 flex flex-col gap-3">
+          <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            当前筛选共 {displayRows.length} 张，已勾选 {selectedRows.length} 张
+          </div>
+
+          {isClosedPeriod && (
+            <div className="text-sm" style={{ color: 'var(--color-danger)' }}>
+              {closedPeriodMessage}
+            </div>
+          )}
+
+          {refreshSummary && (
+            <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+              <span>{lastRefreshAt ? `最近刷新：${lastRefreshAt}；` : ''}</span>
+              <span>{refreshSummary}</span>
+            </div>
+          )}
+        </div>
+
+        {message && (
+          <div
+            className="text-sm px-2"
+            aria-live="polite"
+            style={{
+              color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
+            }}
+          >
+            {message.text}
+          </div>
+        )}
+
+        <div className="glass-panel min-h-[520px] flex-1 overflow-hidden flex flex-col">
+          <div
+            className="border-b px-4 py-3"
+            style={{ borderColor: 'var(--color-glass-border-light)' }}
+          >
+            <div className="flex flex-wrap gap-2">
+              {tabMetrics.map((tab) => {
+                const isActive = activeStatusTab === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className="cursor-pointer rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors duration-200"
+                    style={{
+                      borderColor: isActive
+                        ? 'var(--color-primary)'
+                        : 'var(--color-glass-border-light)',
+                      background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255, 255, 255, 0.45)',
+                      color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)'
+                    }}
+                    onClick={() => {
+                      setActiveStatusTab(tab.id)
+                      setMessage(null)
+                    }}
+                  >
+                    {tab.label}
+                    <span className="ml-1 opacity-80">{tab.total}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-x-auto">
+            <div className="min-w-[1120px] h-full flex flex-col">
+              <div
+                className="grid py-2 px-3 border-b text-sm font-semibold"
+                style={{
+                  gridTemplateColumns: VOUCHER_GRID_TEMPLATE,
+                  borderColor: 'var(--color-glass-border-light)',
+                  color: 'var(--color-text-primary)'
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={selectAllRef}
+                    type="checkbox"
+                    className="h-5 w-5 shrink-0"
+                    checked={allVisibleSelected}
+                    onChange={toggleSelectAll}
+                    disabled={displayRows.length === 0}
+                    aria-label="全选当前列表凭证"
+                  />
+                  <span>选择</span>
+                </div>
+                <div>日期</div>
+                <div>凭证号</div>
+                <div>状态</div>
+                <div>摘要</div>
+                <div className="text-right">借方合计</div>
+                <div className="text-right">贷方合计</div>
+                <div className="text-right">期间</div>
               </div>
-              <div>日期</div>
-              <div>凭证号</div>
-              <div>状态</div>
-              <div>摘要</div>
-              <div className="text-right">借方合计</div>
-              <div className="text-right">贷方合计</div>
-              <div className="text-right">期间</div>
-            </div>
 
-            <div className="flex-1 overflow-y-auto">
-              {displayRows.map((row) => (
-                <div
-                  key={row.id}
-                  className="grid py-2 px-3 border-b text-sm cursor-pointer transition-colors duration-200"
-                  style={{
-                    gridTemplateColumns: VOUCHER_GRID_TEMPLATE,
-                    borderColor: 'var(--color-glass-border-light)',
-                    color:
-                      row.status === 3
-                        ? 'var(--color-text-muted)'
-                        : 'var(--color-text-secondary)',
-                    background:
-                      row.status === 3 ? 'rgba(220, 38, 38, 0.035)' : 'transparent'
-                  }}
-                  onDoubleClick={() => openVoucherForEdit(row.id)}
-                >
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      className="h-5 w-5 shrink-0"
-                      checked={selected.includes(row.id)}
-                      onChange={() => toggleSelection(row.id)}
-                      aria-label={`选择凭证 ${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`}
-                    />
+              <div className="flex-1 overflow-y-auto">
+                {displayRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="grid py-2 px-3 border-b text-sm cursor-pointer transition-colors duration-200"
+                    style={{
+                      gridTemplateColumns: VOUCHER_GRID_TEMPLATE,
+                      borderColor: 'var(--color-glass-border-light)',
+                      color:
+                        row.status === 3
+                          ? 'var(--color-text-muted)'
+                          : 'var(--color-text-secondary)',
+                      background:
+                        row.status === 3 ? 'rgba(220, 38, 38, 0.035)' : 'transparent'
+                    }}
+                    onDoubleClick={() => openVoucherForEdit(row.id)}
+                  >
+                    <div className="flex items-center">
+                      <input
+                        type="checkbox"
+                        className="h-5 w-5 shrink-0"
+                        checked={selected.includes(row.id)}
+                        onChange={() => toggleSelection(row.id)}
+                        aria-label={`选择凭证 ${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`}
+                      />
+                    </div>
+                    <div>{row.voucher_date}</div>
+                    <div>
+                      {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
+                    </div>
+                    <div>
+                      <span
+                        className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold"
+                        style={STATUS_BADGE_STYLE[row.status]}
+                      >
+                        {STATUS_TEXT[row.status]}
+                      </span>
+                    </div>
+                    <div className="truncate pr-4" title={row.first_summary || '无摘要'}>
+                      {row.first_summary || '-'}
+                    </div>
+                    <div className="text-right">
+                      {new Decimal(row.total_debit).div(100).toFixed(2)}
+                    </div>
+                    <div className="text-right">
+                      {new Decimal(row.total_credit).div(100).toFixed(2)}
+                    </div>
+                    <div className="text-right">{row.period}</div>
                   </div>
-                  <div>{row.voucher_date}</div>
-                  <div>
-                    {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
-                  </div>
-                  <div>
-                    <span
-                      className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold"
-                      style={STATUS_BADGE_STYLE[row.status]}
-                    >
-                      {STATUS_TEXT[row.status]}
-                    </span>
-                  </div>
-                  <div className="truncate pr-4" title={row.first_summary || '无摘要'}>
-                    {row.first_summary || '-'}
-                  </div>
-                  <div className="text-right">
-                    {new Decimal(row.total_debit).div(100).toFixed(2)}
-                  </div>
-                  <div className="text-right">
-                    {new Decimal(row.total_credit).div(100).toFixed(2)}
-                  </div>
-                  <div className="text-right">{row.period}</div>
-                </div>
-              ))}
+                ))}
 
-              {displayRows.length === 0 && !loading && (
-                <div
-                  className="py-10 text-center text-sm"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  {emptyText}
-                </div>
-              )}
-            </div>
+                {displayRows.length === 0 && !loading && (
+                  <div
+                    className="py-10 text-center text-sm"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    {emptyText}
+                  </div>
+                )}
+              </div>
 
-            <div
-              className="flex justify-end gap-6 px-4 py-2 border-t text-sm"
-              style={{
-                borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-secondary)'
-              }}
-            >
-              <span>{`借方合计：${totals.debit}`}</span>
-              <span>{`贷方合计：${totals.credit}`}</span>
+              <div
+                className="flex justify-end gap-6 px-4 py-2 border-t text-sm"
+                style={{
+                  borderColor: 'var(--color-glass-border-light)',
+                  color: 'var(--color-text-secondary)'
+                }}
+              >
+                <span>{`借方合计：${totals.debit}`}</span>
+                <span>{`贷方合计：${totals.credit}`}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -952,18 +1022,6 @@ export default function VoucherList(): JSX.Element {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {message && (
-        <div
-          className="text-sm px-2"
-          aria-live="polite"
-          style={{
-            color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
-          }}
-        >
-          {message.text}
         </div>
       )}
     </div>
