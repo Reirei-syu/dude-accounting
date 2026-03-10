@@ -30,6 +30,26 @@ const TARGET_ROOT_PREFIXES: Record<LedgerStandardType, string[]> = {
   npo: ['3101', '3102']
 }
 
+function isSourceCategory(standardType: LedgerStandardType, category: string): boolean {
+  if (standardType === 'npo') {
+    return category === 'income' || category === 'expense' || category === 'profit_loss'
+  }
+
+  return category === 'profit_loss'
+}
+
+function isTargetCategory(standardType: LedgerStandardType, category: string): boolean {
+  if (standardType === 'npo') {
+    return category === 'net_assets' || category === 'equity'
+  }
+
+  return category === 'equity'
+}
+
+function getSourceSubjectLabel(standardType: LedgerStandardType): string {
+  return standardType === 'npo' ? '末级收入/费用科目' : '末级损益科目'
+}
+
 function isCodeWithinPrefixes(code: string, prefixes: string[]): boolean {
   return prefixes.some((prefix) => code === prefix || code.startsWith(prefix))
 }
@@ -117,10 +137,16 @@ export default function PLCarryForward(): JSX.Element {
   const hasChildrenCodes = useMemo(() => buildHasChildrenCodes(subjects), [subjects])
 
   const sourceSubjects = useMemo(() => {
+    if (!currentLedger) return []
+
     return subjects
-      .filter((subject) => subject.category === 'profit_loss' && !hasChildrenCodes.has(subject.code))
+      .filter(
+        (subject) =>
+          isSourceCategory(currentLedger.standard_type, subject.category) &&
+          !hasChildrenCodes.has(subject.code)
+      )
       .sort((left, right) => left.code.localeCompare(right.code))
-  }, [hasChildrenCodes, subjects])
+  }, [currentLedger, hasChildrenCodes, subjects])
 
   const targetSubjects = useMemo(() => {
     if (!currentLedger) return []
@@ -128,7 +154,7 @@ export default function PLCarryForward(): JSX.Element {
     return subjects
       .filter(
         (subject) =>
-          subject.category === 'equity' &&
+          isTargetCategory(currentLedger.standard_type, subject.category) &&
           !hasChildrenCodes.has(subject.code) &&
           isCodeWithinPrefixes(subject.code, TARGET_ROOT_PREFIXES[currentLedger.standard_type])
       )
@@ -187,7 +213,8 @@ export default function PLCarryForward(): JSX.Element {
         const nextSourceSubjects = typedSubjects
           .filter(
             (subject) =>
-              subject.category === 'profit_loss' && !nextHasChildrenCodes.has(subject.code)
+              isSourceCategory(currentLedger.standard_type, subject.category) &&
+              !nextHasChildrenCodes.has(subject.code)
           )
           .sort((left, right) => left.code.localeCompare(right.code))
 
@@ -314,7 +341,7 @@ export default function PLCarryForward(): JSX.Element {
     if (missingTargetSubjects.length > 0) {
       setMessage({
         type: 'error',
-        text: `以下损益科目尚未选择结转目标：${formatSubjectList(missingTargetSubjects)}`
+          text: `以下${getSourceSubjectLabel(currentLedger.standard_type)}尚未选择结转目标：${formatSubjectList(missingTargetSubjects)}`
       })
       return
     }
@@ -363,10 +390,12 @@ export default function PLCarryForward(): JSX.Element {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-            期末损益结转设置
+          期末损益结转设置
           </h2>
           <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-            为末级损益类科目维护结转目标。系统执行损益结转时，会严格按这里保存的规则生成结转凭证。
+          {currentLedger?.standard_type === 'npo'
+            ? '为末级收入/费用科目维护结转目标。系统执行期末结转时，会严格按这里保存的规则生成结转凭证。'
+            : '为末级损益类科目维护结转目标。系统执行损益结转时，会严格按这里保存的规则生成结转凭证。'}
           </p>
         </div>
         <div className="flex items-center gap-3 flex-wrap">
@@ -439,7 +468,9 @@ export default function PLCarryForward(): JSX.Element {
                 </span>
               </div>
               <div>
-                <span style={{ color: 'var(--color-text-muted)' }}>末级损益科目：</span>
+                <span style={{ color: 'var(--color-text-muted)' }}>
+                  {getSourceSubjectLabel(currentLedger.standard_type)}：
+                </span>
                 <span style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
                   {sourceSubjects.length}
                 </span>
@@ -513,7 +544,9 @@ export default function PLCarryForward(): JSX.Element {
                 color: 'var(--color-text-muted)'
               }}
             >
-              仅末级损益科目参与设置。若你在“会计科目设置”中新增了自定义末级损益科目，需要在这里补齐结转目标后，期末损益结转才会完整覆盖。
+                {currentLedger?.standard_type === 'npo'
+                  ? '仅末级收入/费用科目参与设置。若你在“会计科目设置”中新增了自定义末级收入或费用科目，需要在这里补齐结转目标后，期末结转才会完整覆盖。'
+                  : '仅末级损益科目参与设置。若你在“会计科目设置”中新增了自定义末级损益科目，需要在这里补齐结转目标后，期末损益结转才会完整覆盖。'}
               如需逐个科目单独维护，请使用顶部“自定义编辑”按钮进入独立交互框。
             </div>
 
@@ -527,7 +560,7 @@ export default function PLCarryForward(): JSX.Element {
                       color: 'var(--color-text-primary)'
                     }}
                   >
-                    <th className="py-2 px-3 font-semibold">末级损益科目</th>
+                  <th className="py-2 px-3 font-semibold">{getSourceSubjectLabel(currentLedger.standard_type)}</th>
                     <th className="py-2 px-3 font-semibold">结转目标科目</th>
                     <th className="py-2 px-3 font-semibold">当前状态</th>
                   </tr>
@@ -586,7 +619,7 @@ export default function PLCarryForward(): JSX.Element {
                   className="py-12 text-center text-sm"
                   style={{ color: 'var(--color-text-muted)' }}
                 >
-                  当前账套暂无可配置的末级损益科目。
+                当前账套暂无可配置的{getSourceSubjectLabel(currentLedger?.standard_type ?? 'enterprise')}。
                 </div>
               )}
             </div>
@@ -623,7 +656,7 @@ export default function PLCarryForward(): JSX.Element {
                           color: 'var(--color-text-primary)'
                         }}
                       >
-                        <th className="py-2 px-3 font-semibold">末级损益科目</th>
+                  <th className="py-2 px-3 font-semibold">{getSourceSubjectLabel(currentLedger?.standard_type ?? 'enterprise')}</th>
                         <th className="py-2 px-3 font-semibold">期末结转目标</th>
                         <th className="py-2 px-3 font-semibold">状态</th>
                       </tr>

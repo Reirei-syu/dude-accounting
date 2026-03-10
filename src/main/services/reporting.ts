@@ -3,6 +3,7 @@ import path from 'node:path'
 import type Database from 'better-sqlite3'
 import ExcelJS from 'exceljs'
 import PDFDocument from 'pdfkit'
+import { isCarryForwardSourceCategory } from '../database/subjectCategoryRules'
 import { buildTimestampToken, ensureDirectory } from './fileIntegrity'
 
 export type AccountingStandardType = 'enterprise' | 'npo'
@@ -662,7 +663,7 @@ function buildEnterpriseBalancePoint(
     targetDate
   )
   const unsettledProfitLossNet = subjects
-    .filter((subject) => subject.category === 'profit_loss')
+    .filter((subject) => isCarryForwardSourceCategory(ledger.standard_type, subject.category))
     .reduce((sum, subject) => {
       const amount = balanceMap.get(subject.code) ?? 0
       return sum + (subject.balance_direction === -1 ? amount : -amount)
@@ -1365,7 +1366,9 @@ function buildBalanceSheetSnapshot(
   )
   const entriesBySubject = groupEntriesBySubject(entries)
 
-  const profitLossSubjects = subjects.filter((subject) => subject.category === 'profit_loss')
+  const profitLossSubjects = subjects.filter((subject) =>
+    isCarryForwardSourceCategory(ledger.standard_type, subject.category)
+  )
 
   const closingBalanceMap = buildSubjectBalanceMap(
     subjects,

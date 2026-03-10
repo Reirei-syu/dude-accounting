@@ -1,7 +1,16 @@
-import { useMemo, useState, type FormEvent, type JSX } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type JSX } from 'react'
 import Decimal from 'decimal.js'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
+
+interface VoucherQueryProps {
+  presetDateFrom?: string
+  presetDateTo?: string
+  presetKeyword?: string
+  presetVoucherId?: number
+  autoQuery?: boolean
+  queryRequestKey?: number
+}
 
 interface VoucherRow {
   id: number
@@ -46,48 +55,97 @@ function getCurrentYearDateRange(): { from: string; to: string } {
   }
 }
 
-export default function VoucherQuery(): JSX.Element {
+function formatAmount(amountCents: number): string {
+  return new Decimal(amountCents).div(100).toFixed(2)
+}
+
+export default function VoucherQuery(props: VoucherQueryProps): JSX.Element {
   const { currentLedger } = useLedgerStore()
   const openTab = useUIStore((state) => state.openTab)
   const { from, to } = useMemo(getDefaultDateRange, [])
 
-  const [dateFrom, setDateFrom] = useState(from)
-  const [dateTo, setDateTo] = useState(to)
-  const [keyword, setKeyword] = useState('')
+  const [dateFrom, setDateFrom] = useState(props.presetDateFrom ?? from)
+  const [dateTo, setDateTo] = useState(props.presetDateTo ?? to)
+  const [keyword, setKeyword] = useState(props.presetKeyword ?? '')
+  const [voucherId, setVoucherId] = useState<number | undefined>(props.presetVoucherId)
   const [rows, setRows] = useState<VoucherRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const handleQuery = async (): Promise<void> => {
+  const executeQuery = async (overrides?: {
+    dateFrom?: string
+    dateTo?: string
+    keyword?: string
+    voucherId?: number
+  }): Promise<void> => {
     setError('')
     if (!currentLedger) {
+      setRows([])
       setError('请先选择账套')
       return
     }
     if (!window.electron) {
+      setRows([])
       setError('浏览器预览模式不支持查询')
       return
     }
+
+    const finalDateFrom = overrides?.dateFrom ?? dateFrom
+    const finalDateTo = overrides?.dateTo ?? dateTo
+    const finalKeyword = overrides?.keyword ?? keyword
+    const finalVoucherId = overrides?.voucherId ?? voucherId
 
     setLoading(true)
     try {
       const list = await window.api.voucher.list({
         ledgerId: currentLedger.id,
-        dateFrom,
-        dateTo,
-        keyword: keyword.trim() || undefined
+        voucherId: finalVoucherId,
+        dateFrom: finalDateFrom,
+        dateTo: finalDateTo,
+        keyword: finalKeyword.trim() || undefined
       })
       setRows(list as VoucherRow[])
     } catch (err) {
+      setRows([])
       setError(err instanceof Error ? err.message : '查询失败')
     } finally {
       setLoading(false)
     }
   }
 
+  useEffect(() => {
+    const nextDateFrom = props.presetDateFrom ?? from
+    const nextDateTo = props.presetDateTo ?? to
+    const nextKeyword = props.presetKeyword ?? ''
+
+    setDateFrom(nextDateFrom)
+    setDateTo(nextDateTo)
+    setKeyword(nextKeyword)
+    setVoucherId(props.presetVoucherId)
+
+    if (props.autoQuery) {
+      void executeQuery({
+        dateFrom: nextDateFrom,
+        dateTo: nextDateTo,
+        keyword: nextKeyword,
+        voucherId: props.presetVoucherId
+      })
+    }
+  }, [
+    currentLedger?.id,
+    from,
+    props.autoQuery,
+    props.presetDateFrom,
+    props.presetDateTo,
+    props.presetKeyword,
+    props.presetVoucherId,
+    props.queryRequestKey,
+    to
+  ])
+
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault()
-    void handleQuery()
+    void executeQuery()
   }
 
   const handleSelectCurrentYear = (): void => {
@@ -131,7 +189,7 @@ export default function VoucherQuery(): JSX.Element {
           type="date"
           className="glass-input px-3 py-2 text-sm"
           value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
+          onChange={(event) => setDateFrom(event.target.value)}
         />
         <label
           className="text-sm"
@@ -145,7 +203,7 @@ export default function VoucherQuery(): JSX.Element {
           type="date"
           className="glass-input px-3 py-2 text-sm"
           value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
+          onChange={(event) => setDateTo(event.target.value)}
         />
         <button
           type="button"
@@ -160,7 +218,7 @@ export default function VoucherQuery(): JSX.Element {
           className="glass-input px-3 py-2 text-sm min-w-[220px]"
           placeholder="摘要关键字（模糊查询）"
           value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
+          onChange={(event) => setKeyword(event.target.value)}
           aria-label="摘要关键字"
         />
         <button className="glass-btn-secondary px-5 py-2" type="submit">
@@ -188,7 +246,7 @@ export default function VoucherQuery(): JSX.Element {
               {rows.map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-12 py-2 px-3 border-b text-sm cursor-pointer"
+                  className="grid grid-cols-12 py-2 px-3 border-b text-sm cursor-pointer transition-colors hover:bg-black/5"
                   style={{
                     borderColor: 'var(--color-glass-border-light)',
                     color: 'var(--color-text-secondary)'
@@ -200,12 +258,8 @@ export default function VoucherQuery(): JSX.Element {
                     {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
                   </div>
                   <div className="col-span-2">{STATUS_TEXT[row.status]}</div>
-                  <div className="col-span-3 text-right">
-                    {new Decimal(row.total_debit).div(100).toFixed(2)}
-                  </div>
-                  <div className="col-span-3 text-right">
-                    {new Decimal(row.total_credit).div(100).toFixed(2)}
-                  </div>
+                  <div className="col-span-3 text-right">{formatAmount(row.total_debit)}</div>
+                  <div className="col-span-3 text-right">{formatAmount(row.total_credit)}</div>
                 </div>
               ))}
               {rows.length === 0 && !loading && (

@@ -307,6 +307,7 @@ interface VoucherAPI {
   getNextNumber: (ledgerId: number, period: string) => Promise<number>
   list: (query: {
     ledgerId: number
+    voucherId?: number
     period?: string
     dateFrom?: string
     dateTo?: string
@@ -780,6 +781,59 @@ interface ReportingAPI {
   }>
 }
 
+interface BookQueryAPI {
+  listSubjectBalances: (query: {
+    ledgerId: number
+    startDate: string
+    endDate: string
+    keyword?: string
+    includeUnpostedVouchers?: boolean
+    includeZeroBalance?: boolean
+  }) => Promise<
+    Array<{
+      subject_code: string
+      subject_name: string
+      category: string
+      balance_direction: number
+      level: number
+      is_leaf: 0 | 1
+      opening_debit_amount: number
+      opening_credit_amount: number
+      period_debit_amount: number
+      period_credit_amount: number
+      ending_debit_amount: number
+      ending_credit_amount: number
+    }>
+  >
+  getDetailLedger: (query: {
+    ledgerId: number
+    subjectCode: string
+    startDate: string
+    endDate: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<{
+    subject: {
+      code: string
+      name: string
+      balance_direction: number
+    }
+    startDate: string
+    endDate: string
+    rows: Array<{
+      row_type: 'opening' | 'entry'
+      voucher_id: number | null
+      voucher_date: string
+      voucher_number: number | null
+      voucher_word: string | null
+      summary: string
+      debit_amount: number
+      credit_amount: number
+      balance_amount: number
+      balance_side: 'debit' | 'credit' | 'flat'
+    }>
+  }>
+}
+
 interface DudeAPI {
   auth: AuthAPI
   ledger: LedgerAPI
@@ -796,6 +850,7 @@ interface DudeAPI {
   archive: ArchiveAPI
   eVoucher: ElectronicVoucherAPI
   reporting: ReportingAPI
+  bookQuery: BookQueryAPI
 }
 
 declare global {

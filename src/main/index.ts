@@ -18,6 +18,7 @@ import { registerBackupHandlers } from './ipc/backup'
 import { registerArchiveHandlers } from './ipc/archive'
 import { registerElectronicVoucherHandlers } from './ipc/eVoucher'
 import { registerReportingHandlers } from './ipc/reporting'
+import { registerBookQueryHandlers } from './ipc/bookQuery'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -76,6 +77,7 @@ app.whenReady().then(() => {
   registerArchiveHandlers()
   registerElectronicVoucherHandlers()
   registerReportingHandlers()
+  registerBookQueryHandlers()
 
   createWindow()
 

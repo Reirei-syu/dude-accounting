@@ -250,6 +250,13 @@ Existing Tables:
 - `system_settings`
 - `report_snapshots`
 
+Subject Category Rules:
+
+- `enterprise` 账套保持六大类：`asset`、`liability`、`common`、`equity`、`cost`、`profit_loss`
+- `npo` 账套改为五大类：`asset`、`liability`、`net_assets`、`income`、`expense`
+- 旧版 `npo` 账套遗留的 `equity` 与 `profit_loss` 必须在迁移时分别改写为 `net_assets` 与 `income/expense`
+- `npo` 账套的期末结转来源科目只允许来自 `income` 与 `expense`，结转目标只允许来自 `net_assets`
+
 Compliance Tables Added / To Be Added:
 
 - `operation_logs`
@@ -283,6 +290,7 @@ Current:
 - `initialBalance:*`
 - `period:*`
 - `settings:*`
+- `bookQuery:listSubjectBalances/getDetailLedger`
 - `reporting:generate/list/getDetail/delete/export`
 
 In-flight:
@@ -317,6 +325,10 @@ In-flight:
 - 民间非营利组织报表模板需严格参照《民间非营利组织会计制度》会民非 01/02/03 表的官方制式，查询、生成预览和导出三处保持同一表格结构。
 
 ---
+
+Additional NPO Constraint:
+
+- `npo` 账套的基础分类必须固定为“资产、负债、净资产、收入、费用”，不得继续把收入与费用并入单一 `profit_loss`，也不得继续将净资产存成 `equity`
 
 ## 9. Current Compliance Gaps
 

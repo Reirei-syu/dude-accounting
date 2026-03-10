@@ -1,5 +1,10 @@
 ﻿import Database from 'better-sqlite3'
 
+import {
+  isCarryForwardSourceCategory,
+  isCarryForwardTargetCategory
+} from '../database/subjectCategoryRules'
+
 export interface PLCarryForwardRuleView {
   id: number
   fromSubjectCode: string
@@ -207,9 +212,12 @@ function resolveInheritedTargetFromRules(
 }
 
 function autoAttachInheritedCarryForwardRules(db: Database.Database, ledgerId: number): void {
+  const ledger = getLedgerRow(db, ledgerId)
   const subjects = listLedgerSubjectsWithChildren(db, ledgerId)
   const sourceSubjects = subjects.filter(
-    (subject) => subject.category === 'profit_loss' && subject.has_children === 0
+    (subject) =>
+      isCarryForwardSourceCategory(ledger.standard_type, subject.category) &&
+      subject.has_children === 0
   )
   const rules = listStoredCarryForwardRules(db, ledgerId)
   const existingSourceCodes = new Set(rules.map((rule) => rule.from_subject_code))
@@ -232,7 +240,7 @@ function autoAttachInheritedCarryForwardRules(db: Database.Database, ledgerId: n
       }
 
       const parent = subjectByCode.get(parentCode)
-      if (!parent || parent.category !== 'profit_loss') {
+      if (!parent || !isCarryForwardSourceCategory(ledger.standard_type, parent.category)) {
         continue
       }
 
@@ -313,12 +321,14 @@ function assertCarryForwardRulesConfigured(
   const subjects = listLedgerSubjectsWithChildren(db, ledgerId)
   const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
   const sourceSubjects = subjects.filter(
-    (subject) => subject.category === 'profit_loss' && subject.has_children === 0
+    (subject) =>
+      isCarryForwardSourceCategory(ledger.standard_type, subject.category) &&
+      subject.has_children === 0
   )
   const targetPrefixes = getAllowedTargetPrefixes(ledger.standard_type)
   const targetSubjects = subjects.filter(
     (subject) =>
-      subject.category === 'equity' &&
+      isCarryForwardTargetCategory(ledger.standard_type, subject.category) &&
       subject.has_children === 0 &&
       isSubjectWithinPrefixes(subject.code, targetPrefixes)
   )

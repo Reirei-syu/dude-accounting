@@ -538,6 +538,7 @@ export function registerVoucherHandlers(): void {
       event,
       query: {
         ledgerId: number
+        voucherId?: number
         period?: string
         dateFrom?: string
         dateTo?: string
@@ -549,6 +550,11 @@ export function registerVoucherHandlers(): void {
 
       const whereClauses = ['v.ledger_id = ?']
       const params: Array<string | number> = [query.ledgerId]
+
+      if (typeof query.voucherId === 'number') {
+        whereClauses.push('v.id = ?')
+        params.push(query.voucherId)
+      }
 
       if (query.status === 'all') {
         // Explicitly include all voucher states, including deleted.

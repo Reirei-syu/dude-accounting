@@ -1,4 +1,9 @@
 import Database from 'better-sqlite3'
+import {
+  getCarryForwardSourceCategories,
+  type AccountingStandardType,
+  type SubjectCategory
+} from './subjectCategoryRules'
 
 export function seedAdminUser(db: Database.Database): void {
   const existing = db.prepare('SELECT id FROM users WHERE username = ?').get('admin')
@@ -26,7 +31,7 @@ export function seedAdminUser(db: Database.Database): void {
 interface SubjectDef {
   code: string
   name: string
-  category: 'asset' | 'liability' | 'common' | 'equity' | 'cost' | 'profit_loss'
+  category: SubjectCategory
   balance_direction: number // 1=debit, -1=credit
   parent_code?: string | null
   level?: number
@@ -34,8 +39,6 @@ interface SubjectDef {
   is_system?: boolean
   is_cash_flow?: boolean
 }
-
-type AccountingStandardType = 'enterprise' | 'npo'
 type CashFlowEntryDirection = 'inflow' | 'outflow'
 
 type CashFlowMappingTemplate = {
@@ -277,25 +280,25 @@ const NPO_SUBJECTS: SubjectDef[] = [
   { code: '2601', name: '受托代理负债', category: 'liability', balance_direction: -1 },
 
   // 净资产类
-  { code: '3101', name: '非限定性净资产', category: 'equity', balance_direction: -1 },
-  { code: '3102', name: '限定性净资产', category: 'equity', balance_direction: -1 },
-  { code: '3201', name: '以前年度净资产调整', category: 'equity', balance_direction: -1 },
+  { code: '3101', name: '非限定性净资产', category: 'net_assets', balance_direction: -1 },
+  { code: '3102', name: '限定性净资产', category: 'net_assets', balance_direction: -1 },
+  { code: '3201', name: '以前年度净资产调整', category: 'net_assets', balance_direction: -1 },
 
   // 收入类（一级）
   {
     code: '4101',
     name: '捐赠收入',
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1,
     has_auxiliary: true
   },
-  { code: '4201', name: '会费收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '4301', name: '提供服务收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '4401', name: '政府补助收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '4501', name: '商品销售收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '4601', name: '投资收益', category: 'profit_loss', balance_direction: -1 },
-  { code: '4701', name: '总部拨款收入', category: 'profit_loss', balance_direction: -1 },
-  { code: '4901', name: '其他收入', category: 'profit_loss', balance_direction: -1 },
+  { code: '4201', name: '会费收入', category: 'income', balance_direction: -1 },
+  { code: '4301', name: '提供服务收入', category: 'income', balance_direction: -1 },
+  { code: '4401', name: '政府补助收入', category: 'income', balance_direction: -1 },
+  { code: '4501', name: '商品销售收入', category: 'income', balance_direction: -1 },
+  { code: '4601', name: '投资收益', category: 'income', balance_direction: -1 },
+  { code: '4701', name: '总部拨款收入', category: 'income', balance_direction: -1 },
+  { code: '4901', name: '其他收入', category: 'income', balance_direction: -1 },
 
   // 收入类（二级：限定性/非限定性）
   {
@@ -303,7 +306,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '捐赠收入-非限定性',
     parent_code: '4101',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1,
     has_auxiliary: true
   },
@@ -312,7 +315,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '捐赠收入-限定性',
     parent_code: '4101',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1,
     has_auxiliary: true
   },
@@ -321,7 +324,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '会费收入-非限定性',
     parent_code: '4201',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -329,7 +332,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '会费收入-限定性',
     parent_code: '4201',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -337,7 +340,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '提供服务收入-非限定性',
     parent_code: '4301',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -345,7 +348,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '提供服务收入-限定性',
     parent_code: '4301',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -353,7 +356,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '政府补助收入-非限定性',
     parent_code: '4401',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -361,7 +364,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '政府补助收入-限定性',
     parent_code: '4401',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -369,7 +372,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '商品销售收入-非限定性',
     parent_code: '4501',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -377,7 +380,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '商品销售收入-限定性',
     parent_code: '4501',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -385,7 +388,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '投资收益-非限定性',
     parent_code: '4601',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -393,7 +396,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '投资收益-限定性',
     parent_code: '4601',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -401,7 +404,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '总部拨款收入-非限定性',
     parent_code: '4701',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -409,7 +412,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '总部拨款收入-限定性',
     parent_code: '4701',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -417,7 +420,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '其他收入-非限定性',
     parent_code: '4901',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
   {
@@ -425,7 +428,7 @@ const NPO_SUBJECTS: SubjectDef[] = [
     name: '其他收入-限定性',
     parent_code: '4901',
     level: 2,
-    category: 'profit_loss',
+    category: 'income',
     balance_direction: -1
   },
 
@@ -433,16 +436,16 @@ const NPO_SUBJECTS: SubjectDef[] = [
   {
     code: '5101',
     name: '业务活动成本',
-    category: 'profit_loss',
+    category: 'expense',
     balance_direction: 1,
     has_auxiliary: true
   },
-  { code: '5201', name: '税金及附加', category: 'profit_loss', balance_direction: 1 },
-  { code: '5301', name: '管理费用', category: 'profit_loss', balance_direction: 1 },
-  { code: '5401', name: '筹资费用', category: 'profit_loss', balance_direction: 1 },
-  { code: '5501', name: '资产减值损失', category: 'profit_loss', balance_direction: 1 },
-  { code: '5601', name: '所得税费用', category: 'profit_loss', balance_direction: 1 },
-  { code: '5901', name: '其他费用', category: 'profit_loss', balance_direction: 1 }
+  { code: '5201', name: '税金及附加', category: 'expense', balance_direction: 1 },
+  { code: '5301', name: '管理费用', category: 'expense', balance_direction: 1 },
+  { code: '5401', name: '筹资费用', category: 'expense', balance_direction: 1 },
+  { code: '5501', name: '资产减值损失', category: 'expense', balance_direction: 1 },
+  { code: '5601', name: '所得税费用', category: 'expense', balance_direction: 1 },
+  { code: '5901', name: '其他费用', category: 'expense', balance_direction: 1 }
 ]
 
 const ENTERPRISE_CASH_SUBJECT_CODES = ['1001', '1002', '1012']
@@ -774,7 +777,10 @@ export function seedPLCarryForwardRulesForLedger(
   )
 
   const subjectDefs = getStandardSubjects(standardType)
-  const plCodes = subjectDefs.filter((s) => s.category === 'profit_loss').map((s) => s.code)
+  const sourceCategories = new Set(getCarryForwardSourceCategories(standardType))
+  const plCodes = subjectDefs
+    .filter((subject) => sourceCategories.has(subject.category))
+    .map((subject) => subject.code)
 
   const insertMany = db.transaction(() => {
     for (const code of plCodes) {

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { isCarryForwardSourceCategory } from '../database/subjectCategoryRules'
 
 export const AUXILIARY_CATEGORY_VALUES = [
   'customer',
@@ -45,6 +46,16 @@ function requireLedger(db: Database.Database, ledgerId: number): void {
   if (!ledger) {
     throw new Error('账套不存在')
   }
+}
+
+function getLedgerStandardType(db: Database.Database, ledgerId: number): 'enterprise' | 'npo' {
+  const ledger = db.prepare(`SELECT standard_type FROM ledgers WHERE id = ?`).get(ledgerId) as
+    | { standard_type: 'enterprise' | 'npo' }
+    | undefined
+  if (!ledger) {
+    throw new Error('账套不存在')
+  }
+  return ledger.standard_type
 }
 
 function requireSubjectById(db: Database.Database, subjectId: number): SubjectRecord {
@@ -154,9 +165,10 @@ function normalizeCustomAuxiliaryItemIds(
 function resolveInheritedPLCarryForwardTarget(
   db: Database.Database,
   ledgerId: number,
+  standardType: 'enterprise' | 'npo',
   parent: Pick<SubjectRecord, 'code' | 'category'>
 ): string | null {
-  if (parent.category !== 'profit_loss') {
+  if (!isCarryForwardSourceCategory(standardType, parent.category)) {
     return null
   }
 
@@ -200,10 +212,16 @@ function resolveInheritedPLCarryForwardTarget(
 function inheritPLCarryForwardRule(
   db: Database.Database,
   ledgerId: number,
+  standardType: 'enterprise' | 'npo',
   parent: Pick<SubjectRecord, 'code' | 'category'>,
   subjectCode: string
 ): void {
-  const inheritedTargetCode = resolveInheritedPLCarryForwardTarget(db, ledgerId, parent)
+  const inheritedTargetCode = resolveInheritedPLCarryForwardTarget(
+    db,
+    ledgerId,
+    standardType,
+    parent
+  )
   if (!inheritedTargetCode) {
     return
   }
@@ -293,6 +311,7 @@ export function createSubject(
   }
 ): number {
   requireLedger(db, data.ledgerId)
+  const ledgerStandardType = getLedgerStandardType(db, data.ledgerId)
 
   if (!data.parentCode) {
     throw new Error('新建科目必须选择上级科目')
@@ -340,7 +359,7 @@ export function createSubject(
       )
 
     const subjectId = Number(result.lastInsertRowid)
-    inheritPLCarryForwardRule(db, data.ledgerId, parent, code)
+    inheritPLCarryForwardRule(db, data.ledgerId, ledgerStandardType, parent, code)
     replaceSubjectAuxiliaryCategories(db, subjectId, auxiliaryCategories)
     replaceSubjectAuxiliaryCustomItems(db, subjectId, customAuxiliaryItemIds)
     return subjectId

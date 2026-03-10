@@ -158,7 +158,10 @@ const createEmptyRow = (): VoucherRow => ({
 const DEFAULT_ROWS = 4
 const AMOUNT_PATTERN = /^\d+(\.\d{0,2})?$/
 const NUMERIC_SUBJECT_KEYWORD_PATTERN = /^\d+$/
-const SUBJECT_CATEGORY_ORDER = ['asset', 'liability', 'common', 'equity', 'cost', 'profit_loss']
+const getSubjectCategoryOrder = (standardType?: 'enterprise' | 'npo'): string[] =>
+  standardType === 'npo'
+    ? ['asset', 'liability', 'net_assets', 'income', 'expense']
+    : ['asset', 'liability', 'common', 'equity', 'cost', 'profit_loss']
 
 const getSubjectIndentWidth = (level: number): string => `${Math.max(0, level - 1) * 2}ch`
 
@@ -182,6 +185,9 @@ const getSubjectCategoryLabel = (category: string, standardType?: 'enterprise' |
     liability: '负债类',
     common: '共同类',
     equity: standardType === 'npo' ? '净资产类' : '所有者权益类',
+    net_assets: '净资产类',
+    income: '收入类',
+    expense: '费用类',
     cost: '成本类',
     profit_loss: '损益类'
   }
@@ -276,7 +282,7 @@ const buildSubjectTreeRows = (
 ): SubjectTreeRow[] => {
   const treeRows: SubjectTreeRow[] = []
 
-  for (const category of SUBJECT_CATEGORY_ORDER) {
+  for (const category of getSubjectCategoryOrder(standardType)) {
     const categorySubjects = subjects.filter((subject) => subject.category === category)
     if (categorySubjects.length === 0) {
       continue

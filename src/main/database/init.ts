@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'path'
 import { seedAdminUser, seedSubjects, seedCashFlowItems, seedPLCarryForwardRules } from './seed'
+import { ALL_SUBJECT_CATEGORIES } from './subjectCategoryRules'
 
 let db: Database.Database | null = null
 
@@ -50,7 +51,7 @@ export function initializeDatabase(): void {
       code TEXT NOT NULL,
       name TEXT NOT NULL,
       parent_code TEXT DEFAULT NULL,
-      category TEXT NOT NULL CHECK(category IN ('asset', 'liability', 'common', 'equity', 'cost', 'profit_loss')),
+      category TEXT NOT NULL CHECK(category IN ('asset', 'liability', 'common', 'equity', 'cost', 'profit_loss', 'net_assets', 'income', 'expense')),
       balance_direction INTEGER NOT NULL DEFAULT 1,
       has_auxiliary INTEGER NOT NULL DEFAULT 0,
       is_cash_flow INTEGER NOT NULL DEFAULT 0,
@@ -347,6 +348,7 @@ export function initializeDatabase(): void {
       ON report_snapshots(ledger_id, report_type);
   `)
 
+  ensureSubjectSchema(db)
   ensureVoucherSchema(db)
   ensureInitialBalanceSchema(db)
   ensureCashFlowMappingSchema(db)
@@ -365,6 +367,113 @@ export function initializeDatabase(): void {
   )
   insertSetting.run('allow_same_maker_auditor', '0')
   insertSetting.run('wallpaper_path', '')
+}
+
+export function ensureSubjectSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('subjects')").all() as Array<{ name: string }>
+  if (columns.length === 0) return
+
+  const subjectTableSql = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'subjects'")
+    .get() as { sql: string } | undefined
+  const supportsExpandedCategories = ALL_SUBJECT_CATEGORIES.every((category) =>
+    subjectTableSql?.sql.includes(`'${category}'`)
+  )
+
+  if (!supportsExpandedCategories) {
+    const foreignKeysEnabled = (db.pragma('foreign_keys', { simple: true }) as number) === 1
+
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE subjects_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ledger_id INTEGER NOT NULL,
+          code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          parent_code TEXT DEFAULT NULL,
+          category TEXT NOT NULL CHECK(category IN ('asset', 'liability', 'common', 'equity', 'cost', 'profit_loss', 'net_assets', 'income', 'expense')),
+          balance_direction INTEGER NOT NULL DEFAULT 1,
+          has_auxiliary INTEGER NOT NULL DEFAULT 0,
+          is_cash_flow INTEGER NOT NULL DEFAULT 0,
+          level INTEGER NOT NULL DEFAULT 1,
+          is_system INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(ledger_id, code),
+          FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
+        );
+      `)
+
+      db.exec(`
+        INSERT INTO subjects_new (
+          id,
+          ledger_id,
+          code,
+          name,
+          parent_code,
+          category,
+          balance_direction,
+          has_auxiliary,
+          is_cash_flow,
+          level,
+          is_system,
+          created_at
+        )
+        SELECT
+          s.id,
+          s.ledger_id,
+          s.code,
+          s.name,
+          s.parent_code,
+          CASE
+            WHEN l.standard_type = 'npo' AND s.category = 'equity' THEN 'net_assets'
+            WHEN l.standard_type = 'npo' AND s.category = 'profit_loss' AND s.balance_direction = -1 THEN 'income'
+            WHEN l.standard_type = 'npo' AND s.category = 'profit_loss' THEN 'expense'
+            ELSE s.category
+          END,
+          s.balance_direction,
+          s.has_auxiliary,
+          s.is_cash_flow,
+          s.level,
+          s.is_system,
+          s.created_at
+        FROM subjects s
+        INNER JOIN ledgers l ON l.id = s.ledger_id;
+      `)
+
+      db.exec('DROP TABLE subjects;')
+      db.exec('ALTER TABLE subjects_new RENAME TO subjects;')
+    })
+
+    db.pragma('foreign_keys = OFF')
+    try {
+      migrate()
+    } finally {
+      db.pragma(`foreign_keys = ${foreignKeysEnabled ? 'ON' : 'OFF'}`)
+    }
+
+    const foreignKeyIssues = db.pragma('foreign_key_check') as Array<unknown>
+    if (foreignKeyIssues.length > 0) {
+      throw new Error('会计科目表迁移后外键校验失败')
+    }
+  }
+
+  db.exec(`
+    UPDATE subjects
+       SET category = 'net_assets'
+     WHERE category = 'equity'
+       AND ledger_id IN (SELECT id FROM ledgers WHERE standard_type = 'npo');
+  `)
+  db.exec(`
+    UPDATE subjects
+       SET category = CASE
+         WHEN balance_direction = -1 THEN 'income'
+         ELSE 'expense'
+       END
+     WHERE category = 'profit_loss'
+       AND ledger_id IN (SELECT id FROM ledgers WHERE standard_type = 'npo');
+  `)
+
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_subjects_ledger ON subjects(ledger_id)').run()
 }
 
 export function ensureInitialBalanceSchema(db: Database.Database): void {

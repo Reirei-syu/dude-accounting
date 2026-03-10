@@ -451,11 +451,11 @@ function seedNpoLedger(db: FakeReportingDb): void {
 
   db.subjects.push(
     { ledger_id: 2, code: '1002', name: '银行存款', category: 'asset', balance_direction: 1 },
-    { ledger_id: 2, code: '3101', name: '非限定性净资产', category: 'equity', balance_direction: -1 },
-    { ledger_id: 2, code: '3102', name: '限定性净资产', category: 'equity', balance_direction: -1 },
-    { ledger_id: 2, code: '430101', name: '提供服务收入-非限定性', category: 'profit_loss', balance_direction: -1 },
-    { ledger_id: 2, code: '430102', name: '提供服务收入-限定性', category: 'profit_loss', balance_direction: -1 },
-    { ledger_id: 2, code: '5301', name: '管理费用', category: 'profit_loss', balance_direction: 1 }
+    { ledger_id: 2, code: '3101', name: '非限定性净资产', category: 'net_assets', balance_direction: -1 },
+    { ledger_id: 2, code: '3102', name: '限定性净资产', category: 'net_assets', balance_direction: -1 },
+    { ledger_id: 2, code: '430101', name: '提供服务收入-非限定性', category: 'income', balance_direction: -1 },
+    { ledger_id: 2, code: '430102', name: '提供服务收入-限定性', category: 'income', balance_direction: -1 },
+    { ledger_id: 2, code: '5301', name: '管理费用', category: 'expense', balance_direction: 1 }
   )
 
   db.initialBalances.push(

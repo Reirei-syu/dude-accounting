@@ -103,6 +103,7 @@ const api = {
       ipcRenderer.invoke('voucher:getNextNumber', ledgerId, period),
     list: (query: {
       ledgerId: number
+      voucherId?: number
       period?: string
       dateFrom?: string
       dateTo?: string
@@ -272,6 +273,23 @@ const api = {
     }) => ipcRenderer.invoke('reporting:exportBatch', payload),
     delete: (payload: { snapshotId: number; ledgerId: number }) =>
       ipcRenderer.invoke('reporting:delete', payload)
+  },
+  bookQuery: {
+    listSubjectBalances: (query: {
+      ledgerId: number
+      startDate: string
+      endDate: string
+      keyword?: string
+      includeUnpostedVouchers?: boolean
+      includeZeroBalance?: boolean
+    }) => ipcRenderer.invoke('bookQuery:listSubjectBalances', query),
+    getDetailLedger: (query: {
+      ledgerId: number
+      subjectCode: string
+      startDate: string
+      endDate: string
+      includeUnpostedVouchers?: boolean
+    }) => ipcRenderer.invoke('bookQuery:getDetailLedger', query)
   }
 }
 

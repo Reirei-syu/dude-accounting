@@ -52,7 +52,11 @@ type TreeRow =
       row: SubjectRow
     }
 
-const CATEGORY_ORDER = ['asset', 'liability', 'common', 'equity', 'cost', 'profit_loss']
+function getCategoryOrder(standardType?: 'enterprise' | 'npo'): string[] {
+  return standardType === 'npo'
+    ? ['asset', 'liability', 'net_assets', 'income', 'expense']
+    : ['asset', 'liability', 'common', 'equity', 'cost', 'profit_loss']
+}
 
 const AUXILIARY_CATEGORY_OPTIONS = [
   { value: 'customer', label: '客户' },
@@ -69,6 +73,9 @@ function getCategoryLabel(category: string, standardType?: 'enterprise' | 'npo')
     liability: '负债类',
     common: '共同类',
     equity: standardType === 'npo' ? '净资产类' : '所有者权益类',
+    net_assets: '净资产类',
+    income: '收入类',
+    expense: '费用类',
     cost: '成本类',
     profit_loss: '损益类'
   }
@@ -90,8 +97,9 @@ function getCategoryNodeCode(category: string): string {
 
 function buildTreeRows(rows: SubjectRow[], standardType?: 'enterprise' | 'npo'): TreeRow[] {
   const treeRows: TreeRow[] = []
+  const categoryOrder = getCategoryOrder(standardType)
 
-  for (const category of CATEGORY_ORDER) {
+  for (const category of categoryOrder) {
     const categoryRows = rows.filter((row) => row.category === category)
     if (categoryRows.length === 0) {
       continue
@@ -266,7 +274,7 @@ export default function SubjectSettings(): JSX.Element {
     return true
   })
 
-  const groupedParentSubjects = CATEGORY_ORDER.map((category) => ({
+  const groupedParentSubjects = getCategoryOrder(currentLedger?.standard_type).map((category) => ({
     category,
     label: getCategoryLabel(category, currentLedger?.standard_type),
     subjects: rows.filter((row) => row.category === category)

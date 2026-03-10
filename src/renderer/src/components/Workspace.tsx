@@ -16,6 +16,8 @@ import PLSettle from '../pages/PLSettle'
 import Backup from '../pages/Backup'
 import ReportWorkspacePage from '../pages/ReportWorkspacePage'
 import ReportQuery from '../pages/ReportQuery'
+import SubjectBalance from '../pages/SubjectBalance'
+import DetailLedger from '../pages/DetailLedger'
 import type React from 'react'
 import type { JSX } from 'react'
 
@@ -44,7 +46,9 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   ActivityStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   CashFlowStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   EquityStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
-  ReportQuery: ReportQuery as React.ComponentType<WorkspaceComponentProps>
+  ReportQuery: ReportQuery as React.ComponentType<WorkspaceComponentProps>,
+  SubjectBalance: SubjectBalance as React.ComponentType<WorkspaceComponentProps>,
+  DetailLedger: DetailLedger as React.ComponentType<WorkspaceComponentProps>
 }
 
 export default function Workspace(): JSX.Element {

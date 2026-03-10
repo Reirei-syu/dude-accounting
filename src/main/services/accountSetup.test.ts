@@ -91,6 +91,17 @@ class FakeDatabase {
       }
     }
 
+    if (normalized === 'SELECT standard_type FROM ledgers WHERE id = ?') {
+      return {
+        get: (ledgerId) => {
+          const ledger = this.ledgers.find((item) => item.id === Number(ledgerId))
+          return ledger ? { standard_type: ledger.standard_type } : undefined
+        },
+        all: () => [],
+        run: () => ({})
+      }
+    }
+
     if (normalized === 'SELECT * FROM subjects WHERE id = ?') {
       return {
         get: (subjectId) => this.subjects.find((item) => item.id === Number(subjectId)),
