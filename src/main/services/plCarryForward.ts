@@ -164,6 +164,95 @@ function listStoredCarryForwardRules(
     .all(ledgerId) as StoredCarryForwardRuleRow[]
 }
 
+function findClosestAncestorCode(
+  subjectCode: string,
+  subjectByCode: Map<string, SubjectWithChildrenRow>
+): string | null {
+  let closestAncestorCode: string | null = null
+
+  for (const candidateCode of subjectByCode.keys()) {
+    if (candidateCode === subjectCode || !subjectCode.startsWith(candidateCode)) {
+      continue
+    }
+
+    if (!closestAncestorCode || candidateCode.length > closestAncestorCode.length) {
+      closestAncestorCode = candidateCode
+    }
+  }
+
+  return closestAncestorCode
+}
+
+function resolveInheritedTargetFromRules(
+  parentCode: string,
+  rules: StoredCarryForwardRuleRow[]
+): string | null {
+  const directRule = rules.find((rule) => rule.from_subject_code === parentCode)
+  if (directRule) {
+    return directRule.to_subject_code
+  }
+
+  const descendantTargets = Array.from(
+    new Set(
+      rules
+        .filter(
+          (rule) =>
+            rule.from_subject_code !== parentCode && rule.from_subject_code.startsWith(parentCode)
+        )
+        .map((rule) => rule.to_subject_code)
+    )
+  )
+
+  return descendantTargets.length === 1 ? descendantTargets[0] : null
+}
+
+function autoAttachInheritedCarryForwardRules(db: Database.Database, ledgerId: number): void {
+  const subjects = listLedgerSubjectsWithChildren(db, ledgerId)
+  const sourceSubjects = subjects.filter(
+    (subject) => subject.category === 'profit_loss' && subject.has_children === 0
+  )
+  const rules = listStoredCarryForwardRules(db, ledgerId)
+  const existingSourceCodes = new Set(rules.map((rule) => rule.from_subject_code))
+  const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
+
+  const insert = db.prepare(
+    `INSERT INTO pl_carry_forward_rules (ledger_id, from_subject_code, to_subject_code)
+     VALUES (?, ?, ?)`
+  )
+
+  const fill = db.transaction(() => {
+    for (const subject of sourceSubjects) {
+      if (existingSourceCodes.has(subject.code)) {
+        continue
+      }
+
+      const parentCode = findClosestAncestorCode(subject.code, subjectByCode)
+      if (!parentCode) {
+        continue
+      }
+
+      const parent = subjectByCode.get(parentCode)
+      if (!parent || parent.category !== 'profit_loss') {
+        continue
+      }
+
+      const inferredTargetCode = resolveInheritedTargetFromRules(parent.code, rules)
+      if (!inferredTargetCode) {
+        continue
+      }
+
+      insert.run(ledgerId, subject.code, inferredTargetCode)
+      rules.push({
+        from_subject_code: subject.code,
+        to_subject_code: inferredTargetCode
+      })
+      existingSourceCodes.add(subject.code)
+    }
+  })
+
+  fill()
+}
+
 function getAllowedTargetPrefixes(standardType: 'enterprise' | 'npo'): string[] {
   return standardType === 'npo' ? ['3101', '3102'] : ['4103']
 }
@@ -456,6 +545,7 @@ export function listPLCarryForwardRules(
   ledgerId: number
 ): PLCarryForwardRuleView[] {
   assertLedgerExists(db, ledgerId)
+  autoAttachInheritedCarryForwardRules(db, ledgerId)
 
   return db
     .prepare(
@@ -527,6 +617,7 @@ export function previewPLCarryForward(
   const { ledgerId, period, includeUnpostedVouchers = false } = params
   assertLedgerExists(db, ledgerId)
   assertPeriodFormat(period)
+  autoAttachInheritedCarryForwardRules(db, ledgerId)
   assertCarryForwardRulesConfigured(
     db,
     ledgerId,

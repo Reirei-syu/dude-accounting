@@ -49,6 +49,13 @@ type AuxiliaryItemRow = {
   name: string
 }
 
+type PLCarryForwardRuleRow = {
+  id: number
+  ledger_id: number
+  from_subject_code: string
+  to_subject_code: string
+}
+
 type VoucherEntryRow = {
   id: number
   auxiliary_item_id: number | null
@@ -60,12 +67,14 @@ class FakeDatabase {
   subjectAuxiliaryCategories: SubjectAuxiliaryCategoryRow[] = []
   subjectAuxiliaryCustomItems: SubjectAuxiliaryCustomItemRow[] = []
   auxiliaryItems: AuxiliaryItemRow[] = []
+  plCarryForwardRules: PLCarryForwardRuleRow[] = []
   voucherEntries: VoucherEntryRow[] = []
 
   private nextSubjectId = 10
   private nextSubjectAuxiliaryCategoryId = 10
   private nextSubjectAuxiliaryCustomItemId = 10
   private nextAuxiliaryItemId = 10
+  private nextPLCarryForwardRuleId = 10
 
   prepare(sql: string): {
     get: (...params: unknown[]) => unknown
@@ -157,6 +166,73 @@ class FakeDatabase {
           ),
         all: () => [],
         run: () => ({})
+      }
+    }
+
+    if (
+      normalized ===
+      'SELECT to_subject_code FROM pl_carry_forward_rules WHERE ledger_id = ? AND from_subject_code = ? ORDER BY id ASC LIMIT 1'
+    ) {
+      return {
+        get: (ledgerId, fromSubjectCode) =>
+          this.plCarryForwardRules
+            .filter(
+              (item) =>
+                item.ledger_id === Number(ledgerId) &&
+                item.from_subject_code === String(fromSubjectCode)
+            )
+            .slice()
+            .sort((left, right) => left.id - right.id)
+            .map((item) => ({ to_subject_code: item.to_subject_code }))[0],
+        all: () => [],
+        run: () => ({})
+      }
+    }
+
+    if (
+      normalized ===
+      'SELECT from_subject_code, to_subject_code FROM pl_carry_forward_rules WHERE ledger_id = ? AND from_subject_code LIKE ? ORDER BY from_subject_code ASC, id ASC'
+    ) {
+      return {
+        get: () => undefined,
+        all: (ledgerId, pattern) => {
+          const prefix = String(pattern).replace(/%$/u, '')
+          return this.plCarryForwardRules
+            .filter(
+              (item) =>
+                item.ledger_id === Number(ledgerId) && item.from_subject_code.startsWith(prefix)
+            )
+            .slice()
+            .sort((left, right) => {
+              const byCode = left.from_subject_code.localeCompare(right.from_subject_code)
+              return byCode !== 0 ? byCode : left.id - right.id
+            })
+            .map((item) => ({
+              from_subject_code: item.from_subject_code,
+              to_subject_code: item.to_subject_code
+            }))
+        },
+        run: () => ({})
+      }
+    }
+
+    if (
+      normalized ===
+      'INSERT INTO pl_carry_forward_rules (ledger_id, from_subject_code, to_subject_code) VALUES (?, ?, ?)'
+    ) {
+      return {
+        get: () => undefined,
+        all: () => [],
+        run: (ledgerId, fromSubjectCode, toSubjectCode) => {
+          const row: PLCarryForwardRuleRow = {
+            id: this.nextPLCarryForwardRuleId++,
+            ledger_id: Number(ledgerId),
+            from_subject_code: String(fromSubjectCode),
+            to_subject_code: String(toSubjectCode)
+          }
+          this.plCarryForwardRules.push(row)
+          return { lastInsertRowid: row.id }
+        }
       }
     }
 
@@ -433,6 +509,12 @@ function createTestDb(): FakeDatabase {
       is_system: 0
     }
   )
+  db.plCarryForwardRules.push({
+    id: 1,
+    ledger_id: 1,
+    from_subject_code: '6602',
+    to_subject_code: '4103'
+  })
 
   return db
 }
@@ -477,6 +559,80 @@ describe('account setup service', () => {
       .sort()
 
     expect(categories).toEqual(['customer', 'department'])
+    expect(db.plCarryForwardRules).toEqual([
+      { id: 1, ledger_id: 1, from_subject_code: '6602', to_subject_code: '4103' }
+    ])
+  })
+
+  it('inherits the parent carry forward target when creating a profit-loss child subject', () => {
+    const createdId = createSubject(db as never, {
+      ledgerId: 1,
+      parentCode: '6602',
+      code: '660201',
+      name: '办公费',
+      auxiliaryCategories: [],
+      isCashFlow: false
+    })
+
+    const created = db.subjects.find((item) => item.id === createdId)
+    expect(created).toMatchObject({
+      code: '660201',
+      parent_code: '6602',
+      category: 'profit_loss'
+    })
+
+    expect(db.plCarryForwardRules).toEqual([
+      { id: 1, ledger_id: 1, from_subject_code: '6602', to_subject_code: '4103' },
+      { id: 10, ledger_id: 1, from_subject_code: '660201', to_subject_code: '4103' }
+    ])
+  })
+
+  it('inherits a unique descendant carry forward target when the parent no longer keeps a direct rule', () => {
+    db.subjects.push(
+      {
+        id: 4,
+        ledger_id: 1,
+        code: '6001',
+        name: '主营业务收入',
+        parent_code: null,
+        category: 'profit_loss',
+        balance_direction: -1,
+        has_auxiliary: 0,
+        is_cash_flow: 0,
+        level: 1,
+        is_system: 1
+      },
+      {
+        id: 5,
+        ledger_id: 1,
+        code: '600101',
+        name: '主业1',
+        parent_code: '6001',
+        category: 'profit_loss',
+        balance_direction: -1,
+        has_auxiliary: 0,
+        is_cash_flow: 0,
+        level: 2,
+        is_system: 0
+      }
+    )
+    db.plCarryForwardRules = [
+      { id: 20, ledger_id: 1, from_subject_code: '600101', to_subject_code: '4103' }
+    ]
+
+    createSubject(db as never, {
+      ledgerId: 1,
+      parentCode: '6001',
+      code: '600102',
+      name: '主业2',
+      auxiliaryCategories: [],
+      isCashFlow: false
+    })
+
+    expect(db.plCarryForwardRules).toEqual([
+      { id: 20, ledger_id: 1, from_subject_code: '600101', to_subject_code: '4103' },
+      { id: 10, ledger_id: 1, from_subject_code: '600102', to_subject_code: '4103' }
+    ])
   })
 
   it('requires new custom subjects to belong to an existing parent subject', () => {

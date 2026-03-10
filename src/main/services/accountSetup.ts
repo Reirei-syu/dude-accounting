@@ -151,6 +151,69 @@ function normalizeCustomAuxiliaryItemIds(
   return normalized
 }
 
+function resolveInheritedPLCarryForwardTarget(
+  db: Database.Database,
+  ledgerId: number,
+  parent: Pick<SubjectRecord, 'code' | 'category'>
+): string | null {
+  if (parent.category !== 'profit_loss') {
+    return null
+  }
+
+  const parentRule = db
+    .prepare(
+      `SELECT to_subject_code
+       FROM pl_carry_forward_rules
+       WHERE ledger_id = ? AND from_subject_code = ?
+       ORDER BY id ASC
+       LIMIT 1`
+    )
+    .get(ledgerId, parent.code) as { to_subject_code: string } | undefined
+
+  if (parentRule) {
+    return parentRule.to_subject_code
+  }
+
+  const descendantRules = db
+    .prepare(
+      `SELECT from_subject_code, to_subject_code
+       FROM pl_carry_forward_rules
+       WHERE ledger_id = ? AND from_subject_code LIKE ?
+       ORDER BY from_subject_code ASC, id ASC`
+    )
+    .all(ledgerId, `${parent.code}%`) as Array<{
+    from_subject_code: string
+    to_subject_code: string
+  }>
+
+  const descendantTargets = Array.from(
+    new Set(
+      descendantRules
+        .filter((rule) => rule.from_subject_code !== parent.code)
+        .map((rule) => rule.to_subject_code)
+    )
+  )
+
+  return descendantTargets.length === 1 ? descendantTargets[0] : null
+}
+
+function inheritPLCarryForwardRule(
+  db: Database.Database,
+  ledgerId: number,
+  parent: Pick<SubjectRecord, 'code' | 'category'>,
+  subjectCode: string
+): void {
+  const inheritedTargetCode = resolveInheritedPLCarryForwardTarget(db, ledgerId, parent)
+  if (!inheritedTargetCode) {
+    return
+  }
+
+  db.prepare(
+    `INSERT INTO pl_carry_forward_rules (ledger_id, from_subject_code, to_subject_code)
+     VALUES (?, ?, ?)`
+  ).run(ledgerId, subjectCode, inheritedTargetCode)
+}
+
 export function listSubjects(
   db: Database.Database,
   ledgerId: number
@@ -277,6 +340,7 @@ export function createSubject(
       )
 
     const subjectId = Number(result.lastInsertRowid)
+    inheritPLCarryForwardRule(db, data.ledgerId, parent, code)
     replaceSubjectAuxiliaryCategories(db, subjectId, auxiliaryCategories)
     replaceSubjectAuxiliaryCustomItems(db, subjectId, customAuxiliaryItemIds)
     return subjectId

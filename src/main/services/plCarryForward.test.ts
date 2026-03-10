@@ -620,6 +620,33 @@ describe('pl carry forward service', () => {
     ])
   })
 
+  it('auto-fills a missing sibling leaf rule when the parent only keeps descendant rules', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 1, '6001', '主营业务收入', 'profit_loss', -1)
+    seedSubject(db, 1, '600101', '主业1', 'profit_loss', -1)
+    seedSubject(db, 1, '600102', '主业2', 'profit_loss', -1)
+    seedSubject(db, 1, '4103', '本年利润', 'equity', -1)
+    seedRule(db, 1, '600101', '4103')
+
+    const preview = previewPLCarryForward(db as never, { ledgerId: 1, period: '2026-03' })
+
+    expect(preview.required).toBe(false)
+    expect(
+      db.rules
+        .filter((rule) => rule.ledger_id === 1)
+        .map((rule) => ({
+          from_subject_code: rule.from_subject_code,
+          to_subject_code: rule.to_subject_code
+        }))
+        .sort((left, right) => left.from_subject_code.localeCompare(right.from_subject_code))
+    ).toEqual([
+      { from_subject_code: '600101', to_subject_code: '4103' },
+      { from_subject_code: '600102', to_subject_code: '4103' }
+    ])
+  })
+
   it('saves a complete rule set and replaces previous mappings', () => {
     const db = createTestDb()
     openDbs.push(db)
