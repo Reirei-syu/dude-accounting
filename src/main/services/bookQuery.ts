@@ -266,10 +266,6 @@ function getLedger(db: Database.Database, ledgerId: number): LedgerRow {
     throw new Error('账套不存在')
   }
 
-  if (ledger.standard_type !== 'npo') {
-    throw new Error('当前仅支持民非账套进行账簿查询试点')
-  }
-
   return ledger
 }
 

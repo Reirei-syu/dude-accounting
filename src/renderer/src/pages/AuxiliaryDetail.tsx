@@ -124,12 +124,6 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
       return
     }
 
-    if (currentLedger.standard_type !== 'npo') {
-      setRows([])
-      setError('当前开发阶段仅支持民非账套进行账簿查询测试')
-      return
-    }
-
     if (!window.electron) {
       setRows([])
       setError('浏览器预览模式不支持账簿查询')
@@ -205,7 +199,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
       setIsPreviewOpen(false)
       setError('')
 
-      if (!currentLedger || !window.electron || currentLedger.standard_type !== 'npo') {
+      if (!currentLedger || !window.electron) {
         if (!cancelled) {
           setSubjects([])
           setAllAuxiliaryItems([])
@@ -386,7 +380,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
     <div className="h-full overflow-x-auto">
       <div className="min-w-[980px] h-full">
         <div
-          className="grid grid-cols-[120px_130px_2fr_120px_120px_90px_120px] gap-3 py-2 px-3 border-b text-sm font-semibold"
+          className="grid grid-cols-[120px_130px_2fr_120px_120px_90px_120px] gap-3 border-b px-3 py-2 text-sm font-semibold"
           style={{
             borderColor: 'var(--color-glass-border-light)',
             color: 'var(--color-text-primary)'
@@ -417,7 +411,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
             return (
               <div
                 key={rowKey}
-                className={`grid grid-cols-[120px_130px_2fr_120px_120px_90px_120px] gap-3 py-2 px-3 border-b text-sm transition-colors ${
+                className={`grid grid-cols-[120px_130px_2fr_120px_120px_90px_120px] gap-3 border-b px-3 py-2 text-sm transition-colors ${
                   row.row_type === 'entry'
                     ? 'cursor-context-menu hover:bg-black/5'
                     : 'cursor-default'
@@ -530,6 +524,19 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
             value={dateTo}
             onChange={(event) => setDateTo(event.target.value)}
           />
+          <button className="glass-btn-secondary px-5 py-2" type="submit">
+            {loading ? '查询中...' : '查询'}
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2"
+            type="button"
+            onClick={handleOpenPreview}
+          >
+            {loading ? '查询中...' : '全屏查看'}
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-sm"
             htmlFor="aux-detail-subject"
@@ -591,19 +598,6 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
               </option>
             ))}
           </select>
-          <button className="glass-btn-secondary px-5 py-2" type="submit">
-            {loading ? '查询中...' : '查询'}
-          </button>
-          <button
-            className="glass-btn-secondary px-5 py-2"
-            type="button"
-            onClick={handleOpenPreview}
-          >
-            {loading ? '查询中...' : '全屏查看'}
-          </button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-6">
           <label
             className="inline-flex items-center gap-2 text-sm"
             style={{ color: 'var(--color-text-secondary)' }}

@@ -106,12 +106,6 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       return
     }
 
-    if (currentLedger.standard_type !== 'npo') {
-      setRows([])
-      setError('当前开发阶段仅支持民非账套进行账簿查询测试')
-      return
-    }
-
     if (!window.electron) {
       setRows([])
       setError('浏览器预览模式不支持账簿查询')
@@ -176,7 +170,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       setIsPreviewOpen(false)
       setError('')
 
-      if (!currentLedger || !window.electron || currentLedger.standard_type !== 'npo') {
+      if (!currentLedger || !window.electron) {
         if (!cancelled) {
           setSubjects([])
           setSubjectCode(props.presetSubjectCode ?? '')

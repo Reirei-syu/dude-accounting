@@ -367,6 +367,51 @@ function createDb(): FakeBookQueryDb {
       category: 'liability',
       balance_direction: -1,
       level: 1
+    },
+    {
+      ledger_id: 2,
+      code: '1001',
+      name: 'bank',
+      parent_code: null,
+      category: 'asset',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 2,
+      code: '1601',
+      name: 'fixed-assets',
+      parent_code: null,
+      category: 'asset',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 2,
+      code: '2202',
+      name: 'accounts-payable',
+      parent_code: null,
+      category: 'liability',
+      balance_direction: -1,
+      level: 1
+    },
+    {
+      ledger_id: 2,
+      code: '6601',
+      name: 'admin-expense',
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 2,
+      code: '660101',
+      name: 'office-expense',
+      parent_code: '6601',
+      category: 'expense',
+      balance_direction: 1,
+      level: 2
     }
   )
 
@@ -384,6 +429,13 @@ function createDb(): FakeBookQueryDb {
       subject_code: '4001',
       debit_amount: 0,
       credit_amount: 100_000
+    },
+    {
+      ledger_id: 2,
+      period: '2026-01',
+      subject_code: '1001',
+      debit_amount: 200_000,
+      credit_amount: 0
     }
   )
 
@@ -432,6 +484,24 @@ function createDb(): FakeBookQueryDb {
       voucher_number: 5,
       voucher_word: 'J',
       status: 2
+    },
+    {
+      id: 201,
+      ledger_id: 2,
+      period: '2026-01',
+      voucher_date: '2026-01-15',
+      voucher_number: 1,
+      voucher_word: 'J',
+      status: 2
+    },
+    {
+      id: 202,
+      ledger_id: 2,
+      period: '2026-02',
+      voucher_date: '2026-02-10',
+      voucher_number: 2,
+      voucher_word: 'J',
+      status: 2
     }
   )
 
@@ -456,12 +526,30 @@ function createDb(): FakeBookQueryDb {
       category: 'custom',
       code: 'FA001',
       name: 'fixed-asset-card'
+    },
+    {
+      id: 101,
+      ledger_id: 2,
+      category: 'department',
+      code: 'DEP01',
+      name: 'head-office'
+    },
+    {
+      id: 102,
+      ledger_id: 2,
+      category: 'custom',
+      code: 'FA101',
+      name: 'machine-card'
     }
   )
 
   db.subjectCustomAuxiliaryLinks.push({
     subject_code: '1501',
     auxiliary_item_id: 3
+  })
+  db.subjectCustomAuxiliaryLinks.push({
+    subject_code: '1601',
+    auxiliary_item_id: 102
   })
 
   db.voucherEntries.push(
@@ -557,6 +645,43 @@ function createDb(): FakeBookQueryDb {
       subject_code: '2201',
       debit_amount: 0,
       credit_amount: 50_000
+    },
+    {
+      id: 201,
+      voucher_id: 201,
+      row_order: 1,
+      summary: 'buy-machine',
+      subject_code: '1601',
+      debit_amount: 80_000,
+      credit_amount: 0
+    },
+    {
+      id: 202,
+      voucher_id: 201,
+      row_order: 2,
+      summary: 'buy-machine',
+      subject_code: '2202',
+      debit_amount: 0,
+      credit_amount: 80_000
+    },
+    {
+      id: 203,
+      voucher_id: 202,
+      row_order: 1,
+      summary: 'office-expense',
+      subject_code: '660101',
+      debit_amount: 3_500,
+      credit_amount: 0,
+      auxiliary_item_id: 101
+    },
+    {
+      id: 204,
+      voucher_id: 202,
+      row_order: 2,
+      summary: 'office-expense',
+      subject_code: '2202',
+      debit_amount: 0,
+      credit_amount: 3_500
     }
   )
 
@@ -712,16 +837,45 @@ describe('bookQuery service', () => {
     })
   })
 
-  it('rejects non-npo ledgers in the pilot phase', () => {
+  it('supports enterprise subject balance and detail ledger queries', () => {
     const db = createDb()
 
-    expect(() =>
-      listSubjectBalances(db as never, {
-        ledgerId: 2,
-        startDate: '2026-03-01',
-        endDate: '2026-03-31'
-      })
-    ).toThrow()
+    const rows = listSubjectBalances(db as never, {
+      ledgerId: 2,
+      startDate: '2026-01-01',
+      endDate: '2026-02-28'
+    })
+
+    expect(rows.find((row) => row.subject_code === '1601')).toMatchObject({
+      subject_code: '1601',
+      period_debit_amount: 80_000,
+      ending_debit_amount: 80_000
+    })
+    expect(rows.find((row) => row.subject_code === '6601')).toMatchObject({
+      subject_code: '6601',
+      is_leaf: 0,
+      period_debit_amount: 3_500,
+      ending_debit_amount: 3_500
+    })
+
+    const detail = getDetailLedger(db as never, {
+      ledgerId: 2,
+      subjectCode: '6601',
+      startDate: '2026-01-01',
+      endDate: '2026-02-28'
+    })
+
+    expect(detail.subject).toMatchObject({
+      code: '6601',
+      name: 'admin-expense',
+      balance_direction: 1
+    })
+    expect(detail.rows.at(-1)).toMatchObject({
+      voucher_id: 202,
+      summary: 'office-expense',
+      debit_amount: 3_500,
+      balance_amount: 3_500
+    })
   })
 
   it('supports detail ledger queries for parent subjects by aggregating descendant entries', () => {
@@ -865,6 +1019,74 @@ describe('bookQuery service', () => {
       voucher_id: 4,
       summary: 'draft-travel',
       balance_amount: 1_000
+    })
+  })
+
+  it('supports enterprise journal and auxiliary book queries', () => {
+    const db = createDb()
+
+    const journalRows = getJournal(db as never, {
+      ledgerId: 2,
+      startDate: '2026-01-01',
+      endDate: '2026-02-28',
+      subjectCodeStart: '6601',
+      subjectCodeEnd: '660199'
+    })
+
+    expect(journalRows).toEqual([
+      expect.objectContaining({
+        voucher_id: 202,
+        voucher_date: '2026-02-10',
+        summary: 'office-expense',
+        subject_code: '660101',
+        subject_name: 'office-expense',
+        debit_amount: 3_500,
+        credit_amount: 0
+      })
+    ])
+
+    const auxiliaryBalanceRows = getAuxiliaryBalances(db as never, {
+      ledgerId: 2,
+      startDate: '2026-01-01',
+      endDate: '2026-02-28'
+    })
+
+    expect(auxiliaryBalanceRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          subject_code: '1601',
+          auxiliary_item_id: 102,
+          auxiliary_category: 'custom',
+          period_debit_amount: 80_000
+        }),
+        expect.objectContaining({
+          subject_code: '660101',
+          auxiliary_item_id: 101,
+          auxiliary_category: 'department',
+          period_debit_amount: 3_500
+        })
+      ])
+    )
+
+    const auxiliaryDetail = getAuxiliaryDetail(db as never, {
+      ledgerId: 2,
+      subjectCode: '1601',
+      auxiliaryItemId: 102,
+      startDate: '2026-01-01',
+      endDate: '2026-02-28'
+    })
+
+    expect(auxiliaryDetail.auxiliary).toMatchObject({
+      id: 102,
+      category: 'custom',
+      code: 'FA101',
+      name: 'machine-card'
+    })
+    expect(auxiliaryDetail.rows.at(-1)).toMatchObject({
+      voucher_id: 201,
+      summary: 'buy-machine',
+      debit_amount: 80_000,
+      balance_amount: 80_000
     })
   })
 

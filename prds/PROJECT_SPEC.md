@@ -370,4 +370,13 @@ Documentation sync required:
 
 ---
 
+## 12. Book Query Coverage Update (2026-03-11)
+
+- 账簿查询模块当前已同时支持 `enterprise` 与 `npo` 两类账套。
+- 当前已覆盖的账簿子功能包括：科目余额表、科目明细账、序时账、辅助余额表、辅助明细账。
+- 账簿查询默认日期范围统一为“本年 1 月 1 日至今天”；全屏查看、右键交叉查询、未记账凭证口径在企业账套与民非账套保持一致。
+- `bookQuery` IPC 现作为通用账簿查询入口供两类账套共用：`listSubjectBalances`、`getDetailLedger`、`getJournal`、`getAuxiliaryBalances`、`getAuxiliaryDetail`。
+
+---
+
 END OF SPEC
