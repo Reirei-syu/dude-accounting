@@ -9,7 +9,13 @@ import {
 import * as Dialog from '@radix-ui/react-dialog'
 import Decimal from 'decimal.js'
 import { createPortal } from 'react-dom'
-import { getBalanceSideLabel, getCurrentYearDateRange, type SubjectOption } from './bookQueryUtils'
+import {
+  getBalanceSideLabel,
+  getCurrentYearDateRange,
+  resolveAuxiliaryItemsForSubject,
+  type AuxiliaryItemOption,
+  type SubjectWithAuxiliary
+} from './bookQueryUtils'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -20,10 +26,11 @@ interface ReturnTabTarget {
   params?: Record<string, unknown>
 }
 
-interface DetailLedgerProps {
+interface AuxiliaryDetailProps {
   presetStartDate?: string
   presetEndDate?: string
   presetSubjectCode?: string
+  presetAuxiliaryItemId?: number
   presetIncludeUnpostedVouchers?: boolean
   presetOpenPreview?: boolean
   returnTabOnPreviewClose?: ReturnTabTarget
@@ -31,7 +38,7 @@ interface DetailLedgerProps {
   queryRequestKey?: number
 }
 
-interface DetailLedgerRow {
+interface AuxiliaryDetailRow {
   row_type: 'opening' | 'entry'
   voucher_id: number | null
   voucher_date: string
@@ -44,10 +51,10 @@ interface DetailLedgerRow {
   balance_side: 'debit' | 'credit' | 'flat'
 }
 
-interface DetailContextMenuState {
+interface AuxiliaryDetailContextMenuState {
   x: number
   y: number
-  row: DetailLedgerRow
+  row: AuxiliaryDetailRow
   rowKey: string
 }
 
@@ -69,7 +76,7 @@ function clampMenuPosition(x: number, y: number): { x: number; y: number } {
   }
 }
 
-export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
+export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Element {
   const currentLedger = useLedgerStore((state) => state.currentLedger)
   const openTab = useUIStore((state) => state.openTab)
   const defaultRange = useMemo(() => getCurrentYearDateRange(), [])
@@ -77,22 +84,33 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
   const [dateFrom, setDateFrom] = useState(props.presetStartDate ?? defaultRange.startDate)
   const [dateTo, setDateTo] = useState(props.presetEndDate ?? defaultRange.endDate)
   const [subjectCode, setSubjectCode] = useState(props.presetSubjectCode ?? '')
+  const [auxiliaryItemId, setAuxiliaryItemId] = useState<number | null>(
+    props.presetAuxiliaryItemId ?? null
+  )
   const [includeUnpostedVouchers, setIncludeUnpostedVouchers] = useState(
     props.presetIncludeUnpostedVouchers ?? false
   )
-  const [subjects, setSubjects] = useState<SubjectOption[]>([])
-  const [rows, setRows] = useState<DetailLedgerRow[]>([])
+  const [subjects, setSubjects] = useState<SubjectWithAuxiliary[]>([])
+  const [allAuxiliaryItems, setAllAuxiliaryItems] = useState<AuxiliaryItemOption[]>([])
+  const [rows, setRows] = useState<AuxiliaryDetailRow[]>([])
   const [subjectName, setSubjectName] = useState('')
+  const [auxiliaryName, setAuxiliaryName] = useState('')
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<DetailContextMenuState | null>(null)
+  const [contextMenu, setContextMenu] = useState<AuxiliaryDetailContextMenuState | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const selectedSubject = subjects.find((item) => item.code === subjectCode)
+  const auxiliaryOptions = useMemo(
+    () => resolveAuxiliaryItemsForSubject(selectedSubject, allAuxiliaryItems),
+    [allAuxiliaryItems, selectedSubject]
+  )
+  const selectedAuxiliary = auxiliaryOptions.find((item) => item.id === auxiliaryItemId)
 
   const executeQuery = async (overrides?: {
     subjectCode?: string
+    auxiliaryItemId?: number | null
     dateFrom?: string
     dateTo?: string
     includeUnpostedVouchers?: boolean
@@ -119,6 +137,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     }
 
     const nextSubjectCode = overrides?.subjectCode ?? subjectCode
+    const nextAuxiliaryItemId = overrides?.auxiliaryItemId ?? auxiliaryItemId
     const nextDateFrom = overrides?.dateFrom ?? dateFrom
     const nextDateTo = overrides?.dateTo ?? dateTo
     const nextIncludeUnposted = overrides?.includeUnpostedVouchers ?? includeUnpostedVouchers
@@ -129,18 +148,26 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       return
     }
 
+    if (!nextAuxiliaryItemId) {
+      setRows([])
+      setError('请选择辅助项目')
+      return
+    }
+
     setLoading(true)
     try {
-      const detail = await window.api.bookQuery.getDetailLedger({
+      const detail = await window.api.bookQuery.getAuxiliaryDetail({
         ledgerId: currentLedger.id,
         subjectCode: nextSubjectCode,
+        auxiliaryItemId: nextAuxiliaryItemId,
         startDate: nextDateFrom,
         endDate: nextDateTo,
         includeUnpostedVouchers: nextIncludeUnposted
       })
 
-      setRows(detail.rows as DetailLedgerRow[])
+      setRows(detail.rows as AuxiliaryDetailRow[])
       setSubjectName(detail.subject.name)
+      setAuxiliaryName(detail.auxiliary.name)
       setSelectedRowKey(null)
       setContextMenu(null)
 
@@ -150,7 +177,8 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     } catch (err) {
       setRows([])
       setSubjectName('')
-      setError(err instanceof Error ? err.message : '加载科目明细账失败')
+      setAuxiliaryName('')
+      setError(err instanceof Error ? err.message : '加载辅助明细账失败')
     } finally {
       setLoading(false)
     }
@@ -171,6 +199,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       setIncludeUnpostedVouchers(nextIncludeUnposted)
       setRows([])
       setSubjectName('')
+      setAuxiliaryName('')
       setSelectedRowKey(null)
       setContextMenu(null)
       setIsPreviewOpen(false)
@@ -179,37 +208,68 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       if (!currentLedger || !window.electron || currentLedger.standard_type !== 'npo') {
         if (!cancelled) {
           setSubjects([])
+          setAllAuxiliaryItems([])
           setSubjectCode(props.presetSubjectCode ?? '')
+          setAuxiliaryItemId(props.presetAuxiliaryItemId ?? null)
         }
         return
       }
 
       try {
-        const rawSubjects = (await window.api.subject.getAll(currentLedger.id)) as SubjectOption[]
-        const nextSubjects = rawSubjects
-          .map((item) => ({
-            code: item.code,
-            name: item.name
-          }))
-          .sort((left, right) => left.code.localeCompare(right.code))
+        const [rawSubjects, rawAuxiliaryItems] = await Promise.all([
+          window.api.subject.getAll(currentLedger.id),
+          window.api.auxiliary.getAll(currentLedger.id)
+        ])
 
         if (cancelled) {
           return
         }
 
-        setSubjects(nextSubjects)
-
+        const nextSubjects = rawSubjects.map((subject) => ({
+          code: subject.code,
+          name: subject.name,
+          has_auxiliary: subject.has_auxiliary,
+          auxiliary_categories: subject.auxiliary_categories ?? [],
+          auxiliary_custom_items: (subject.auxiliary_custom_items ?? []).map((item) => ({
+            id: item.id,
+            category: 'custom',
+            code: item.code,
+            name: item.name
+          }))
+        }))
+        const nextAuxiliaryItems = rawAuxiliaryItems.map((item) => ({
+          id: item.id,
+          category: item.category,
+          code: item.code,
+          name: item.name
+        }))
+        const eligibleSubjects = nextSubjects.filter(
+          (subject) => resolveAuxiliaryItemsForSubject(subject, nextAuxiliaryItems).length > 0
+        )
         const nextSubjectCode =
-          props.presetSubjectCode ??
-          nextSubjects.find((item) => item.code === subjectCode)?.code ??
-          nextSubjects[0]?.code ??
-          ''
+          props.presetSubjectCode &&
+          eligibleSubjects.some((item) => item.code === props.presetSubjectCode)
+            ? props.presetSubjectCode
+            : (eligibleSubjects[0]?.code ?? '')
+        const nextAuxiliaryOptions = resolveAuxiliaryItemsForSubject(
+          eligibleSubjects.find((item) => item.code === nextSubjectCode),
+          nextAuxiliaryItems
+        )
+        const nextAuxiliaryItemId =
+          props.presetAuxiliaryItemId &&
+          nextAuxiliaryOptions.some((item) => item.id === props.presetAuxiliaryItemId)
+            ? props.presetAuxiliaryItemId
+            : (nextAuxiliaryOptions[0]?.id ?? null)
 
+        setSubjects(nextSubjects)
+        setAllAuxiliaryItems(nextAuxiliaryItems)
         setSubjectCode(nextSubjectCode)
+        setAuxiliaryItemId(nextAuxiliaryItemId)
 
-        if (props.autoQuery && nextSubjectCode) {
+        if (props.autoQuery && nextSubjectCode && nextAuxiliaryItemId) {
           void executeQuery({
             subjectCode: nextSubjectCode,
+            auxiliaryItemId: nextAuxiliaryItemId,
             dateFrom: nextDateFrom,
             dateTo: nextDateTo,
             includeUnpostedVouchers: nextIncludeUnposted,
@@ -219,8 +279,10 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       } catch (err) {
         if (!cancelled) {
           setSubjects([])
+          setAllAuxiliaryItems([])
           setSubjectCode('')
-          setError(err instanceof Error ? err.message : '加载科目失败')
+          setAuxiliaryItemId(null)
+          setError(err instanceof Error ? err.message : '加载辅助项目失败')
         }
       }
     }
@@ -234,6 +296,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     currentLedger?.id,
     currentLedger?.current_period,
     props.autoQuery,
+    props.presetAuxiliaryItemId,
     props.presetEndDate,
     props.presetIncludeUnpostedVouchers,
     props.presetOpenPreview,
@@ -290,7 +353,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     }
   }
 
-  const openVoucherEntry = (row: DetailLedgerRow): void => {
+  const openVoucherEntry = (row: AuxiliaryDetailRow): void => {
     if (!row.voucher_id || !row.voucher_date) {
       return
     }
@@ -310,7 +373,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
 
   const handleContextMenu = (
     event: ReactMouseEvent<HTMLDivElement>,
-    row: DetailLedgerRow,
+    row: AuxiliaryDetailRow,
     rowKey: string
   ): void => {
     event.preventDefault()
@@ -319,7 +382,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     setContextMenu({ ...position, row, rowKey })
   }
 
-  const renderTable = (tableRows: DetailLedgerRow[], fullHeight = false): JSX.Element => (
+  const renderTable = (tableRows: AuxiliaryDetailRow[], fullHeight = false): JSX.Element => (
     <div className="h-full overflow-x-auto">
       <div className="min-w-[980px] h-full">
         <div
@@ -412,7 +475,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       >
         <button
           type="button"
-          className="block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40"
           disabled={contextMenu.row.row_type !== 'entry' || !contextMenu.row.voucher_id}
           onClick={(event) => {
             event.preventDefault()
@@ -427,27 +490,27 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
   }
 
   return (
-    <div className="h-full flex flex-col p-4 gap-4">
+    <div className="flex h-full flex-col gap-4 p-4">
       <div className="space-y-1">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          科目明细账
+          辅助明细账
         </h2>
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          当前支持按区间查看科目明细账。右键业务行可查询凭证。
+          当前支持按日期范围、科目、辅助项目查看辅助明细账。右键业务行可查询凭证。
         </p>
       </div>
 
-      <form className="glass-panel-light p-3 flex flex-col gap-3" onSubmit={handleSubmit}>
-        <div className="flex items-center gap-3 flex-wrap">
+      <form className="glass-panel-light flex flex-col gap-3 p-3" onSubmit={handleSubmit}>
+        <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-sm"
-            htmlFor="detail-ledger-date-from"
+            htmlFor="aux-detail-date-from"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             从
           </label>
           <input
-            id="detail-ledger-date-from"
+            id="aux-detail-date-from"
             type="date"
             className="glass-input px-3 py-2 text-sm"
             value={dateFrom}
@@ -455,13 +518,13 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
           />
           <label
             className="text-sm"
-            htmlFor="detail-ledger-date-to"
+            htmlFor="aux-detail-date-to"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             到
           </label>
           <input
-            id="detail-ledger-date-to"
+            id="aux-detail-date-to"
             type="date"
             className="glass-input px-3 py-2 text-sm"
             value={dateTo}
@@ -469,24 +532,62 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
           />
           <label
             className="text-sm"
-            htmlFor="detail-ledger-subject"
+            htmlFor="aux-detail-subject"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             科目
           </label>
           <select
-            id="detail-ledger-subject"
-            className="glass-input px-3 py-2 text-sm min-w-[260px]"
+            id="aux-detail-subject"
+            className="glass-input min-w-[240px] px-3 py-2 text-sm"
             value={subjectCode}
             onChange={(event) => {
-              setSubjectCode(event.target.value)
-              setSubjectName(subjects.find((item) => item.code === event.target.value)?.name ?? '')
+              const nextSubjectCode = event.target.value
+              const nextSubject = subjects.find((item) => item.code === nextSubjectCode)
+              const nextAuxiliaryOptions = resolveAuxiliaryItemsForSubject(
+                nextSubject,
+                allAuxiliaryItems
+              )
+
+              setSubjectCode(nextSubjectCode)
+              setSubjectName(nextSubject?.name ?? '')
+              setAuxiliaryItemId(nextAuxiliaryOptions[0]?.id ?? null)
+              setAuxiliaryName(nextAuxiliaryOptions[0]?.name ?? '')
             }}
           >
-            {subjects.length === 0 && <option value="">暂无科目</option>}
-            {subjects.map((subject) => (
-              <option key={subject.code} value={subject.code}>
-                {subject.code} {subject.name}
+            {subjects
+              .filter(
+                (subject) => resolveAuxiliaryItemsForSubject(subject, allAuxiliaryItems).length > 0
+              )
+              .sort((left, right) => left.code.localeCompare(right.code))
+              .map((subject) => (
+                <option key={subject.code} value={subject.code}>
+                  {subject.code} {subject.name}
+                </option>
+              ))}
+          </select>
+          <label
+            className="text-sm"
+            htmlFor="aux-detail-item"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
+            辅助项目
+          </label>
+          <select
+            id="aux-detail-item"
+            className="glass-input min-w-[220px] px-3 py-2 text-sm"
+            value={auxiliaryItemId ?? ''}
+            onChange={(event) => {
+              const nextAuxiliaryId = event.target.value ? Number(event.target.value) : null
+              const nextAuxiliary = auxiliaryOptions.find((item) => item.id === nextAuxiliaryId)
+              setAuxiliaryItemId(nextAuxiliaryId)
+              setAuxiliaryName(nextAuxiliary?.name ?? '')
+            }}
+          >
+            {auxiliaryOptions.length === 0 && <option value="">暂无辅助项目</option>}
+            {auxiliaryOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.category} / {item.code} {item.name}
               </option>
             ))}
           </select>
@@ -502,7 +603,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
           </button>
         </div>
 
-        <div className="flex items-center gap-6 flex-wrap">
+        <div className="flex flex-wrap items-center gap-6">
           <label
             className="inline-flex items-center gap-2 text-sm"
             style={{ color: 'var(--color-text-secondary)' }}
@@ -521,36 +622,21 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
         className="glass-panel-light p-3 text-sm"
         style={{ color: 'var(--color-text-secondary)' }}
       >
-        当前科目：
-        {subjectCode ? `${subjectCode} ${subjectName || selectedSubject?.name || ''}` : '未选择'}
+        当前条件：
+        {subjectCode
+          ? `${subjectCode} ${subjectName || selectedSubject?.name || ''}`
+          : '未选择科目'}
+        {' / '}
+        {auxiliaryItemId
+          ? `${selectedAuxiliary?.category ?? ''} ${selectedAuxiliary?.code ?? ''} ${
+              auxiliaryName || selectedAuxiliary?.name || ''
+            }`
+          : '未选择辅助项目'}
       </div>
 
       <div className="glass-panel flex-1 overflow-hidden">{renderTable(rows)}</div>
 
       {contextMenu && !isPreviewOpen && createPortal(renderInteractiveContextMenu(), document.body)}
-      {false &&
-        contextMenu &&
-        createPortal(
-          <div
-            className="fixed z-[260] min-w-[180px] rounded-xl border bg-white/95 p-1 shadow-xl backdrop-blur-md"
-            style={{
-              left: `${contextMenu!.x}px`,
-              top: `${contextMenu!.y}px`,
-              borderColor: 'var(--color-glass-border-light)',
-              color: 'var(--color-text-primary)'
-            }}
-          >
-            <button
-              type="button"
-              className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={contextMenu!.row.row_type !== 'entry' || !contextMenu!.row.voucher_id}
-              onClick={() => openVoucherEntry(contextMenu!.row)}
-            >
-              查询凭证
-            </button>
-          </div>,
-          document.body
-        )}
 
       {error && (
         <div style={{ color: 'var(--color-danger)' }} aria-live="polite">
@@ -571,13 +657,19 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
                   className="text-lg font-semibold"
                   style={{ color: 'var(--color-text-primary)' }}
                 >
-                  科目明细账
+                  辅助明细账
                 </Dialog.Title>
                 <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
                   {subjectCode
                     ? `${subjectCode} ${subjectName || selectedSubject?.name || ''}`
                     : '未选择科目'}
-                  {' · '}
+                  {' / '}
+                  {selectedAuxiliary
+                    ? `${selectedAuxiliary.category} ${selectedAuxiliary.code} ${
+                        auxiliaryName || selectedAuxiliary.name
+                      }`
+                    : '未选择辅助项目'}
+                  {' / '}
                   {dateFrom} 至 {dateTo}
                 </p>
               </div>

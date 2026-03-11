@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  resolveAuxiliaryItemsForSubject,
   filterSubjectRowsByCodeRange,
   getBalanceSideLabel,
+  getCurrentYearDateRange,
   getLeafSubjects,
   getPeriodDateRange
 } from './bookQueryUtils'
@@ -11,6 +13,13 @@ describe('bookQueryUtils', () => {
     expect(getPeriodDateRange('2026-02')).toEqual({
       startDate: '2026-02-01',
       endDate: '2026-02-28'
+    })
+  })
+
+  it('builds current-year date range from january first to today', () => {
+    expect(getCurrentYearDateRange(new Date(2026, 2, 11))).toEqual({
+      startDate: '2026-01-01',
+      endDate: '2026-03-11'
     })
   })
 
@@ -57,6 +66,28 @@ describe('bookQueryUtils', () => {
     expect(filterSubjectRowsByCodeRange(rows, '2201', '3101')).toEqual([
       { subject_code: '2201' },
       { subject_code: '3101' }
+    ])
+  })
+
+  it('resolves available auxiliary items from category and custom bindings', () => {
+    expect(
+      resolveAuxiliaryItemsForSubject(
+        {
+          code: '6601',
+          name: 'expense',
+          has_auxiliary: 1,
+          auxiliary_categories: ['department', 'custom'],
+          auxiliary_custom_items: [{ id: 3, category: 'custom', code: 'C001', name: 'custom-one' }]
+        },
+        [
+          { id: 1, category: 'department', code: 'D001', name: 'admin' },
+          { id: 2, category: 'employee', code: 'E001', name: 'alice' },
+          { id: 3, category: 'custom', code: 'C001', name: 'custom-one' }
+        ]
+      )
+    ).toEqual([
+      { id: 3, category: 'custom', code: 'C001', name: 'custom-one' },
+      { id: 1, category: 'department', code: 'D001', name: 'admin' }
     ])
   })
 })

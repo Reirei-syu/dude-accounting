@@ -290,7 +290,7 @@ Current:
 - `initialBalance:*`
 - `period:*`
 - `settings:*`
-- `bookQuery:listSubjectBalances/getDetailLedger/getJournal`
+- `bookQuery:listSubjectBalances/getDetailLedger/getJournal/getAuxiliaryBalances/getAuxiliaryDetail`
 - `reporting:generate/list/getDetail/delete/export`
 
 In-flight:
@@ -354,6 +354,19 @@ Documentation sync required:
 - `prds/PROJECT_SPEC.md`
 - `prds/合规整改计划.md`
 - `prds/开发日志.md`
+
+---
+
+## 11. Book Query Pilot Status Update (2026-03-11)
+
+- 民非账套账簿查询试点已覆盖：科目余额表、科目明细账、序时账、辅助余额表、辅助明细账。
+- 当前已打通的账簿交叉查询链路包括：
+  - 科目余额表 -> 科目明细账
+  - 科目余额表 -> 辅助余额表
+  - 辅助余额表 -> 辅助明细账
+  - 科目明细账 / 辅助明细账 / 序时账 -> 凭证录入
+- 辅助账当前口径说明：辅助期初余额按历史凭证滚算，不拆分科目期初数。
+- `bookQuery` IPC 现包含：`listSubjectBalances`、`getDetailLedger`、`getJournal`、`getAuxiliaryBalances`、`getAuxiliaryDetail`。
 
 ---
 

@@ -853,6 +853,63 @@ interface BookQueryAPI {
       credit_amount: number
     }>
   >
+  getAuxiliaryBalances: (query: {
+    ledgerId: number
+    startDate: string
+    endDate: string
+    subjectCodeStart?: string
+    subjectCodeEnd?: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<
+    Array<{
+      subject_code: string
+      subject_name: string
+      auxiliary_item_id: number
+      auxiliary_category: string
+      auxiliary_code: string
+      auxiliary_name: string
+      opening_debit_amount: number
+      opening_credit_amount: number
+      period_debit_amount: number
+      period_credit_amount: number
+      ending_debit_amount: number
+      ending_credit_amount: number
+    }>
+  >
+  getAuxiliaryDetail: (query: {
+    ledgerId: number
+    subjectCode: string
+    auxiliaryItemId: number
+    startDate: string
+    endDate: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<{
+    subject: {
+      code: string
+      name: string
+      balance_direction: number
+    }
+    auxiliary: {
+      id: number
+      category: string
+      code: string
+      name: string
+    }
+    startDate: string
+    endDate: string
+    rows: Array<{
+      row_type: 'opening' | 'entry'
+      voucher_id: number | null
+      voucher_date: string
+      voucher_number: number | null
+      voucher_word: string | null
+      summary: string
+      debit_amount: number
+      credit_amount: number
+      balance_amount: number
+      balance_side: 'debit' | 'credit' | 'flat'
+    }>
+  }>
 }
 
 interface DudeAPI {

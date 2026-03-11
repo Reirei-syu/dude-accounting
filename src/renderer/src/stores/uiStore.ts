@@ -53,9 +53,9 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
   ],
   'ledger-query': [
     { id: 'subject-balance', title: '科目余额表', componentType: 'SubjectBalance' },
-    { id: 'auxiliary-balance', title: '辅助余额表', componentType: 'AuxiliaryBalance' },
     { id: 'detail-ledger', title: '科目明细账', componentType: 'DetailLedger' },
     { id: 'journal', title: '序时账', componentType: 'Journal' },
+    { id: 'auxiliary-balance', title: '辅助余额表', componentType: 'AuxiliaryBalance' },
     { id: 'auxiliary-detail', title: '辅助明细账', componentType: 'AuxiliaryDetail' }
   ],
   'system-settings': [
@@ -97,7 +97,7 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openTab: (tab) => {
     const { tabs, activeTabId } = get()
-    const activeIndex = tabs.findIndex((t) => t.id === activeTabId)
+    const activeIndex = tabs.findIndex((item) => item.id === activeTabId)
 
     if (activeIndex >= 0 && isBlankTab(tabs[activeIndex])) {
       const blankId = tabs[activeIndex].id
@@ -112,7 +112,7 @@ export const useUIStore = create<UIState>((set, get) => ({
       return
     }
 
-    const existing = tabs.find((t) => !isBlankTab(t) && t.id === tab.id)
+    const existing = tabs.find((item) => !isBlankTab(item) && item.id === tab.id)
     if (existing) {
       const nextTabs = tabs.map((item) => (item.id === tab.id ? { ...item, ...tab } : item))
       set({
@@ -150,10 +150,10 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   closeTab: (tabId) => {
     const { tabs, activeTabId } = get()
-    const newTabs = tabs.filter((t) => t.id !== tabId)
+    const newTabs = tabs.filter((item) => item.id !== tabId)
     let newActiveId = activeTabId
     if (activeTabId === tabId) {
-      const closedIndex = tabs.findIndex((t) => t.id === tabId)
+      const closedIndex = tabs.findIndex((item) => item.id === tabId)
       if (newTabs.length > 0) {
         newActiveId = newTabs[Math.min(closedIndex, newTabs.length - 1)].id
       } else {

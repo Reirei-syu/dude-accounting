@@ -9,38 +9,48 @@ import {
 import * as Dialog from '@radix-ui/react-dialog'
 import Decimal from 'decimal.js'
 import { createPortal } from 'react-dom'
-import { getCurrentYearDateRange, type SubjectOption } from './bookQueryUtils'
+import { getCurrentYearDateRange, resolveAuxiliaryItemsForSubject } from './bookQueryUtils'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
-interface JournalProps {
+interface ReturnTabTarget {
+  id: string
+  title: string
+  componentType: string
+  params?: Record<string, unknown>
+}
+
+interface AuxiliaryBalanceProps {
   presetStartDate?: string
   presetEndDate?: string
   presetSubjectCodeStart?: string
   presetSubjectCodeEnd?: string
   presetIncludeUnpostedVouchers?: boolean
   presetOpenPreview?: boolean
+  returnTabOnPreviewClose?: ReturnTabTarget
   autoQuery?: boolean
   queryRequestKey?: number
 }
 
-interface JournalRow {
-  entry_id: number
-  voucher_id: number
-  voucher_date: string
-  voucher_number: number
-  voucher_word: string
-  summary: string
+interface AuxiliaryBalanceRow {
   subject_code: string
   subject_name: string
-  debit_amount: number
-  credit_amount: number
+  auxiliary_item_id: number
+  auxiliary_category: string
+  auxiliary_code: string
+  auxiliary_name: string
+  opening_debit_amount: number
+  opening_credit_amount: number
+  period_debit_amount: number
+  period_credit_amount: number
+  ending_debit_amount: number
+  ending_credit_amount: number
 }
 
-interface JournalContextMenuState {
+interface AuxiliaryBalanceContextMenuState {
   x: number
   y: number
-  row: JournalRow
+  row: AuxiliaryBalanceRow
 }
 
 function formatAmount(amountCents: number): string {
@@ -61,7 +71,18 @@ function clampMenuPosition(x: number, y: number): { x: number; y: number } {
   }
 }
 
-export default function Journal(props: JournalProps): JSX.Element {
+function rowHasDetail(row: AuxiliaryBalanceRow): boolean {
+  return (
+    row.opening_debit_amount !== 0 ||
+    row.opening_credit_amount !== 0 ||
+    row.period_debit_amount !== 0 ||
+    row.period_credit_amount !== 0 ||
+    row.ending_debit_amount !== 0 ||
+    row.ending_credit_amount !== 0
+  )
+}
+
+export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Element {
   const currentLedger = useLedgerStore((state) => state.currentLedger)
   const openTab = useUIStore((state) => state.openTab)
   const defaultRange = useMemo(() => getCurrentYearDateRange(), [])
@@ -73,11 +94,11 @@ export default function Journal(props: JournalProps): JSX.Element {
   const [includeUnpostedVouchers, setIncludeUnpostedVouchers] = useState(
     props.presetIncludeUnpostedVouchers ?? false
   )
-  const [subjectOptions, setSubjectOptions] = useState<SubjectOption[]>([])
-  const [activeEntryId, setActiveEntryId] = useState<number | null>(null)
-  const [contextMenu, setContextMenu] = useState<JournalContextMenuState | null>(null)
+  const [subjectOptions, setSubjectOptions] = useState<Array<{ code: string; name: string }>>([])
+  const [activeRowKey, setActiveRowKey] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<AuxiliaryBalanceContextMenuState | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
-  const [rows, setRows] = useState<JournalRow[]>([])
+  const [rows, setRows] = useState<AuxiliaryBalanceRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -117,7 +138,7 @@ export default function Journal(props: JournalProps): JSX.Element {
 
     setLoading(true)
     try {
-      const list = await window.api.bookQuery.getJournal({
+      const list = await window.api.bookQuery.getAuxiliaryBalances({
         ledgerId: currentLedger.id,
         startDate: nextDateFrom,
         endDate: nextDateTo,
@@ -126,8 +147,8 @@ export default function Journal(props: JournalProps): JSX.Element {
         includeUnpostedVouchers: nextIncludeUnposted
       })
 
-      setRows(list as JournalRow[])
-      setActiveEntryId(null)
+      setRows(list as AuxiliaryBalanceRow[])
+      setActiveRowKey(null)
       setContextMenu(null)
 
       if (overrides?.openPreview) {
@@ -135,7 +156,7 @@ export default function Journal(props: JournalProps): JSX.Element {
       }
     } catch (err) {
       setRows([])
-      setError(err instanceof Error ? err.message : '加载序时账失败')
+      setError(err instanceof Error ? err.message : '加载辅助余额表失败')
     } finally {
       setLoading(false)
     }
@@ -159,7 +180,7 @@ export default function Journal(props: JournalProps): JSX.Element {
       setSubjectCodeEnd(nextSubjectCodeEnd)
       setIncludeUnpostedVouchers(nextIncludeUnposted)
       setRows([])
-      setActiveEntryId(null)
+      setActiveRowKey(null)
       setContextMenu(null)
       setIsPreviewOpen(false)
       setError('')
@@ -172,17 +193,42 @@ export default function Journal(props: JournalProps): JSX.Element {
       }
 
       try {
-        const rawSubjects = (await window.api.subject.getAll(currentLedger.id)) as SubjectOption[]
-        const nextSubjectOptions = rawSubjects
+        const [rawSubjects, rawAuxiliaryItems] = await Promise.all([
+          window.api.subject.getAll(currentLedger.id),
+          window.api.auxiliary.getAll(currentLedger.id)
+        ])
+
+        if (cancelled) {
+          return
+        }
+
+        const nextSubjects = rawSubjects.map((subject) => ({
+          code: subject.code,
+          name: subject.name,
+          has_auxiliary: subject.has_auxiliary,
+          auxiliary_categories: subject.auxiliary_categories ?? [],
+          auxiliary_custom_items: (subject.auxiliary_custom_items ?? []).map((item) => ({
+            id: item.id,
+            category: 'custom',
+            code: item.code,
+            name: item.name
+          }))
+        }))
+        const nextAuxiliaryItems = rawAuxiliaryItems.map((item) => ({
+          id: item.id,
+          category: item.category,
+          code: item.code,
+          name: item.name
+        }))
+        const nextSubjectOptions = nextSubjects
+          .filter(
+            (subject) => resolveAuxiliaryItemsForSubject(subject, nextAuxiliaryItems).length > 0
+          )
           .map((subject) => ({
             code: subject.code,
             name: subject.name
           }))
           .sort((left, right) => left.code.localeCompare(right.code))
-
-        if (cancelled) {
-          return
-        }
 
         setSubjectOptions(nextSubjectOptions)
 
@@ -199,7 +245,7 @@ export default function Journal(props: JournalProps): JSX.Element {
       } catch (err) {
         if (!cancelled) {
           setSubjectOptions([])
-          setError(err instanceof Error ? err.message : '加载科目失败')
+          setError(err instanceof Error ? err.message : '加载辅助项目失败')
         }
       }
     }
@@ -256,44 +302,78 @@ export default function Journal(props: JournalProps): JSX.Element {
     void executeQuery({ openPreview: true })
   }
 
-  const openVoucherEntry = (row: JournalRow): void => {
+  const openAuxiliaryDetail = (row: AuxiliaryBalanceRow): void => {
+    if (!rowHasDetail(row)) {
+      return
+    }
+
     setIsPreviewOpen(false)
     setContextMenu(null)
     openTab({
-      id: 'voucher-entry',
-      title: '凭证录入',
-      componentType: 'VoucherEntry',
+      id: 'auxiliary-detail',
+      title: '辅助明细账',
+      componentType: 'AuxiliaryDetail',
       params: {
-        editVoucherId: row.voucher_id,
-        editRequestKey: Date.now()
+        presetSubjectCode: row.subject_code,
+        presetAuxiliaryItemId: row.auxiliary_item_id,
+        presetStartDate: dateFrom,
+        presetEndDate: dateTo,
+        presetIncludeUnpostedVouchers: includeUnpostedVouchers,
+        presetOpenPreview: isPreviewOpen,
+        returnTabOnPreviewClose: isPreviewOpen
+          ? {
+              id: 'auxiliary-balance',
+              title: '辅助余额表',
+              componentType: 'AuxiliaryBalance',
+              params: {
+                presetStartDate: dateFrom,
+                presetEndDate: dateTo,
+                presetSubjectCodeStart: subjectCodeStart,
+                presetSubjectCodeEnd: subjectCodeEnd,
+                presetIncludeUnpostedVouchers: includeUnpostedVouchers,
+                presetOpenPreview: true,
+                autoQuery: true,
+                queryRequestKey: Date.now()
+              }
+            }
+          : undefined,
+        autoQuery: true,
+        queryRequestKey: Date.now()
       }
     })
   }
 
-  const handleContextMenu = (event: ReactMouseEvent<HTMLDivElement>, row: JournalRow): void => {
+  const handleContextMenu = (
+    event: ReactMouseEvent<HTMLDivElement>,
+    row: AuxiliaryBalanceRow
+  ): void => {
     event.preventDefault()
     const position = clampMenuPosition(event.clientX, event.clientY)
-    setActiveEntryId(row.entry_id)
+    setActiveRowKey(`${row.subject_code}:${row.auxiliary_item_id}`)
     setContextMenu({ ...position, row })
   }
 
-  const renderTable = (tableRows: JournalRow[], fullHeight = false): JSX.Element => (
+  const renderTable = (tableRows: AuxiliaryBalanceRow[], fullHeight = false): JSX.Element => (
     <div className="h-full overflow-x-auto">
-      <div className="min-w-[1120px] h-full">
+      <div className="min-w-[1280px] h-full">
         <div
-          className="grid grid-cols-[120px_130px_2fr_120px_1.4fr_120px_120px] gap-3 py-2 px-3 border-b text-sm font-semibold"
+          className="grid grid-cols-[120px_1.3fr_120px_120px_1.3fr_repeat(6,minmax(110px,1fr))] gap-3 border-b px-3 py-2 text-sm font-semibold"
           style={{
             borderColor: 'var(--color-glass-border-light)',
             color: 'var(--color-text-primary)'
           }}
         >
-          <div>日期</div>
-          <div>凭证号</div>
-          <div>摘要</div>
           <div>科目编码</div>
           <div>科目名称</div>
-          <div className="text-right">借方</div>
-          <div className="text-right">贷方</div>
+          <div>辅助类别</div>
+          <div>辅助编码</div>
+          <div>辅助名称</div>
+          <div className="text-right">期初借方</div>
+          <div className="text-right">期初贷方</div>
+          <div className="text-right">本期借方</div>
+          <div className="text-right">本期贷方</div>
+          <div className="text-right">期末借方</div>
+          <div className="text-right">期末贷方</div>
         </div>
 
         <div
@@ -303,33 +383,37 @@ export default function Journal(props: JournalProps): JSX.Element {
               : 'h-[calc(100%-41px)] overflow-y-auto'
           }
         >
-          {tableRows.map((row) => (
-            <div
-              key={row.entry_id}
-              className="grid grid-cols-[120px_130px_2fr_120px_1.4fr_120px_120px] gap-3 py-2 px-3 border-b text-sm cursor-context-menu transition-colors hover:bg-black/5"
-              style={{
-                borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-secondary)',
-                background:
-                  activeEntryId === row.entry_id ? 'rgba(15, 23, 42, 0.08)' : 'transparent'
-              }}
-              onClick={() => {
-                setActiveEntryId(row.entry_id)
-                setContextMenu(null)
-              }}
-              onContextMenu={(event) => handleContextMenu(event, row)}
-            >
-              <div>{row.voucher_date}</div>
-              <div>
-                {row.voucher_word}-{String(row.voucher_number).padStart(4, '0')}
+          {tableRows.map((row) => {
+            const rowKey = `${row.subject_code}:${row.auxiliary_item_id}`
+            return (
+              <div
+                key={rowKey}
+                className="grid grid-cols-[120px_1.3fr_120px_120px_1.3fr_repeat(6,minmax(110px,1fr))] gap-3 border-b px-3 py-2 text-sm transition-colors hover:bg-black/5 cursor-context-menu"
+                style={{
+                  borderColor: 'var(--color-glass-border-light)',
+                  color: 'var(--color-text-secondary)',
+                  background: activeRowKey === rowKey ? 'rgba(15, 23, 42, 0.08)' : 'transparent'
+                }}
+                onClick={() => {
+                  setActiveRowKey(rowKey)
+                  setContextMenu(null)
+                }}
+                onContextMenu={(event) => handleContextMenu(event, row)}
+              >
+                <div>{row.subject_code}</div>
+                <div>{row.subject_name}</div>
+                <div>{row.auxiliary_category}</div>
+                <div>{row.auxiliary_code}</div>
+                <div>{row.auxiliary_name}</div>
+                <div className="text-right">{formatAmount(row.opening_debit_amount)}</div>
+                <div className="text-right">{formatAmount(row.opening_credit_amount)}</div>
+                <div className="text-right">{formatAmount(row.period_debit_amount)}</div>
+                <div className="text-right">{formatAmount(row.period_credit_amount)}</div>
+                <div className="text-right">{formatAmount(row.ending_debit_amount)}</div>
+                <div className="text-right">{formatAmount(row.ending_credit_amount)}</div>
               </div>
-              <div>{row.summary}</div>
-              <div>{row.subject_code}</div>
-              <div>{row.subject_name}</div>
-              <div className="text-right">{formatAmount(row.debit_amount)}</div>
-              <div className="text-right">{formatAmount(row.credit_amount)}</div>
-            </div>
-          ))}
+            )
+          })}
 
           {tableRows.length === 0 && !loading && (
             <div className="py-10 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
@@ -358,41 +442,42 @@ export default function Journal(props: JournalProps): JSX.Element {
       >
         <button
           type="button"
-          className="block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-black/5"
+          className="block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!rowHasDetail(contextMenu.row)}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
-            openVoucherEntry(contextMenu.row)
+            openAuxiliaryDetail(contextMenu.row)
           }}
         >
-          查询凭证
+          查询辅助明细账
         </button>
       </div>
     )
   }
 
   return (
-    <div className="h-full flex flex-col p-4 gap-4">
+    <div className="flex h-full flex-col gap-4 p-4">
       <div className="space-y-1">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          序时账
+          辅助余额表
         </h2>
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          支持按日期范围、科目范围和未记账口径查询序时账。右键明细行可直接查询凭证。
+          支持按日期范围、科目范围和未记账口径查询辅助余额。辅助期初当前按历史凭证滚算，不拆分科目期初数。
         </p>
       </div>
 
-      <form className="glass-panel-light p-3 flex flex-col gap-3" onSubmit={handleSubmit}>
-        <div className="flex items-center gap-3 flex-wrap">
+      <form className="glass-panel-light flex flex-col gap-3 p-3" onSubmit={handleSubmit}>
+        <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-sm"
-            htmlFor="journal-date-from"
+            htmlFor="aux-balance-date-from"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             从
           </label>
           <input
-            id="journal-date-from"
+            id="aux-balance-date-from"
             type="date"
             className="glass-input px-3 py-2 text-sm"
             value={dateFrom}
@@ -400,13 +485,13 @@ export default function Journal(props: JournalProps): JSX.Element {
           />
           <label
             className="text-sm"
-            htmlFor="journal-date-to"
+            htmlFor="aux-balance-date-to"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             到
           </label>
           <input
-            id="journal-date-to"
+            id="aux-balance-date-to"
             type="date"
             className="glass-input px-3 py-2 text-sm"
             value={dateTo}
@@ -435,23 +520,23 @@ export default function Journal(props: JournalProps): JSX.Element {
           </label>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-sm"
-            htmlFor="journal-range-start"
+            htmlFor="aux-balance-range-start"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             科目范围
           </label>
           <select
-            id="journal-range-start"
-            className="glass-input px-3 py-2 text-sm min-w-[220px]"
+            id="aux-balance-range-start"
+            className="glass-input min-w-[220px] px-3 py-2 text-sm"
             value={subjectCodeStart}
             onChange={(event) => setSubjectCodeStart(event.target.value)}
           >
-            <option value="">全部科目（起点）</option>
+            <option value="">全部辅助科目（起点）</option>
             {subjectOptions.map((subject) => (
-              <option key={`journal-start-${subject.code}`} value={subject.code}>
+              <option key={`aux-balance-start-${subject.code}`} value={subject.code}>
                 {subject.code} {subject.name}
               </option>
             ))}
@@ -460,14 +545,14 @@ export default function Journal(props: JournalProps): JSX.Element {
             至
           </span>
           <select
-            id="journal-range-end"
-            className="glass-input px-3 py-2 text-sm min-w-[220px]"
+            id="aux-balance-range-end"
+            className="glass-input min-w-[220px] px-3 py-2 text-sm"
             value={subjectCodeEnd}
             onChange={(event) => setSubjectCodeEnd(event.target.value)}
           >
-            <option value="">全部科目（终点）</option>
+            <option value="">全部辅助科目（终点）</option>
             {subjectOptions.map((subject) => (
-              <option key={`journal-end-${subject.code}`} value={subject.code}>
+              <option key={`aux-balance-end-${subject.code}`} value={subject.code}>
                 {subject.code} {subject.name}
               </option>
             ))}
@@ -485,7 +570,21 @@ export default function Journal(props: JournalProps): JSX.Element {
         </div>
       )}
 
-      <Dialog.Root open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+      <Dialog.Root
+        open={isPreviewOpen}
+        onOpenChange={(nextOpen) => {
+          if (nextOpen) {
+            setIsPreviewOpen(true)
+            return
+          }
+
+          setContextMenu(null)
+          setIsPreviewOpen(false)
+          if (props.returnTabOnPreviewClose) {
+            openTab(props.returnTabOnPreviewClose)
+          }
+        }}
+      >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-[180] bg-black/35 backdrop-blur-sm" />
           <Dialog.Content
@@ -498,7 +597,7 @@ export default function Journal(props: JournalProps): JSX.Element {
                   className="text-lg font-semibold"
                   style={{ color: 'var(--color-text-primary)' }}
                 >
-                  序时账
+                  辅助余额表
                 </Dialog.Title>
                 <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
                   {dateFrom} 至 {dateTo}

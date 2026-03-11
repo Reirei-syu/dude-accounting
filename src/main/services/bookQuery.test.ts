@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { getDetailLedger, getJournal, listSubjectBalances } from './bookQuery'
+import {
+  getAuxiliaryBalances,
+  getAuxiliaryDetail,
+  getDetailLedger,
+  getJournal,
+  listSubjectBalances
+} from './bookQuery'
 
 type LedgerRecord = {
   id: number
@@ -45,6 +51,20 @@ type VoucherEntryRecord = {
   subject_code: string
   debit_amount: number
   credit_amount: number
+  auxiliary_item_id?: number | null
+}
+
+type AuxiliaryItemRecord = {
+  id: number
+  ledger_id: number
+  category: string
+  code: string
+  name: string
+}
+
+type SubjectCustomAuxiliaryLinkRecord = {
+  subject_code: string
+  auxiliary_item_id: number
 }
 
 class FakeBookQueryDb {
@@ -53,6 +73,8 @@ class FakeBookQueryDb {
   readonly initialBalances: InitialBalanceRecord[] = []
   readonly vouchers: VoucherRecord[] = []
   readonly voucherEntries: VoucherEntryRecord[] = []
+  readonly auxiliaryItems: AuxiliaryItemRecord[] = []
+  readonly subjectCustomAuxiliaryLinks: SubjectCustomAuxiliaryLinkRecord[] = []
 
   prepare(sql: string): {
     get: (...params: unknown[]) => unknown
@@ -103,7 +125,61 @@ class FakeBookQueryDb {
       }
     }
 
+    if (normalized.includes('FROM subject_auxiliary_custom_items saci')) {
+      return {
+        get: () => undefined,
+        all: (ledgerId) =>
+          this.subjectCustomAuxiliaryLinks
+            .map((link) => {
+              const subject = this.subjects.find(
+                (candidate) =>
+                  candidate.ledger_id === Number(ledgerId) && candidate.code === link.subject_code
+              )
+              const auxiliary = this.auxiliaryItems.find(
+                (candidate) =>
+                  candidate.ledger_id === Number(ledgerId) &&
+                  candidate.id === link.auxiliary_item_id
+              )
+
+              if (!subject || !auxiliary) {
+                return null
+              }
+
+              return {
+                subject_code: subject.code,
+                auxiliary_item_id: auxiliary.id,
+                auxiliary_category: auxiliary.category,
+                auxiliary_code: auxiliary.code,
+                auxiliary_name: auxiliary.name
+              }
+            })
+            .filter((row) => row !== null)
+      }
+    }
+
+    if (
+      normalized.includes('FROM auxiliary_items') &&
+      normalized.includes('WHERE ledger_id = ? AND id = ?')
+    ) {
+      return {
+        get: (ledgerId, auxiliaryItemId) =>
+          this.auxiliaryItems.find(
+            (item) => item.ledger_id === Number(ledgerId) && item.id === Number(auxiliaryItemId)
+          ),
+        all: () => []
+      }
+    }
+
     if (normalized.includes('FROM vouchers v INNER JOIN voucher_entries ve')) {
+      if (normalized.includes('INNER JOIN auxiliary_items ai ON ai.id = ve.auxiliary_item_id')) {
+        const includeUnposted = normalized.includes('v.status IN (0, 1, 2)')
+        return {
+          get: () => undefined,
+          all: (ledgerId, startDate, endDate) =>
+            this.listAuxiliaryEntries(ledgerId, startDate, endDate, includeUnposted)
+        }
+      }
+
       const includeUnposted = normalized.includes('v.status IN (0, 1, 2)')
       return {
         get: () => undefined,
@@ -157,6 +233,45 @@ class FakeBookQueryDb {
           voucher_status: voucher.status
         }))
     )
+  }
+
+  private listAuxiliaryEntries(
+    ledgerId: unknown,
+    startDate: unknown,
+    endDate: unknown,
+    includeUnpostedVouchers: boolean
+  ): unknown[] {
+    const entries = this.listEntries(
+      ledgerId,
+      startDate,
+      endDate,
+      includeUnpostedVouchers
+    ) as Array<
+      VoucherEntryRecord & {
+        voucher_date: string
+        period: string
+        voucher_number: number
+        voucher_word: string
+        voucher_status: 0 | 1 | 2 | 3
+      }
+    >
+
+    return entries
+      .filter((entry) => typeof entry.auxiliary_item_id === 'number' && entry.auxiliary_item_id > 0)
+      .map((entry) => {
+        const auxiliary = this.auxiliaryItems.find((item) => item.id === entry.auxiliary_item_id)
+        if (!auxiliary) {
+          throw new Error(`Missing auxiliary item for entry ${entry.id}`)
+        }
+
+        return {
+          ...entry,
+          auxiliary_item_id: auxiliary.id,
+          auxiliary_category: auxiliary.category,
+          auxiliary_code: auxiliary.code,
+          auxiliary_name: auxiliary.name
+        }
+      })
   }
 }
 
@@ -234,6 +349,24 @@ function createDb(): FakeBookQueryDb {
       category: 'expense',
       balance_direction: 1,
       level: 1
+    },
+    {
+      ledger_id: 1,
+      code: '1501',
+      name: 'fixed-assets',
+      parent_code: null,
+      category: 'asset',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 1,
+      code: '2201',
+      name: 'accounts-payable',
+      parent_code: null,
+      category: 'liability',
+      balance_direction: -1,
+      level: 1
     }
   )
 
@@ -290,8 +423,46 @@ function createDb(): FakeBookQueryDb {
       voucher_number: 4,
       voucher_word: 'J',
       status: 1
+    },
+    {
+      id: 5,
+      ledger_id: 1,
+      period: '2026-01',
+      voucher_date: '2026-01-08',
+      voucher_number: 5,
+      voucher_word: 'J',
+      status: 2
     }
   )
+
+  db.auxiliaryItems.push(
+    {
+      id: 1,
+      ledger_id: 1,
+      category: 'department',
+      code: 'D001',
+      name: 'admin'
+    },
+    {
+      id: 2,
+      ledger_id: 1,
+      category: 'department',
+      code: 'D002',
+      name: 'fundraising'
+    },
+    {
+      id: 3,
+      ledger_id: 1,
+      category: 'custom',
+      code: 'FA001',
+      name: 'fixed-asset-card'
+    }
+  )
+
+  db.subjectCustomAuxiliaryLinks.push({
+    subject_code: '1501',
+    auxiliary_item_id: 3
+  })
 
   db.voucherEntries.push(
     {
@@ -301,7 +472,8 @@ function createDb(): FakeBookQueryDb {
       summary: 'feb-office',
       subject_code: '520101',
       debit_amount: 3_000,
-      credit_amount: 0
+      credit_amount: 0,
+      auxiliary_item_id: 1
     },
     {
       id: 2,
@@ -319,7 +491,8 @@ function createDb(): FakeBookQueryDb {
       summary: 'mar-travel',
       subject_code: '520102',
       debit_amount: 2_000,
-      credit_amount: 0
+      credit_amount: 0,
+      auxiliary_item_id: 1
     },
     {
       id: 4,
@@ -355,7 +528,8 @@ function createDb(): FakeBookQueryDb {
       summary: 'draft-travel',
       subject_code: '520102',
       debit_amount: 1_000,
-      credit_amount: 0
+      credit_amount: 0,
+      auxiliary_item_id: 2
     },
     {
       id: 8,
@@ -365,6 +539,24 @@ function createDb(): FakeBookQueryDb {
       subject_code: '1001',
       debit_amount: 0,
       credit_amount: 1_000
+    },
+    {
+      id: 9,
+      voucher_id: 5,
+      row_order: 1,
+      summary: 'buy-fixed-asset',
+      subject_code: '1501',
+      debit_amount: 50_000,
+      credit_amount: 0
+    },
+    {
+      id: 10,
+      voucher_id: 5,
+      row_order: 2,
+      summary: 'buy-fixed-asset',
+      subject_code: '2201',
+      debit_amount: 0,
+      credit_amount: 50_000
     }
   )
 
@@ -602,5 +794,126 @@ describe('bookQuery service', () => {
 
     expect(postedOnly.some((row) => row.voucher_id === 4)).toBe(false)
     expect(includeUnposted.some((row) => row.voucher_id === 4)).toBe(true)
+  })
+
+  it('lists auxiliary balance rows grouped by subject and auxiliary item', () => {
+    const db = createDb()
+
+    const rows = getAuxiliaryBalances(db as never, {
+      ledgerId: 1,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31',
+      subjectCodeStart: '5201',
+      subjectCodeEnd: '520199'
+    })
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        subject_code: '520101',
+        auxiliary_item_id: 1,
+        auxiliary_code: 'D001',
+        opening_debit_amount: 3_000,
+        ending_debit_amount: 3_000
+      }),
+      expect.objectContaining({
+        subject_code: '520102',
+        auxiliary_item_id: 1,
+        auxiliary_code: 'D001',
+        period_debit_amount: 2_000,
+        ending_debit_amount: 2_000
+      })
+    ])
+  })
+
+  it('builds auxiliary detail rows with running balance and optional unposted entries', () => {
+    const db = createDb()
+
+    const detail = getAuxiliaryDetail(db as never, {
+      ledgerId: 1,
+      subjectCode: '5201',
+      auxiliaryItemId: 1,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31'
+    })
+
+    expect(detail.auxiliary).toMatchObject({
+      id: 1,
+      code: 'D001',
+      name: 'admin'
+    })
+    expect(detail.rows[0]).toMatchObject({
+      row_type: 'opening',
+      balance_amount: 3_000
+    })
+    expect(detail.rows[1]).toMatchObject({
+      voucher_id: 2,
+      summary: 'mar-travel',
+      debit_amount: 2_000,
+      balance_amount: 5_000
+    })
+
+    const includeUnposted = getAuxiliaryDetail(db as never, {
+      ledgerId: 1,
+      subjectCode: '5201',
+      auxiliaryItemId: 2,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31',
+      includeUnpostedVouchers: true
+    })
+
+    expect(includeUnposted.rows.at(-1)).toMatchObject({
+      voucher_id: 4,
+      summary: 'draft-travel',
+      balance_amount: 1_000
+    })
+  })
+
+  it('infers auxiliary balance rows from unique custom subject bindings', () => {
+    const db = createDb()
+
+    const rows = getAuxiliaryBalances(db as never, {
+      ledgerId: 1,
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      subjectCodeStart: '1501',
+      subjectCodeEnd: '1501'
+    })
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        subject_code: '1501',
+        auxiliary_item_id: 3,
+        auxiliary_category: 'custom',
+        auxiliary_code: 'FA001',
+        period_debit_amount: 50_000,
+        ending_debit_amount: 50_000
+      })
+    ])
+  })
+
+  it('builds auxiliary detail from unique custom subject bindings even without entry auxiliary ids', () => {
+    const db = createDb()
+
+    const detail = getAuxiliaryDetail(db as never, {
+      ledgerId: 1,
+      subjectCode: '1501',
+      auxiliaryItemId: 3,
+      startDate: '2026-01-01',
+      endDate: '2026-01-31'
+    })
+
+    expect(detail.auxiliary).toMatchObject({
+      id: 3,
+      category: 'custom',
+      code: 'FA001',
+      name: 'fixed-asset-card'
+    })
+    expect(detail.rows).toHaveLength(2)
+    expect(detail.rows[1]).toMatchObject({
+      voucher_id: 5,
+      summary: 'buy-fixed-asset',
+      debit_amount: 50_000,
+      balance_amount: 50_000
+    })
   })
 })

@@ -1,9 +1,13 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import {
+  getAuxiliaryBalances,
+  getAuxiliaryDetail,
   getDetailLedger,
   getJournal,
   listSubjectBalances,
+  type AuxiliaryBalanceQuery,
+  type AuxiliaryDetailQuery,
   type DetailLedgerQuery,
   type JournalQuery,
   type SubjectBalanceQuery
@@ -26,5 +30,15 @@ export function registerBookQueryHandlers(): void {
   ipcMain.handle('bookQuery:getJournal', (event, query: JournalQuery) => {
     requireAuth(event)
     return getJournal(db, query)
+  })
+
+  ipcMain.handle('bookQuery:getAuxiliaryBalances', (event, query: AuxiliaryBalanceQuery) => {
+    requireAuth(event)
+    return getAuxiliaryBalances(db, query)
+  })
+
+  ipcMain.handle('bookQuery:getAuxiliaryDetail', (event, query: AuxiliaryDetailQuery) => {
+    requireAuth(event)
+    return getAuxiliaryDetail(db, query)
   })
 }

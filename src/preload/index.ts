@@ -297,7 +297,23 @@ const api = {
       subjectCodeStart?: string
       subjectCodeEnd?: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getJournal', query)
+    }) => ipcRenderer.invoke('bookQuery:getJournal', query),
+    getAuxiliaryBalances: (query: {
+      ledgerId: number
+      startDate: string
+      endDate: string
+      subjectCodeStart?: string
+      subjectCodeEnd?: string
+      includeUnpostedVouchers?: boolean
+    }) => ipcRenderer.invoke('bookQuery:getAuxiliaryBalances', query),
+    getAuxiliaryDetail: (query: {
+      ledgerId: number
+      subjectCode: string
+      auxiliaryItemId: number
+      startDate: string
+      endDate: string
+      includeUnpostedVouchers?: boolean
+    }) => ipcRenderer.invoke('bookQuery:getAuxiliaryDetail', query)
   }
 }
 

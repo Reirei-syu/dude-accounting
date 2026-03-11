@@ -11,8 +11,11 @@ import Decimal from 'decimal.js'
 import { createPortal } from 'react-dom'
 import {
   filterSubjectRowsByCodeRange,
-  getPeriodDateRange,
-  type SubjectOption
+  getCurrentYearDateRange,
+  resolveAuxiliaryItemsForSubject,
+  type AuxiliaryItemOption,
+  type SubjectOption,
+  type SubjectWithAuxiliary
 } from './bookQueryUtils'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -54,10 +57,6 @@ function formatAmount(amountCents: number): string {
   return new Decimal(amountCents).div(100).toFixed(2)
 }
 
-function getCurrentPeriod(): string {
-  return new Date().toISOString().slice(0, 7)
-}
-
 function clampMenuPosition(x: number, y: number): { x: number; y: number } {
   const menuWidth = 180
   const menuHeight = 132
@@ -75,11 +74,7 @@ function clampMenuPosition(x: number, y: number): { x: number; y: number } {
 export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element {
   const currentLedger = useLedgerStore((state) => state.currentLedger)
   const openTab = useUIStore((state) => state.openTab)
-  const defaultPeriod = useMemo(getCurrentPeriod, [])
-  const defaultRange = useMemo(
-    () => getPeriodDateRange(currentLedger?.current_period ?? defaultPeriod),
-    [currentLedger?.current_period, defaultPeriod]
-  )
+  const defaultRange = useMemo(() => getCurrentYearDateRange(), [])
 
   const [dateFrom, setDateFrom] = useState(props.presetStartDate ?? defaultRange.startDate)
   const [dateTo, setDateTo] = useState(props.presetEndDate ?? defaultRange.endDate)
@@ -91,7 +86,9 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
   const [includeZeroBalance, setIncludeZeroBalance] = useState(
     props.presetIncludeZeroBalance ?? false
   )
+  const [subjects, setSubjects] = useState<SubjectWithAuxiliary[]>([])
   const [subjectOptions, setSubjectOptions] = useState<SubjectOption[]>([])
+  const [allAuxiliaryItems, setAllAuxiliaryItems] = useState<AuxiliaryItemOption[]>([])
   const [activeSubjectCode, setActiveSubjectCode] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<SubjectContextMenuState | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
@@ -170,7 +167,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
     let cancelled = false
 
     const run = async (): Promise<void> => {
-      const nextRange = getPeriodDateRange(currentLedger?.current_period ?? defaultPeriod)
+      const nextRange = getCurrentYearDateRange()
       const nextDateFrom = props.presetStartDate ?? nextRange.startDate
       const nextDateTo = props.presetEndDate ?? nextRange.endDate
       const nextSubjectCodeStart = props.presetSubjectCodeStart ?? ''
@@ -193,25 +190,51 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
 
       if (!currentLedger || !window.electron || currentLedger.standard_type !== 'npo') {
         if (!cancelled) {
+          setSubjects([])
           setSubjectOptions([])
+          setAllAuxiliaryItems([])
         }
         return
       }
 
       try {
-        const rawSubjects = (await window.api.subject.getAll(currentLedger.id)) as SubjectOption[]
-        const nextSubjectOptions = rawSubjects
+        const [rawSubjects, rawAuxiliaryItems] = await Promise.all([
+          window.api.subject.getAll(currentLedger.id),
+          window.api.auxiliary.getAll(currentLedger.id)
+        ])
+
+        if (cancelled) {
+          return
+        }
+
+        const nextSubjects = rawSubjects.map((subject) => ({
+          code: subject.code,
+          name: subject.name,
+          has_auxiliary: subject.has_auxiliary,
+          auxiliary_categories: subject.auxiliary_categories ?? [],
+          auxiliary_custom_items: (subject.auxiliary_custom_items ?? []).map((item) => ({
+            id: item.id,
+            category: 'custom',
+            code: item.code,
+            name: item.name
+          }))
+        }))
+        const nextAuxiliaryItems = rawAuxiliaryItems.map((item) => ({
+          id: item.id,
+          category: item.category,
+          code: item.code,
+          name: item.name
+        }))
+        const nextSubjectOptions = nextSubjects
           .map((subject) => ({
             code: subject.code,
             name: subject.name
           }))
           .sort((left, right) => left.code.localeCompare(right.code))
 
-        if (cancelled) {
-          return
-        }
-
+        setSubjects(nextSubjects)
         setSubjectOptions(nextSubjectOptions)
+        setAllAuxiliaryItems(nextAuxiliaryItems)
 
         if (props.autoQuery) {
           void executeQuery({
@@ -226,7 +249,9 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
         }
       } catch (err) {
         if (!cancelled) {
+          setSubjects([])
           setSubjectOptions([])
+          setAllAuxiliaryItems([])
           setError(err instanceof Error ? err.message : '加载科目失败')
         }
       }
@@ -240,7 +265,6 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
   }, [
     currentLedger?.id,
     currentLedger?.current_period,
-    defaultPeriod,
     props.autoQuery,
     props.presetEndDate,
     props.presetIncludeUnpostedVouchers,
@@ -286,6 +310,12 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
     void executeQuery({ openPreview: true })
   }
 
+  const canQueryAuxiliary = (subjectCode: string): boolean =>
+    resolveAuxiliaryItemsForSubject(
+      subjects.find((item) => item.code === subjectCode),
+      allAuxiliaryItems
+    ).length > 0
+
   const openDetailLedger = (row: SubjectBalanceRow): void => {
     setIsPreviewOpen(false)
     setContextMenu(null)
@@ -297,6 +327,48 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
         presetSubjectCode: row.subject_code,
         presetStartDate: dateFrom,
         presetEndDate: dateTo,
+        presetIncludeUnpostedVouchers: includeUnpostedVouchers,
+        presetOpenPreview: isPreviewOpen,
+        returnTabOnPreviewClose: isPreviewOpen
+          ? {
+              id: 'subject-balance',
+              title: '科目余额表',
+              componentType: 'SubjectBalance',
+              params: {
+                presetStartDate: dateFrom,
+                presetEndDate: dateTo,
+                presetSubjectCodeStart: subjectCodeStart,
+                presetSubjectCodeEnd: subjectCodeEnd,
+                presetIncludeUnpostedVouchers: includeUnpostedVouchers,
+                presetIncludeZeroBalance: includeZeroBalance,
+                presetOpenPreview: true,
+                autoQuery: true,
+                queryRequestKey: Date.now()
+              }
+            }
+          : undefined,
+        autoQuery: true,
+        queryRequestKey: Date.now()
+      }
+    })
+  }
+
+  const openAuxiliaryBalance = (row: SubjectBalanceRow): void => {
+    if (!canQueryAuxiliary(row.subject_code)) {
+      return
+    }
+
+    setIsPreviewOpen(false)
+    setContextMenu(null)
+    openTab({
+      id: 'auxiliary-balance',
+      title: '辅助余额表',
+      componentType: 'AuxiliaryBalance',
+      params: {
+        presetStartDate: dateFrom,
+        presetEndDate: dateTo,
+        presetSubjectCodeStart: row.subject_code,
+        presetSubjectCodeEnd: row.subject_code,
         presetIncludeUnpostedVouchers: includeUnpostedVouchers,
         presetOpenPreview: isPreviewOpen,
         returnTabOnPreviewClose: isPreviewOpen
@@ -337,7 +409,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
     <div className="h-full overflow-x-auto">
       <div className="min-w-[1040px] h-full">
         <div
-          className="grid grid-cols-[120px_2fr_repeat(6,minmax(110px,1fr))] gap-3 py-2 px-3 border-b text-sm font-semibold"
+          className="grid grid-cols-[120px_2fr_repeat(6,minmax(110px,1fr))] gap-3 border-b px-3 py-2 text-sm font-semibold"
           style={{
             borderColor: 'var(--color-glass-border-light)',
             color: 'var(--color-text-primary)'
@@ -363,7 +435,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
           {tableRows.map((row) => (
             <div
               key={row.subject_code}
-              className={`grid grid-cols-[120px_2fr_repeat(6,minmax(110px,1fr))] gap-3 py-2 px-3 border-b text-sm transition-colors ${
+              className={`grid grid-cols-[120px_2fr_repeat(6,minmax(110px,1fr))] gap-3 border-b px-3 py-2 text-sm transition-colors ${
                 row.is_leaf === 1 ? 'cursor-context-menu hover:bg-black/5' : 'cursor-default'
               }`}
               style={{
@@ -406,6 +478,8 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
       return null
     }
 
+    const auxiliaryEnabled = canQueryAuxiliary(contextMenu.row.subject_code)
+
     return (
       <div
         className="fixed z-[260] min-w-[180px] rounded-xl border bg-white/95 p-1 shadow-xl backdrop-blur-md"
@@ -429,15 +503,20 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
         </button>
         <button
           type="button"
-          className="block w-full rounded-lg px-3 py-2 text-left text-sm opacity-40 cursor-not-allowed"
+          className="block w-full cursor-not-allowed rounded-lg px-3 py-2 text-left text-sm opacity-40"
           disabled
         >
           查询总账
         </button>
         <button
           type="button"
-          className="block w-full rounded-lg px-3 py-2 text-left text-sm opacity-40 cursor-not-allowed"
-          disabled
+          className="block w-full cursor-pointer rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!auxiliaryEnabled}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            openAuxiliaryBalance(contextMenu.row)
+          }}
         >
           查询辅助账
         </button>
@@ -446,18 +525,18 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
   }
 
   return (
-    <div className="h-full flex flex-col p-4 gap-4">
+    <div className="flex h-full flex-col gap-4 p-4">
       <div className="space-y-1">
         <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
           科目余额表
         </h2>
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-          支持区间查询、未记账口径和零余额科目显示开关。右键科目行可展开账簿导航菜单。
+          支持区间查询、未记账凭证和零余额科目显示开关。右键科目行可展开账簿导航菜单。
         </p>
       </div>
 
-      <form className="glass-panel-light p-3 flex flex-col gap-3" onSubmit={handleSubmit}>
-        <div className="flex items-center gap-3 flex-wrap">
+      <form className="glass-panel-light flex flex-col gap-3 p-3" onSubmit={handleSubmit}>
+        <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-sm"
             htmlFor="subject-balance-date-from"
@@ -520,7 +599,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
           </label>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex flex-wrap items-center gap-3">
           <label
             className="text-sm"
             htmlFor="subject-balance-range-start"
@@ -530,7 +609,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
           </label>
           <select
             id="subject-balance-range-start"
-            className="glass-input px-3 py-2 text-sm min-w-[220px]"
+            className="glass-input min-w-[220px] px-3 py-2 text-sm"
             value={subjectCodeStart}
             onChange={(event) => setSubjectCodeStart(event.target.value)}
           >
@@ -546,7 +625,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
           </span>
           <select
             id="subject-balance-range-end"
-            className="glass-input px-3 py-2 text-sm min-w-[220px]"
+            className="glass-input min-w-[220px] px-3 py-2 text-sm"
             value={subjectCodeEnd}
             onChange={(event) => setSubjectCodeEnd(event.target.value)}
           >
