@@ -376,6 +376,8 @@ Documentation sync required:
 - 当前已覆盖的账簿子功能包括：科目余额表、科目明细账、序时账、辅助余额表、辅助明细账。
 - 账簿查询默认日期范围统一为“本年 1 月 1 日至今天”；全屏查看、右键交叉查询、未记账凭证口径在企业账套与民非账套保持一致。
 - `bookQuery` IPC 现作为通用账簿查询入口供两类账套共用：`listSubjectBalances`、`getDetailLedger`、`getJournal`、`getAuxiliaryBalances`、`getAuxiliaryDetail`。
+- 账簿查询模块现已支持每种账簿按当前筛选结果导出 `Excel` 与 `PDF`，导出采用另存为流程，并记忆上一次保存目录。
+- 凭证分录需显式保存 `voucher_entries.auxiliary_item_id`，账簿辅助查询不得再依赖“科目仅绑定唯一辅助项”的推断作为主路径；该推断仅保留为历史数据兼容。
 
 ---
 

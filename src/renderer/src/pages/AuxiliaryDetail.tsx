@@ -16,6 +16,8 @@ import {
   type AuxiliaryItemOption,
   type SubjectWithAuxiliary
 } from './bookQueryUtils'
+import { toExportAmount, type BookExportFormat } from './bookExportUtils'
+import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -333,6 +335,71 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
     void executeQuery({ openPreview: true })
   }
 
+  const handleExport = async (format: BookExportFormat): Promise<void> => {
+    setError('')
+
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+
+    if (!window.electron) {
+      setError('浏览器预览模式不支持导出')
+      return
+    }
+
+    if (rows.length === 0) {
+      setError('当前没有可导出的账簿数据')
+      return
+    }
+
+    const result = await window.api.bookQuery.export({
+      ledgerId: currentLedger.id,
+      bookType: 'auxiliary_detail',
+      title: '辅助明细账',
+      subtitle: `${subjectCode || ''} ${subjectName || selectedSubject?.name || ''} / ${
+        selectedAuxiliary?.code ?? auxiliaryItemId ?? ''
+      } ${auxiliaryName || selectedAuxiliary?.name || ''} / ${dateFrom}至${dateTo}`,
+      ledgerName: currentLedger.name,
+      subjectLabel: `科目：${subjectCode || ''} ${subjectName || selectedSubject?.name || ''}`,
+      periodLabel: `${dateFrom} 至 ${dateTo}`,
+      format,
+      columns: [
+        { key: 'voucher_date', label: '日期', align: 'left' },
+        { key: 'voucher_number', label: '凭证号', align: 'left' },
+        { key: 'summary', label: '摘要', align: 'left' },
+        { key: 'debit', label: '借方', align: 'right' },
+        { key: 'credit', label: '贷方', align: 'right' },
+        { key: 'balance_side', label: '方向', align: 'center' },
+        { key: 'balance', label: '余额', align: 'right' }
+      ],
+      rows: rows.map((row, index) => ({
+        key:
+          row.row_type === 'opening'
+            ? 'opening'
+            : `${row.voucher_id ?? 'voucher'}-${row.voucher_date}-${index}`,
+        cells: [
+          { value: row.voucher_date || '' },
+          {
+            value:
+              row.voucher_word && row.voucher_number !== null
+                ? `${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`
+                : ''
+          },
+          { value: row.summary },
+          { value: toExportAmount(row.debit_amount), isAmount: true },
+          { value: toExportAmount(row.credit_amount), isAmount: true },
+          { value: getBalanceSideLabel(row.balance_side) },
+          { value: toExportAmount(row.balance_amount), isAmount: true }
+        ]
+      }))
+    })
+
+    if (!result.success && !result.cancelled) {
+      setError(result.error ?? '导出账簿失败')
+    }
+  }
+
   const handlePreviewOpenChange = (nextOpen: boolean): void => {
     if (nextOpen) {
       setIsPreviewOpen(true)
@@ -495,7 +562,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
       </div>
 
       <form className="glass-panel-light flex flex-col gap-3 p-3" onSubmit={handleSubmit}>
-        <div className="flex flex-wrap items-center gap-3">
+        <ScaledFilterRow>
           <label
             className="text-sm"
             htmlFor="aux-detail-date-from"
@@ -534,9 +601,25 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
           >
             {loading ? '查询中...' : '全屏查看'}
           </button>
-        </div>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
+            onClick={() => void handleExport('xlsx')}
+          >
+            导出 Excel
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
+            onClick={() => void handleExport('pdf')}
+          >
+            导出 PDF
+          </button>
+        </ScaledFilterRow>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <ScaledFilterRow>
           <label
             className="text-sm"
             htmlFor="aux-detail-subject"
@@ -598,6 +681,9 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
               </option>
             ))}
           </select>
+        </ScaledFilterRow>
+
+        <ScaledFilterRow>
           <label
             className="inline-flex items-center gap-2 text-sm"
             style={{ color: 'var(--color-text-secondary)' }}
@@ -609,7 +695,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
             />
             未记账凭证
           </label>
-        </div>
+        </ScaledFilterRow>
       </form>
 
       <div

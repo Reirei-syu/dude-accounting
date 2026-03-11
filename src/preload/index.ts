@@ -313,7 +313,30 @@ const api = {
       startDate: string
       endDate: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getAuxiliaryDetail', query)
+    }) => ipcRenderer.invoke('bookQuery:getAuxiliaryDetail', query),
+    export: (payload: {
+      ledgerId: number
+      bookType: string
+      title: string
+      subtitle?: string
+      ledgerName?: string
+      subjectLabel?: string
+      periodLabel?: string
+      format: 'xlsx' | 'pdf'
+      columns: Array<{
+        key: string
+        label: string
+        align?: 'left' | 'center' | 'right'
+      }>
+      rows: Array<{
+        key: string
+        cells: Array<{
+          value: string | number | null
+          isAmount?: boolean
+        }>
+      }>
+      filePath?: string
+    }) => ipcRenderer.invoke('bookQuery:export', payload)
   }
 }
 

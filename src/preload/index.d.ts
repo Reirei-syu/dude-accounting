@@ -910,6 +910,34 @@ interface BookQueryAPI {
       balance_side: 'debit' | 'credit' | 'flat'
     }>
   }>
+  export: (payload: {
+    ledgerId: number
+    bookType: string
+    title: string
+    subtitle?: string
+    ledgerName?: string
+    subjectLabel?: string
+    periodLabel?: string
+    format: 'xlsx' | 'pdf'
+    columns: Array<{
+      key: string
+      label: string
+      align?: 'left' | 'center' | 'right'
+    }>
+    rows: Array<{
+      key: string
+      cells: Array<{
+        value: string | number | null
+        isAmount?: boolean
+      }>
+    }>
+    filePath?: string
+  }) => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    filePath?: string
+  }>
 }
 
 interface DudeAPI {

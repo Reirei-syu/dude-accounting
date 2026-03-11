@@ -10,6 +10,8 @@ import * as Dialog from '@radix-ui/react-dialog'
 import Decimal from 'decimal.js'
 import { createPortal } from 'react-dom'
 import { getBalanceSideLabel, getCurrentYearDateRange, type SubjectOption } from './bookQueryUtils'
+import { toExportAmount, type BookExportFormat } from './bookExportUtils'
+import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -270,6 +272,69 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     void executeQuery({ openPreview: true })
   }
 
+  const handleExport = async (format: BookExportFormat): Promise<void> => {
+    setError('')
+
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+
+    if (!window.electron) {
+      setError('浏览器预览模式不支持导出')
+      return
+    }
+
+    if (rows.length === 0) {
+      setError('当前没有可导出的账簿数据')
+      return
+    }
+
+    const result = await window.api.bookQuery.export({
+      ledgerId: currentLedger.id,
+      bookType: 'detail_ledger',
+      title: '科目明细账',
+      subtitle: `${subjectCode} ${subjectName || selectedSubject?.name || ''} / ${dateFrom}至${dateTo}`,
+      ledgerName: currentLedger.name,
+      subjectLabel: `科目：${subjectCode} ${subjectName || selectedSubject?.name || ''}`,
+      periodLabel: `${dateFrom} 至 ${dateTo}`,
+      format,
+      columns: [
+        { key: 'voucher_date', label: '日期', align: 'left' },
+        { key: 'voucher_number', label: '凭证号', align: 'left' },
+        { key: 'summary', label: '摘要', align: 'left' },
+        { key: 'debit', label: '借方', align: 'right' },
+        { key: 'credit', label: '贷方', align: 'right' },
+        { key: 'balance_side', label: '方向', align: 'center' },
+        { key: 'balance', label: '余额', align: 'right' }
+      ],
+      rows: rows.map((row, index) => ({
+        key:
+          row.row_type === 'opening'
+            ? 'opening'
+            : `${row.voucher_id ?? 'voucher'}-${row.voucher_date}-${index}`,
+        cells: [
+          { value: row.voucher_date || '' },
+          {
+            value:
+              row.voucher_word && row.voucher_number !== null
+                ? `${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`
+                : ''
+          },
+          { value: row.summary },
+          { value: toExportAmount(row.debit_amount), isAmount: true },
+          { value: toExportAmount(row.credit_amount), isAmount: true },
+          { value: getBalanceSideLabel(row.balance_side) },
+          { value: toExportAmount(row.balance_amount), isAmount: true }
+        ]
+      }))
+    })
+
+    if (!result.success && !result.cancelled) {
+      setError(result.error ?? '导出账簿失败')
+    }
+  }
+
   const handlePreviewOpenChange = (nextOpen: boolean): void => {
     if (nextOpen) {
       setIsPreviewOpen(true)
@@ -432,16 +497,16 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       </div>
 
       <form className="glass-panel-light p-3 flex flex-col gap-3" onSubmit={handleSubmit}>
-        <div className="flex items-center gap-3 flex-wrap">
+        <ScaledFilterRow>
           <label
             className="text-sm"
-            htmlFor="detail-ledger-date-from"
+            htmlFor="detail-ledger-date-from-compact"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             从
           </label>
           <input
-            id="detail-ledger-date-from"
+            id="detail-ledger-date-from-compact"
             type="date"
             className="glass-input px-3 py-2 text-sm"
             value={dateFrom}
@@ -449,41 +514,18 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
           />
           <label
             className="text-sm"
-            htmlFor="detail-ledger-date-to"
+            htmlFor="detail-ledger-date-to-compact"
             style={{ color: 'var(--color-text-secondary)' }}
           >
             到
           </label>
           <input
-            id="detail-ledger-date-to"
+            id="detail-ledger-date-to-compact"
             type="date"
             className="glass-input px-3 py-2 text-sm"
             value={dateTo}
             onChange={(event) => setDateTo(event.target.value)}
           />
-          <label
-            className="text-sm"
-            htmlFor="detail-ledger-subject"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            科目
-          </label>
-          <select
-            id="detail-ledger-subject"
-            className="glass-input px-3 py-2 text-sm min-w-[260px]"
-            value={subjectCode}
-            onChange={(event) => {
-              setSubjectCode(event.target.value)
-              setSubjectName(subjects.find((item) => item.code === event.target.value)?.name ?? '')
-            }}
-          >
-            {subjects.length === 0 && <option value="">暂无科目</option>}
-            {subjects.map((subject) => (
-              <option key={subject.code} value={subject.code}>
-                {subject.code} {subject.name}
-              </option>
-            ))}
-          </select>
           <button className="glass-btn-secondary px-5 py-2" type="submit">
             {loading ? '查询中...' : '查询'}
           </button>
@@ -494,9 +536,51 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
           >
             {loading ? '查询中...' : '全屏查看'}
           </button>
-        </div>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
+            onClick={() => void handleExport('xlsx')}
+          >
+            导出 Excel
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
+            onClick={() => void handleExport('pdf')}
+          >
+            导出 PDF
+          </button>
+        </ScaledFilterRow>
 
-        <div className="flex items-center gap-6 flex-wrap">
+        <ScaledFilterRow>
+          <label
+            className="text-sm"
+            htmlFor="detail-ledger-subject-compact"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
+            科目
+          </label>
+          <select
+            id="detail-ledger-subject-compact"
+            className="glass-input px-3 py-2 text-sm min-w-[260px]"
+            value={subjectCode}
+            onChange={(event) => {
+              setSubjectCode(event.target.value)
+              setSubjectName(subjects.find((item) => item.code === event.target.value)?.name ?? '')
+            }}
+          >
+            {subjects.length === 0 && <option value="">暂无科目</option>}
+            {subjects.map((subject) => (
+              <option key={`compact-${subject.code}`} value={subject.code}>
+                {subject.code} {subject.name}
+              </option>
+            ))}
+          </select>
+        </ScaledFilterRow>
+
+        <ScaledFilterRow>
           <label
             className="inline-flex items-center gap-2 text-sm"
             style={{ color: 'var(--color-text-secondary)' }}
@@ -508,6 +592,104 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
             />
             未记账凭证
           </label>
+        </ScaledFilterRow>
+
+        <div className="hidden">
+          <div className="flex items-center gap-3 flex-wrap">
+            <label
+              className="text-sm"
+              htmlFor="detail-ledger-date-from"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              从
+            </label>
+            <input
+              id="detail-ledger-date-from"
+              type="date"
+              className="glass-input px-3 py-2 text-sm"
+              value={dateFrom}
+              onChange={(event) => setDateFrom(event.target.value)}
+            />
+            <label
+              className="text-sm"
+              htmlFor="detail-ledger-date-to"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              到
+            </label>
+            <input
+              id="detail-ledger-date-to"
+              type="date"
+              className="glass-input px-3 py-2 text-sm"
+              value={dateTo}
+              onChange={(event) => setDateTo(event.target.value)}
+            />
+            <label
+              className="text-sm"
+              htmlFor="detail-ledger-subject"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              科目
+            </label>
+            <select
+              id="detail-ledger-subject"
+              className="glass-input px-3 py-2 text-sm min-w-[260px]"
+              value={subjectCode}
+              onChange={(event) => {
+                setSubjectCode(event.target.value)
+                setSubjectName(
+                  subjects.find((item) => item.code === event.target.value)?.name ?? ''
+                )
+              }}
+            >
+              {subjects.length === 0 && <option value="">暂无科目</option>}
+              {subjects.map((subject) => (
+                <option key={subject.code} value={subject.code}>
+                  {subject.code} {subject.name}
+                </option>
+              ))}
+            </select>
+            <button className="glass-btn-secondary px-5 py-2" type="submit">
+              {loading ? '查询中...' : '查询'}
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2"
+              type="button"
+              onClick={handleOpenPreview}
+            >
+              {loading ? '查询中...' : '全屏查看'}
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              disabled={loading || rows.length === 0}
+              onClick={() => void handleExport('xlsx')}
+            >
+              导出 Excel
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              disabled={loading || rows.length === 0}
+              onClick={() => void handleExport('pdf')}
+            >
+              导出 PDF
+            </button>
+          </div>
+
+          <div className="flex items-center gap-6 flex-wrap">
+            <label
+              className="inline-flex items-center gap-2 text-sm"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              <input
+                type="checkbox"
+                checked={includeUnpostedVouchers}
+                onChange={(event) => setIncludeUnpostedVouchers(event.target.checked)}
+              />
+              未记账凭证
+            </label>
+          </div>
         </div>
       </form>
 
