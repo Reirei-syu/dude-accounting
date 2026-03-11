@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getDetailLedger, listSubjectBalances } from './bookQuery'
+import { getDetailLedger, getJournal, listSubjectBalances } from './bookQuery'
 
 type LedgerRecord = {
   id: number
@@ -559,5 +559,48 @@ describe('bookQuery service', () => {
       debit_amount: 2_000,
       balance_amount: 5_000
     })
+  })
+
+  it('lists journal rows for a date range and subject code range', () => {
+    const db = createDb()
+
+    const rows = getJournal(db as never, {
+      ledgerId: 1,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31',
+      subjectCodeStart: '5201',
+      subjectCodeEnd: '520199'
+    })
+
+    expect(rows).toEqual([
+      expect.objectContaining({
+        voucher_id: 2,
+        voucher_date: '2026-03-05',
+        summary: 'mar-travel',
+        subject_code: '520102',
+        subject_name: 'travel',
+        debit_amount: 2_000,
+        credit_amount: 0
+      })
+    ])
+  })
+
+  it('includes unposted vouchers in journal only when requested', () => {
+    const db = createDb()
+
+    const postedOnly = getJournal(db as never, {
+      ledgerId: 1,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31'
+    })
+    const includeUnposted = getJournal(db as never, {
+      ledgerId: 1,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31',
+      includeUnpostedVouchers: true
+    })
+
+    expect(postedOnly.some((row) => row.voucher_id === 4)).toBe(false)
+    expect(includeUnposted.some((row) => row.voucher_id === 4)).toBe(true)
   })
 })

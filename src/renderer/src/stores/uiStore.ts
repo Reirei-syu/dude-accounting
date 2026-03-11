@@ -52,7 +52,6 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
     { id: 'period-close', title: '结账', componentType: 'PeriodClose' }
   ],
   'ledger-query': [
-    { id: 'trial-balance', title: '总账余额表', componentType: 'TrialBalance' },
     { id: 'subject-balance', title: '科目余额表', componentType: 'SubjectBalance' },
     { id: 'auxiliary-balance', title: '辅助余额表', componentType: 'AuxiliaryBalance' },
     { id: 'detail-ledger', title: '科目明细账', componentType: 'DetailLedger' },

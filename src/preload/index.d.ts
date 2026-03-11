@@ -832,6 +832,27 @@ interface BookQueryAPI {
       balance_side: 'debit' | 'credit' | 'flat'
     }>
   }>
+  getJournal: (query: {
+    ledgerId: number
+    startDate: string
+    endDate: string
+    subjectCodeStart?: string
+    subjectCodeEnd?: string
+    includeUnpostedVouchers?: boolean
+  }) => Promise<
+    Array<{
+      entry_id: number
+      voucher_id: number
+      voucher_date: string
+      voucher_number: number
+      voucher_word: string
+      summary: string
+      subject_code: string
+      subject_name: string
+      debit_amount: number
+      credit_amount: number
+    }>
+  >
 }
 
 interface DudeAPI {

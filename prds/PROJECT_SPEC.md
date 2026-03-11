@@ -290,7 +290,7 @@ Current:
 - `initialBalance:*`
 - `period:*`
 - `settings:*`
-- `bookQuery:listSubjectBalances/getDetailLedger`
+- `bookQuery:listSubjectBalances/getDetailLedger/getJournal`
 - `reporting:generate/list/getDetail/delete/export`
 
 In-flight:

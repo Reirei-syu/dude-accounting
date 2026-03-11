@@ -18,6 +18,7 @@ import ReportWorkspacePage from '../pages/ReportWorkspacePage'
 import ReportQuery from '../pages/ReportQuery'
 import SubjectBalance from '../pages/SubjectBalance'
 import DetailLedger from '../pages/DetailLedger'
+import Journal from '../pages/Journal'
 import type React from 'react'
 import type { JSX } from 'react'
 
@@ -48,7 +49,8 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   EquityStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   ReportQuery: ReportQuery as React.ComponentType<WorkspaceComponentProps>,
   SubjectBalance: SubjectBalance as React.ComponentType<WorkspaceComponentProps>,
-  DetailLedger: DetailLedger as React.ComponentType<WorkspaceComponentProps>
+  DetailLedger: DetailLedger as React.ComponentType<WorkspaceComponentProps>,
+  Journal: Journal as React.ComponentType<WorkspaceComponentProps>
 }
 
 export default function Workspace(): JSX.Element {

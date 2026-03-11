@@ -102,6 +102,28 @@ export interface DetailLedgerResult {
   rows: DetailLedgerRow[]
 }
 
+export interface JournalQuery {
+  ledgerId: number
+  startDate: string
+  endDate: string
+  subjectCodeStart?: string
+  subjectCodeEnd?: string
+  includeUnpostedVouchers?: boolean
+}
+
+export interface JournalRow {
+  entry_id: number
+  voucher_id: number
+  voucher_date: string
+  voucher_number: number
+  voucher_word: string
+  summary: string
+  subject_code: string
+  subject_name: string
+  debit_amount: number
+  credit_amount: number
+}
+
 function assertPeriod(period: string): void {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
     throw new Error('会计期间格式应为 YYYY-MM')
@@ -125,6 +147,25 @@ function comparePeriods(left: string, right: string): number {
 
 function matchesPrefix(subjectCode: string, prefix: string): boolean {
   return subjectCode === prefix || subjectCode.startsWith(prefix)
+}
+
+function isWithinSubjectCodeRange(
+  subjectCode: string,
+  startCode?: string,
+  endCode?: string
+): boolean {
+  const normalizedStartCode = startCode?.trim() ?? ''
+  const normalizedEndCode = endCode?.trim() ?? ''
+
+  if (normalizedStartCode && subjectCode < normalizedStartCode) {
+    return false
+  }
+
+  if (normalizedEndCode && subjectCode > normalizedEndCode) {
+    return false
+  }
+
+  return true
 }
 
 function getLedger(db: Database.Database, ledgerId: number): LedgerRow {
@@ -562,4 +603,39 @@ export function getDetailLedger(
     endDate: query.endDate,
     rows
   }
+}
+
+export function getJournal(db: Database.Database, query: JournalQuery): JournalRow[] {
+  assertDate(query.startDate, 'startDate')
+  assertDate(query.endDate, 'endDate')
+  if (query.startDate > query.endDate) {
+    throw new Error('startDate cannot be later than endDate')
+  }
+
+  getLedger(db, query.ledgerId)
+  const subjects = listBookSubjects(db, query.ledgerId)
+  const subjectNameByCode = new Map(subjects.map((item) => [item.code, item.name]))
+
+  return listLedgerEntries(
+    db,
+    query.ledgerId,
+    query.startDate,
+    query.endDate,
+    query.includeUnpostedVouchers === true
+  )
+    .filter((entry) =>
+      isWithinSubjectCodeRange(entry.subject_code, query.subjectCodeStart, query.subjectCodeEnd)
+    )
+    .map((entry) => ({
+      entry_id: entry.id,
+      voucher_id: entry.voucher_id,
+      voucher_date: entry.voucher_date,
+      voucher_number: entry.voucher_number,
+      voucher_word: entry.voucher_word,
+      summary: entry.summary,
+      subject_code: entry.subject_code,
+      subject_name: subjectNameByCode.get(entry.subject_code) ?? entry.subject_code,
+      debit_amount: entry.debit_amount,
+      credit_amount: entry.credit_amount
+    }))
 }

@@ -289,7 +289,15 @@ const api = {
       startDate: string
       endDate: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getDetailLedger', query)
+    }) => ipcRenderer.invoke('bookQuery:getDetailLedger', query),
+    getJournal: (query: {
+      ledgerId: number
+      startDate: string
+      endDate: string
+      subjectCodeStart?: string
+      subjectCodeEnd?: string
+      includeUnpostedVouchers?: boolean
+    }) => ipcRenderer.invoke('bookQuery:getJournal', query)
   }
 }
 
