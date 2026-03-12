@@ -9,6 +9,7 @@ import {
 } from '../database/seed'
 import { appendOperationLog } from '../services/auditLog'
 import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
+import { applyCustomTopLevelSubjectTemplate } from '../services/subjectTemplate'
 import { requireAuth, requirePermission } from './session'
 
 function normalizeLedgerStartPeriods(db: ReturnType<typeof getDatabase>): void {
@@ -83,6 +84,7 @@ export function registerLedgerHandlers(): void {
 
         const ledgerId = Number(result.lastInsertRowid)
         seedSubjectsForLedger(db, ledgerId, data.standardType)
+        const customSubjectCount = applyCustomTopLevelSubjectTemplate(db, ledgerId, data.standardType)
         seedCashFlowItemsForLedger(db, ledgerId)
         seedCashFlowMappingsForLedger(db, ledgerId, data.standardType)
         seedPLCarryForwardRulesForLedger(db, ledgerId, data.standardType)
@@ -101,7 +103,8 @@ export function registerLedgerHandlers(): void {
           targetId: ledgerId,
           details: {
             standardType: data.standardType,
-            startPeriod: data.startPeriod
+            startPeriod: data.startPeriod,
+            customSubjectCount
           }
         })
 
@@ -241,15 +244,14 @@ export function registerLedgerHandlers(): void {
           }
         }
 
+        let customSubjectCount = 0
         const replaceTemplate = db.transaction(() => {
           db.prepare('DELETE FROM cash_flow_mappings WHERE ledger_id = ?').run(data.ledgerId)
           db.prepare('DELETE FROM cash_flow_items WHERE ledger_id = ? AND is_system = 1').run(
             data.ledgerId
           )
           db.prepare('DELETE FROM pl_carry_forward_rules WHERE ledger_id = ?').run(data.ledgerId)
-          db.prepare('DELETE FROM subjects WHERE ledger_id = ? AND is_system = 1').run(
-            data.ledgerId
-          )
+          db.prepare('DELETE FROM subjects WHERE ledger_id = ?').run(data.ledgerId)
 
           db.prepare('UPDATE ledgers SET standard_type = ? WHERE id = ?').run(
             data.standardType,
@@ -257,6 +259,7 @@ export function registerLedgerHandlers(): void {
           )
 
           seedSubjectsForLedger(db, data.ledgerId, data.standardType)
+          customSubjectCount = applyCustomTopLevelSubjectTemplate(db, data.ledgerId, data.standardType)
           seedCashFlowItemsForLedger(db, data.ledgerId)
           seedCashFlowMappingsForLedger(db, data.ledgerId, data.standardType)
           seedPLCarryForwardRulesForLedger(db, data.ledgerId, data.standardType)
@@ -283,7 +286,8 @@ export function registerLedgerHandlers(): void {
           targetId: data.ledgerId,
           details: {
             standardType: data.standardType,
-            subjectCount
+            subjectCount,
+            customSubjectCount
           }
         })
 

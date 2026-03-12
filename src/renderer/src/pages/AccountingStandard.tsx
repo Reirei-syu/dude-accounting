@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
+import AccountingStandardSubjectTemplateDialog, {
+  type CustomSubjectTemplate,
+  type StandardSubjectReference,
+  type StandardType
+} from './AccountingStandardSubjectTemplateDialog'
+import { useAuthStore } from '../stores/authStore'
 import { useLedgerStore } from '../stores/ledgerStore'
-
-type StandardType = 'enterprise' | 'npo'
 
 interface TemplateSummary {
   standardType: StandardType
@@ -21,73 +25,166 @@ const TEMPLATE_HIGHLIGHTS: Record<StandardType, string[]> = {
   npo: ['双净资产（限定/非限定）', '受托代理资产与负债配套', '收入自动预置限定/非限定二级']
 }
 
+const EMPTY_CUSTOM_TEMPLATE: Record<StandardType, CustomSubjectTemplate> = {
+  enterprise: {
+    standardType: 'enterprise',
+    templateName: '企业一级科目模板',
+    updatedAt: null,
+    entryCount: 0,
+    entries: []
+  },
+  npo: {
+    standardType: 'npo',
+    templateName: '民非一级科目模板',
+    updatedAt: null,
+    entryCount: 0,
+    entries: []
+  }
+}
+
 export default function AccountingStandard(): JSX.Element {
-  const currentLedger = useLedgerStore((s) => s.currentLedger)
-  const setCurrentLedger = useLedgerStore((s) => s.setCurrentLedger)
-  const setLedgers = useLedgerStore((s) => s.setLedgers)
+  const currentUser = useAuthStore((state) => state.user)
+  const currentLedger = useLedgerStore((state) => state.currentLedger)
+  const setCurrentLedger = useLedgerStore((state) => state.setCurrentLedger)
+  const setLedgers = useLedgerStore((state) => state.setLedgers)
 
   const [templates, setTemplates] = useState<TemplateSummary[]>([])
-  const [loading, setLoading] = useState(false)
+  const [customTemplates, setCustomTemplates] =
+    useState<Record<StandardType, CustomSubjectTemplate>>(EMPTY_CUSTOM_TEMPLATE)
+  const [referenceSubjects, setReferenceSubjects] = useState<
+    Record<StandardType, StandardSubjectReference[]>
+  >({
+    enterprise: [],
+    npo: []
+  })
+  const [refreshing, setRefreshing] = useState(false)
   const [applyingType, setApplyingType] = useState<StandardType | null>(null)
-  const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
+  const [pageMessage, setPageMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
+    null
+  )
+  const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false)
+  const [dialogStandardType, setDialogStandardType] = useState<StandardType | null>(null)
+  const [dialogBusyAction, setDialogBusyAction] =
+    useState<'clear' | 'download' | 'import' | 'save' | null>(null)
+  const [dialogMessage, setDialogMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
+    null
+  )
 
   const currentType = (currentLedger?.standard_type || 'enterprise') as StandardType
   const currentTypeLabel = STANDARD_LABEL[currentType]
+  const canManageTemplate = currentUser?.isAdmin === true
 
-  const loadTemplates = useCallback(async (): Promise<void> => {
+  const loadStandardTemplates = useCallback(async (): Promise<void> => {
     if (!window.electron) {
       setTemplates([])
       return
     }
-    setLoading(true)
+
+    const result = await window.api.ledger.getStandardTemplates()
+    setTemplates(result as TemplateSummary[])
+  }, [])
+
+  const loadCustomTemplates = useCallback(async (): Promise<void> => {
+    if (!window.electron) {
+      setCustomTemplates(EMPTY_CUSTOM_TEMPLATE)
+      return
+    }
+
+    const [enterprise, npo] = await Promise.all([
+      window.api.settings.getSubjectTemplate('enterprise'),
+      window.api.settings.getSubjectTemplate('npo')
+    ])
+
+    setCustomTemplates({
+      enterprise: enterprise as CustomSubjectTemplate,
+      npo: npo as CustomSubjectTemplate
+    })
+  }, [])
+
+  const loadReferenceSubjects = useCallback(async (): Promise<void> => {
+    if (!window.electron) {
+      setReferenceSubjects({ enterprise: [], npo: [] })
+      return
+    }
+
+    const [enterprise, npo] = await Promise.all([
+      window.api.settings.getSubjectTemplateReference('enterprise'),
+      window.api.settings.getSubjectTemplateReference('npo')
+    ])
+
+    setReferenceSubjects({
+      enterprise: enterprise as StandardSubjectReference[],
+      npo: npo as StandardSubjectReference[]
+    })
+  }, [])
+
+  const refreshAll = useCallback(async (): Promise<void> => {
+    setRefreshing(true)
     try {
-      const result = await window.api.ledger.getStandardTemplates()
-      setTemplates(result as TemplateSummary[])
+      await Promise.all([loadStandardTemplates(), loadCustomTemplates(), loadReferenceSubjects()])
     } catch (error) {
-      setTemplates([])
-      setMessage({
+      setPageMessage({
         type: 'error',
-        text: error instanceof Error ? error.message : '加载准则模板失败'
+        text: error instanceof Error ? error.message : '加载会计准则配置失败'
       })
     } finally {
-      setLoading(false)
+      setRefreshing(false)
     }
-  }, [])
+  }, [loadCustomTemplates, loadReferenceSubjects, loadStandardTemplates])
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
-      void loadTemplates()
+      void refreshAll()
     })
     return () => window.cancelAnimationFrame(frameId)
-  }, [loadTemplates])
+  }, [refreshAll])
 
   const templateMap = useMemo(() => {
-    const map: Record<string, TemplateSummary> = {}
+    const nextMap: Record<string, TemplateSummary> = {}
     for (const item of templates) {
-      map[item.standardType] = item
+      nextMap[item.standardType] = item
     }
-    return map
+    return nextMap
   }, [templates])
 
+  const dialogTemplate = dialogStandardType ? customTemplates[dialogStandardType] : null
+
+  const closeTemplateDialog = useCallback((): void => {
+    setIsTemplateDialogOpen(false)
+    setDialogBusyAction(null)
+    setDialogMessage(null)
+  }, [])
+
+  const openTemplateDialog = useCallback((standardType: StandardType): void => {
+    setDialogStandardType(standardType)
+    setIsTemplateDialogOpen(true)
+    setDialogBusyAction(null)
+    setDialogMessage(null)
+  }, [])
+
   const applyTemplate = async (standardType: StandardType): Promise<void> => {
-    setMessage(null)
+    setPageMessage(null)
+
     if (!currentLedger) {
-      setMessage({ type: 'error', text: '请先选择账套' })
+      setPageMessage({ type: 'error', text: '请先选择账套' })
       return
     }
     if (!window.electron) {
-      setMessage({ type: 'error', text: '浏览器预览模式不支持会计准则切换' })
+      setPageMessage({ type: 'error', text: '浏览器预览模式不支持会计准则切换' })
       return
     }
     if (standardType === currentType) {
-      setMessage({ type: 'success', text: `当前账套已是${STANDARD_LABEL[standardType]}` })
+      setPageMessage({ type: 'success', text: `当前账套已是${STANDARD_LABEL[standardType]}` })
       return
     }
 
+    const customEntryCount = customTemplates[standardType]?.entryCount ?? 0
     const confirmed = window.confirm(
-      `将当前账套切换为“${STANDARD_LABEL[standardType]}”模板。\n\n该操作会重建系统科目与系统结转规则。\n为保证账务一致性，已有业务数据的账套会被拒绝切换。\n\n是否继续？`
+      `将当前账套切换为“${STANDARD_LABEL[standardType]}”模板。\n\n该操作会重建系统科目与系统结转规则${customEntryCount > 0 ? `，并附加 ${customEntryCount} 个自定义一级科目` : ''}。\n为保证账务一致性，已有业务数据的账套会被拒绝切换。\n\n是否继续？`
     )
-    if (!confirmed) return
+    if (!confirmed) {
+      return
+    }
 
     setApplyingType(standardType)
     try {
@@ -96,21 +193,21 @@ export default function AccountingStandard(): JSX.Element {
         standardType
       })
       if (!result.success) {
-        setMessage({ type: 'error', text: result.error || '应用准则模板失败' })
+        setPageMessage({ type: 'error', text: result.error || '应用准则模板失败' })
         return
       }
 
       const ledgers = await window.api.ledger.getAll()
       setLedgers(ledgers)
-      const updated = ledgers.find((item) => item.id === currentLedger.id) || null
-      setCurrentLedger(updated)
+      const updatedLedger = ledgers.find((ledger) => ledger.id === currentLedger.id) || null
+      setCurrentLedger(updatedLedger)
 
-      setMessage({
+      setPageMessage({
         type: 'success',
-        text: `已应用${STANDARD_LABEL[standardType]}模板，系统科目数：${result.subjectCount ?? '-'}`
+        text: `已应用${STANDARD_LABEL[standardType]}模板，当前账套科目数：${result.subjectCount ?? '-'}`
       })
     } catch (error) {
-      setMessage({
+      setPageMessage({
         type: 'error',
         text: error instanceof Error ? error.message : '应用准则模板失败'
       })
@@ -119,18 +216,167 @@ export default function AccountingStandard(): JSX.Element {
     }
   }
 
+  const handleDownloadTemplate = useCallback(async (): Promise<void> => {
+    if (!dialogStandardType || !window.electron) {
+      setDialogMessage({ type: 'error', text: '当前环境不支持模板下载' })
+      return
+    }
+
+    setDialogBusyAction('download')
+    setDialogMessage(null)
+    try {
+      const result = await window.api.settings.downloadSubjectTemplate(dialogStandardType)
+      if (result.cancelled) {
+        return
+      }
+      if (!result.success) {
+        setDialogMessage({ type: 'error', text: result.error || '下载导入模板失败' })
+        return
+      }
+      setDialogMessage({
+        type: 'success',
+        text: `模板已生成：${result.filePath ?? '保存成功'}`
+      })
+    } catch (error) {
+      setDialogMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '下载导入模板失败'
+      })
+    } finally {
+      setDialogBusyAction(null)
+    }
+  }, [dialogStandardType])
+
+  const handleImportTemplate = useCallback(async (): Promise<void> => {
+    if (!dialogStandardType || !window.electron) {
+      setDialogMessage({ type: 'error', text: '当前环境不支持模板导入' })
+      return
+    }
+
+    setDialogBusyAction('import')
+    setDialogMessage(null)
+    try {
+      const result = await window.api.settings.importSubjectTemplate(dialogStandardType)
+      if (result.cancelled) {
+        return
+      }
+      if (!result.success) {
+        setDialogMessage({ type: 'error', text: result.error || '导入一级科目模板失败' })
+        return
+      }
+
+      await loadCustomTemplates()
+      setDialogMessage({
+        type: 'success',
+        text: `已导入 ${result.template?.entryCount ?? 0} 个一级科目模板条目`
+      })
+    } catch (error) {
+      setDialogMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '导入一级科目模板失败'
+      })
+    } finally {
+      setDialogBusyAction(null)
+    }
+  }, [dialogStandardType, loadCustomTemplates])
+
+  const handleClearTemplate = useCallback(async (): Promise<void> => {
+    if (!dialogStandardType || !window.electron) {
+      setDialogMessage({ type: 'error', text: '当前环境不支持模板清空' })
+      return
+    }
+
+    if (!window.confirm(`确定清空“${STANDARD_LABEL[dialogStandardType]}”的自定义一级科目模板吗？`)) {
+      return
+    }
+
+    setDialogBusyAction('clear')
+    setDialogMessage(null)
+    try {
+      const result = await window.api.settings.clearSubjectTemplate(dialogStandardType)
+      if (!result.success) {
+        setDialogMessage({ type: 'error', text: result.error || '清空一级科目模板失败' })
+        return
+      }
+
+      await loadCustomTemplates()
+      setDialogMessage({ type: 'success', text: '当前准则的自定义一级科目模板已清空' })
+    } catch (error) {
+      setDialogMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '清空一级科目模板失败'
+      })
+    } finally {
+      setDialogBusyAction(null)
+    }
+  }, [dialogStandardType, loadCustomTemplates])
+
+  const handleSaveTemplate = useCallback(
+    async (
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    ): Promise<void> => {
+      if (!dialogStandardType || !window.electron) {
+        setDialogMessage({ type: 'error', text: '当前环境不支持模板维护' })
+        return
+      }
+      if (!canManageTemplate) {
+        setDialogMessage({ type: 'error', text: '仅 admin 账号可维护一级科目模板' })
+        return
+      }
+
+      setDialogBusyAction('save')
+      setDialogMessage(null)
+      try {
+        const result = await window.api.settings.saveSubjectTemplate({
+          standardType: dialogStandardType,
+          templateName: customTemplates[dialogStandardType]?.templateName,
+          entries
+        })
+        if (!result.success) {
+          setDialogMessage({ type: 'error', text: result.error || '保存一级科目模板失败' })
+          return
+        }
+
+        await loadCustomTemplates()
+        setDialogMessage({
+          type: 'success',
+          text: `已保存 ${result.template?.entryCount ?? entries.length} 个模板条目`
+        })
+      } catch (error) {
+        setDialogMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '保存一级科目模板失败'
+        })
+      } finally {
+        setDialogBusyAction(null)
+      }
+    },
+    [canManageTemplate, customTemplates, dialogStandardType, loadCustomTemplates]
+  )
+
   return (
     <div className="h-full flex flex-col p-4 gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-          会计准则设置
-        </h2>
-        <button
-          className="glass-btn-secondary"
-          onClick={() => void loadTemplates()}
-          disabled={loading}
-        >
-          {loading ? '刷新中...' : '刷新模板'}
+        <div>
+          <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+            会计准则设置
+          </h2>
+          <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+            当前仅支持 `enterprise` 与 `npo` 两类账套；自定义一级科目模板只做现有准则口径扩展。
+          </p>
+        </div>
+        <button className="glass-btn-secondary" onClick={() => void refreshAll()} disabled={refreshing}>
+          {refreshing ? '刷新中...' : '刷新模板'}
         </button>
       </div>
 
@@ -147,26 +393,24 @@ export default function AccountingStandard(): JSX.Element {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {(['enterprise', 'npo'] as StandardType[]).map((type) => {
           const template = templateMap[type]
-          const disabled = !currentLedger || applyingType !== null
+          const customTemplate = customTemplates[type]
           const isCurrent = currentType === type
+          const applyDisabled = !currentLedger || applyingType !== null
 
           return (
-            <section key={type} className="glass-panel p-4 flex flex-col gap-3">
+            <section key={type} className="glass-panel p-4 flex flex-col gap-4">
               <header className="flex items-start justify-between gap-3">
                 <div>
-                  <h3
-                    className="text-lg font-semibold"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
                     {STANDARD_LABEL[type]}
                   </h3>
                   <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
                     {type === 'enterprise'
-                      ? '一般企业会计主体'
-                      : '社会团体、基金会、社会服务机构等民间非营利组织'}
+                      ? '一般企业会计主体，适用于民营医院等企业性质账套。'
+                      : '社会团体、基金会、社会服务机构等民间非营利组织。'}
                   </p>
                 </div>
                 {isCurrent && (
@@ -182,31 +426,60 @@ export default function AccountingStandard(): JSX.Element {
                 )}
               </header>
 
-              <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                <p>系统科目总数：{template ? template.subjectCount : '-'}</p>
-                <p>一级科目数：{template ? template.topLevelCount : '-'}</p>
-                <p>
-                  限定/非限定明细：
-                  {template?.hasRestrictedSubAccounts ? ' 已预置' : ' 不涉及'}
-                </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                <div className="glass-panel-light p-3">
+                  <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                    系统科目总数
+                  </div>
+                  <div className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                    {template ? template.subjectCount : '-'}
+                  </div>
+                </div>
+                <div className="glass-panel-light p-3">
+                  <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                    系统一级科目数
+                  </div>
+                  <div className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                    {template ? template.topLevelCount : '-'}
+                  </div>
+                </div>
+                <div className="glass-panel-light p-3">
+                  <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                    自定义一级科目
+                  </div>
+                  <div className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                    {customTemplate?.entryCount ?? 0}
+                  </div>
+                </div>
+                <div className="glass-panel-light p-3">
+                  <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                    最近导入
+                  </div>
+                  <div className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                    {customTemplate?.updatedAt
+                      ? new Date(customTemplate.updatedAt).toLocaleDateString('zh-CN')
+                      : '未导入'}
+                  </div>
+                </div>
               </div>
 
-              <ul
-                className="text-sm flex flex-col gap-1"
-                style={{ color: 'var(--color-text-secondary)' }}
-              >
+              <ul className="text-sm flex flex-col gap-1" style={{ color: 'var(--color-text-secondary)' }}>
                 {TEMPLATE_HIGHLIGHTS[type].map((item) => (
                   <li key={item}>• {item}</li>
                 ))}
+                <li>• 自定义一级科目模板仅影响新建账套与空账套模板重建</li>
               </ul>
 
-              <div>
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   className="glass-btn-secondary"
-                  disabled={disabled || isCurrent}
+                  disabled={applyDisabled || isCurrent}
                   onClick={() => void applyTemplate(type)}
                 >
                   {applyingType === type ? '应用中...' : isCurrent ? '当前已应用' : '应用此模板'}
+                </button>
+                <button className="glass-btn-secondary" onClick={() => openTemplateDialog(type)}>
+                  模板维护
                 </button>
               </div>
             </section>
@@ -214,17 +487,37 @@ export default function AccountingStandard(): JSX.Element {
         })}
       </div>
 
-      {message && (
+      {pageMessage && (
         <div
           className="text-sm px-1"
           aria-live="polite"
           style={{
-            color: message.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
+            color: pageMessage.type === 'error' ? 'var(--color-danger)' : 'var(--color-success)'
           }}
         >
-          {message.text}
+          {pageMessage.text}
         </div>
       )}
+
+      <AccountingStandardSubjectTemplateDialog
+        open={isTemplateDialogOpen}
+        standardType={dialogStandardType}
+        standardLabel={dialogStandardType ? `${STANDARD_LABEL[dialogStandardType]} ` : ''}
+        template={dialogTemplate}
+        referenceSubjects={dialogStandardType ? referenceSubjects[dialogStandardType] : []}
+        isAdmin={canManageTemplate}
+        busyAction={dialogBusyAction}
+        message={dialogMessage}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeTemplateDialog()
+          }
+        }}
+        onDownloadTemplate={handleDownloadTemplate}
+        onImportTemplate={handleImportTemplate}
+        onClearTemplate={handleClearTemplate}
+        onSaveTemplate={handleSaveTemplate}
+      />
     </div>
   )
 }

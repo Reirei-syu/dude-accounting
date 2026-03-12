@@ -121,6 +121,11 @@ Key Channels:
 - `subject:getAll/search/create/update/delete`
 - `auxiliary:getAll/getByCategory/create/update/delete`
 
+Current Extension:
+
+- 会计准则设置页支持“自定义一级科目模板”，仅允许在 `enterprise` 与 `npo` 既有口径内追加非系统一级科目。
+- 自定义一级科目模板用于新建账套和无业务数据账套的模板重建，不直接覆盖已有业务账套中的现存科目。
+
 ### VoucherModule
 
 Responsibility:
@@ -250,6 +255,11 @@ Existing Tables:
 - `system_settings`
 - `report_snapshots`
 
+System Setting Keys:
+
+- `subject_template.enterprise`
+- `subject_template.npo`
+
 Subject Category Rules:
 
 - `enterprise` 账套保持六大类：`asset`、`liability`、`common`、`equity`、`cost`、`profit_loss`
@@ -293,6 +303,15 @@ Current:
 - `bookQuery:listSubjectBalances/getDetailLedger/getJournal/getAuxiliaryBalances/getAuxiliaryDetail`
 - `reporting:generate/list/getDetail/delete/export`
 
+Settings Extension:
+
+- `settings:getSubjectTemplate`
+- `settings:getSubjectTemplateReference`
+- `settings:saveSubjectTemplate`
+- `settings:importSubjectTemplate`
+- `settings:downloadSubjectTemplate`
+- `settings:clearSubjectTemplate`
+
 In-flight:
 
 - `auditLog:list/export`
@@ -309,6 +328,12 @@ In-flight:
 - 普通用户不得对已记账凭证执行反记账。
 - 管理员紧急逆转必须强制记录原因并写入操作日志。
 - 末级损益科目必须维护完整结转规则；若存在未配置或失效规则，不得执行期末损益结转。
+- 自定义导入的一级科目模板只能扩展 `enterprise` 或 `npo` 账套，不得引入第三类会计准则。
+- 自定义模板中的损益类、收入类、费用类一级科目必须声明期末结转目标科目。
+- 自定义模板导入后仅影响新建账套或无业务数据的模板重建流程，不允许静默覆盖已有业务账套的一级科目。
+- 一级科目模板的新增、修改、导入、清空与模板下载仅允许管理员账号执行；普通用户最多只读查看。
+- 一级科目模板不再维护独立排序号，统一按科目代码自动排序；手动维护界面应提供已有一级科目只读参考与结转目标下拉选择。
+- 模板维护弹窗中的“当前模板科目”应基于“当前准则既有一级科目基线 + 已保存模板覆盖/新增”生成，不能只显示已保存的自定义新增条目。
 - 电子凭证处理必须具备重复入账拦截能力。
 - 账套删除必须经过备份/导出前置校验。
 - 备份文件与档案导出文件不得混用。

@@ -175,7 +175,32 @@ const api = {
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     getAll: () => ipcRenderer.invoke('settings:getAll'),
-    set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value)
+    set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
+    getSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
+      ipcRenderer.invoke('settings:getSubjectTemplate', standardType),
+    getSubjectTemplateReference: (standardType: 'enterprise' | 'npo') =>
+      ipcRenderer.invoke('settings:getSubjectTemplateReference', standardType),
+    saveSubjectTemplate: (payload: {
+      standardType: 'enterprise' | 'npo'
+      templateName?: string
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }) => ipcRenderer.invoke('settings:saveSubjectTemplate', payload),
+    downloadSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
+      ipcRenderer.invoke('settings:downloadSubjectTemplate', standardType),
+    importSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
+      ipcRenderer.invoke('settings:importSubjectTemplate', standardType),
+    clearSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
+      ipcRenderer.invoke('settings:clearSubjectTemplate', standardType)
   },
   auditLog: {
     list: (filters?: {

@@ -194,6 +194,101 @@ interface SettingsAPI {
   get: (key: string) => Promise<string | null>
   getAll: () => Promise<Record<string, string>>
   set: (key: string, value: string) => Promise<{ success: boolean }>
+  getSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
+    standardType: 'enterprise' | 'npo'
+    templateName: string
+    updatedAt: string | null
+    entryCount: number
+    entries: Array<{
+      code: string
+      name: string
+      category: string
+      balanceDirection: 1 | -1
+      isCashFlow: boolean
+      enabled: boolean
+      sortOrder: number
+      carryForwardTargetCode: string | null
+      note: string | null
+    }>
+  }>
+  getSubjectTemplateReference: (standardType: 'enterprise' | 'npo') => Promise<
+    Array<{
+      code: string
+      name: string
+      category: string
+      balanceDirection: 1 | -1
+      categoryLabel: string
+      isCashFlow: boolean
+    }>
+  >
+  saveSubjectTemplate: (payload: {
+    standardType: 'enterprise' | 'npo'
+    templateName?: string
+    entries: Array<{
+      code: string
+      name: string
+      category: string
+      balanceDirection: 1 | -1
+      isCashFlow: boolean
+      enabled: boolean
+      sortOrder: number
+      carryForwardTargetCode: string | null
+      note: string | null
+    }>
+  }) => Promise<{
+    success: boolean
+    error?: string
+    template?: {
+      standardType: 'enterprise' | 'npo'
+      templateName: string
+      updatedAt: string | null
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }
+  }>
+  downloadSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    filePath?: string
+  }>
+  importSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    sourcePath?: string
+    template?: {
+      standardType: 'enterprise' | 'npo'
+      templateName: string
+      updatedAt: string | null
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }
+  }>
+  clearSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
+    success: boolean
+    error?: string
+  }>
 }
 
 interface CashFlowAPI {
