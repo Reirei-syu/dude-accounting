@@ -18,6 +18,7 @@ export interface CustomSubjectTemplateEntry {
 export interface CustomSubjectTemplate {
   standardType: StandardType
   templateName: string
+  templateDescription: string | null
   updatedAt: string | null
   entryCount: number
   entries: CustomSubjectTemplateEntry[]
@@ -52,7 +53,7 @@ interface AccountingStandardSubjectTemplateDialogProps {
   message: { type: 'error' | 'success'; text: string } | null
   onOpenChange: (open: boolean) => void
   onDownloadTemplate: () => Promise<void>
-  onImportTemplate: () => Promise<void>
+  onImportTemplate: (entries: CustomSubjectTemplateEntry[]) => Promise<void>
   onClearTemplate: () => Promise<void>
   onSaveTemplate: (entries: CustomSubjectTemplateEntry[]) => Promise<void>
 }
@@ -133,6 +134,23 @@ function getAutoFitWidth(value: string, minCh: number, maxCh: number): CSSProper
   const length = value.trim().length
   const widthCh = Math.max(minCh, Math.min(maxCh, length + 2))
   return { width: `${widthCh}ch` }
+}
+
+function getSelectAutoFitWidth(
+  currentValue: string,
+  optionLabels: string[],
+  minCh: number,
+  maxCh: number
+): CSSProperties {
+  const widestLabel = optionLabels.reduce((widest, option) => {
+    return option.trim().length > widest.trim().length ? option : widest
+  }, currentValue)
+  const length = widestLabel.trim().length
+  const widthCh = Math.max(minCh, Math.min(maxCh, length + 6))
+  return {
+    minWidth: `${widthCh}ch`,
+    width: `${widthCh}ch`
+  }
 }
 
 function buildReferenceTemplateEntry(
@@ -346,20 +364,22 @@ export default function AccountingStandardSubjectTemplateDialog(
     setDraftRows((current) => current.filter((row) => row.localId !== localId))
   }
 
+  function buildDraftEntries(): CustomSubjectTemplateEntry[] {
+    return sortedDraftRows.map((row, index) => ({
+      code: row.code.trim(),
+      name: row.name.trim(),
+      category: row.category,
+      balanceDirection: row.balanceDirection,
+      isCashFlow: row.isCashFlow,
+      enabled: row.enabled,
+      sortOrder: index + 1,
+      carryForwardTargetCode: row.carryForwardTargetCode?.trim() || null,
+      note: row.note?.trim() || null
+    }))
+  }
+
   async function handleSave(): Promise<void> {
-    await onSaveTemplate(
-      sortedDraftRows.map((row, index) => ({
-        code: row.code.trim(),
-        name: row.name.trim(),
-        category: row.category,
-        balanceDirection: row.balanceDirection,
-        isCashFlow: row.isCashFlow,
-        enabled: row.enabled,
-        sortOrder: index + 1,
-        carryForwardTargetCode: row.carryForwardTargetCode?.trim() || null,
-        note: row.note?.trim() || null
-      }))
-    )
+    await onSaveTemplate(buildDraftEntries())
   }
 
   function renderEditableRows(rows: EditableTemplateRow[]): JSX.Element {
@@ -420,10 +440,11 @@ export default function AccountingStandardSubjectTemplateDialog(
                 <td className="py-2 px-3">
                   <select
                     className="glass-input"
-                    style={getAutoFitWidth(
+                    style={getSelectAutoFitWidth(
                       categoryOptions.find((option) => option.value === row.category)?.label ?? '',
-                      10,
-                      14
+                      categoryOptions.map((option) => option.label),
+                      12,
+                      18
                     )}
                     value={row.category}
                     disabled={!isAdmin}
@@ -441,7 +462,12 @@ export default function AccountingStandardSubjectTemplateDialog(
                 <td className="py-2 px-3">
                   <select
                     className="glass-input"
-                    style={getAutoFitWidth(getBalanceDirectionLabel(row.balanceDirection), 6, 8)}
+                    style={getSelectAutoFitWidth(
+                      getBalanceDirectionLabel(row.balanceDirection),
+                      ['借', '贷'],
+                      10,
+                      12
+                    )}
                     value={String(row.balanceDirection)}
                     disabled={!isAdmin}
                     onChange={(event) =>
@@ -457,7 +483,12 @@ export default function AccountingStandardSubjectTemplateDialog(
                 <td className="py-2 px-3">
                   <select
                     className="glass-input"
-                    style={getAutoFitWidth(row.isCashFlow ? '是' : '否', 10, 12)}
+                    style={getSelectAutoFitWidth(
+                      row.isCashFlow ? '是' : '否',
+                      ['是', '否'],
+                      12,
+                      14
+                    )}
                     value={row.isCashFlow ? '1' : '0'}
                     disabled={!isAdmin}
                     onChange={(event) =>
@@ -471,7 +502,12 @@ export default function AccountingStandardSubjectTemplateDialog(
                 <td className="py-2 px-3">
                   <select
                     className="glass-input"
-                    style={getAutoFitWidth(row.enabled ? '是' : '否', 6, 8)}
+                    style={getSelectAutoFitWidth(
+                      row.enabled ? '是' : '否',
+                      ['是', '否'],
+                      10,
+                      12
+                    )}
                     value={row.enabled ? '1' : '0'}
                     disabled={!isAdmin}
                     onChange={(event) =>
@@ -483,9 +519,8 @@ export default function AccountingStandardSubjectTemplateDialog(
                   </select>
                 </td>
                 <td className="py-2 px-3">
-                  <select
-                    className="glass-input"
-                    style={getAutoFitWidth(
+                  {(() => {
+                    const selectedCarryForwardLabel =
                       carryForwardOptions.find(
                         (option) => option.code === row.carryForwardTargetCode
                       )
@@ -494,9 +529,20 @@ export default function AccountingStandardSubjectTemplateDialog(
                               (option) => option.code === row.carryForwardTargetCode
                             )?.name ?? ''
                           }`
-                        : row.carryForwardTargetCode ?? '',
-                      12,
-                      22
+                        : row.carryForwardTargetCode ?? ''
+                    const carryForwardOptionLabels = [
+                      needTarget ? '请选择结转目标' : '不适用',
+                      ...carryForwardOptions.map((option) => `${option.code} ${option.name}`)
+                    ]
+
+                    return (
+                  <select
+                    className="glass-input"
+                    style={getSelectAutoFitWidth(
+                      selectedCarryForwardLabel,
+                      carryForwardOptionLabels,
+                      16,
+                      44
                     )}
                     value={row.carryForwardTargetCode ?? ''}
                     disabled={!isAdmin || !needTarget}
@@ -513,6 +559,8 @@ export default function AccountingStandardSubjectTemplateDialog(
                       </option>
                     ))}
                   </select>
+                    )
+                  })()}
                 </td>
                 <td className="py-2 px-3">
                   <input
@@ -581,7 +629,7 @@ export default function AccountingStandardSubjectTemplateDialog(
                 type="button"
                 className="glass-btn-secondary"
                 disabled={!isAdmin || busyAction !== null}
-                onClick={() => void onImportTemplate()}
+                onClick={() => void onImportTemplate(buildDraftEntries())}
               >
                 {busyAction === 'import' ? '导入中...' : '批量导入'}
               </button>

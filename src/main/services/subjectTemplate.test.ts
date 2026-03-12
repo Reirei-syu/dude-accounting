@@ -5,9 +5,14 @@ import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   applyCustomTopLevelSubjectTemplate,
+  clearIndependentCustomSubjectTemplateEntries,
+  deleteIndependentCustomSubjectTemplate,
   getCustomTopLevelSubjectTemplate,
+  getIndependentCustomSubjectTemplate,
   getStandardTopLevelSubjectReferences,
+  listIndependentCustomSubjectTemplates,
   readCustomTopLevelSubjectTemplateImport,
+  saveIndependentCustomSubjectTemplate,
   saveCustomTopLevelSubjectTemplate,
   writeCustomTopLevelSubjectImportTemplate
 } from './subjectTemplate'
@@ -335,6 +340,115 @@ describe('subject template service', () => {
     })
   })
 
+  it('stores independent custom templates separately from standard template overrides', () => {
+    const saved = saveIndependentCustomSubjectTemplate(db as never, {
+      baseStandardType: 'enterprise',
+      templateName: '医院模板A',
+      templateDescription: '门诊与住院扩展科目',
+      entries: [
+        {
+          code: '1991',
+          name: '医疗专项设备',
+          category: 'asset',
+          balanceDirection: 1,
+          isCashFlow: false,
+          enabled: true,
+          carryForwardTargetCode: null,
+          note: '自定义模板新增'
+        }
+      ]
+    })
+
+    expect(saved.id).toContain('custom-template-')
+    expect(saved.templateName).toBe('医院模板A')
+    expect(saved.entryCount).toBe(1)
+    expect(getCustomTopLevelSubjectTemplate(db as never, 'enterprise').entryCount).toBe(0)
+
+    const list = listIndependentCustomSubjectTemplates(db as never)
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({
+      id: saved.id,
+      baseStandardType: 'enterprise',
+      templateName: '医院模板A',
+      templateDescription: '门诊与住院扩展科目'
+    })
+
+    expect(getIndependentCustomSubjectTemplate(db as never, saved.id)?.entries[0]).toMatchObject({
+      code: '1991',
+      name: '医疗专项设备'
+    })
+  })
+
+  it('clears only independently added subjects for a custom template', () => {
+    const saved = saveIndependentCustomSubjectTemplate(db as never, {
+      baseStandardType: 'npo',
+      templateName: '慈善模板A',
+      templateDescription: '公益募捐专项模板',
+      entries: [
+        {
+          code: '4911',
+          name: '专项筹款收入',
+          category: 'income',
+          balanceDirection: -1,
+          isCashFlow: false,
+          enabled: true,
+          carryForwardTargetCode: '3102',
+          note: null
+        }
+      ]
+    })
+
+    const cleared = clearIndependentCustomSubjectTemplateEntries(db as never, saved.id)
+    expect(cleared.templateName).toBe('慈善模板A')
+    expect(cleared.templateDescription).toBe('公益募捐专项模板')
+    expect(cleared.entryCount).toBe(0)
+    expect(cleared.entries).toEqual([])
+  })
+
+  it('deletes only independent custom templates without affecting system preset templates', () => {
+    saveCustomTopLevelSubjectTemplate(db as never, {
+      standardType: 'enterprise',
+      templateName: '企业一级科目模板',
+      entries: [
+        {
+          code: '1991',
+          name: '医院专用设备',
+          category: 'asset',
+          balanceDirection: 1,
+          isCashFlow: false,
+          enabled: true,
+          sortOrder: 1,
+          carryForwardTargetCode: null,
+          note: null
+        }
+      ]
+    })
+
+    const customTemplate = saveIndependentCustomSubjectTemplate(db as never, {
+      baseStandardType: 'enterprise',
+      templateName: '医院模板B',
+      templateDescription: '待删除模板',
+      entries: [
+        {
+          code: '2991',
+          name: '应付医护绩效',
+          category: 'liability',
+          balanceDirection: -1,
+          isCashFlow: false,
+          enabled: true,
+          carryForwardTargetCode: null,
+          note: null
+        }
+      ]
+    })
+
+    const deleted = deleteIndependentCustomSubjectTemplate(db as never, customTemplate.id)
+    expect(deleted.id).toBe(customTemplate.id)
+    expect(getIndependentCustomSubjectTemplate(db as never, customTemplate.id)).toBeNull()
+    expect(listIndependentCustomSubjectTemplates(db as never)).toEqual([])
+    expect(getCustomTopLevelSubjectTemplate(db as never, 'enterprise').entryCount).toBe(1)
+  })
+
   it('requires NPO income and expense subjects to declare carry-forward targets', () => {
     expect(() =>
       saveCustomTopLevelSubjectTemplate(db as never, {
@@ -377,14 +491,26 @@ describe('subject template service', () => {
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
       '导入说明',
       '一级科目模板',
+      '选项数据',
       '填写示例'
     ])
 
     const templateSheet = workbook.getWorksheet('一级科目模板')
+    const optionSheet = workbook.getWorksheet('选项数据')
     expect(templateSheet?.getRow(2).values).toContain('科目编码')
     expect(templateSheet?.getRow(2).values).toContain('期末结转目标科目')
     expect(templateSheet?.getRow(2).values).not.toContain('排序号')
-    expect(templateSheet?.getCell('C3').dataValidation.formulae?.[0]).toContain('资产类')
+    expect(optionSheet?.state).toBe('veryHidden')
+    expect(templateSheet?.getCell('C3').dataValidation.formulae?.[0]).toContain("'选项数据'!$A$1:$A$")
+    expect(templateSheet?.getCell('D3').dataValidation.type).toBe('list')
+    expect(templateSheet?.getCell('E3').dataValidation.type).toBe('list')
+    expect(templateSheet?.getCell('F3').dataValidation.type).toBe('list')
+    expect(templateSheet?.getCell('G3').dataValidation.type).toBe('list')
+    expect(optionSheet?.getCell('A1').text).toBe('资产类')
+    expect(optionSheet?.getCell('B1').text).toBe('借')
+    expect(optionSheet?.getCell('C1').text).toBe('是')
+    expect(optionSheet?.getCell('D2').text).toBe('否')
+    expect(optionSheet?.getCell('E1').text).toMatch(/^\d{4}\s+\S+/)
 
     const exampleSheet = workbook.getWorksheet('填写示例')
     expect(exampleSheet?.getRow(2).values).toContain('科目编码')
@@ -393,7 +519,7 @@ describe('subject template service', () => {
     expect(exampleSheet?.getRow(3).getCell(3).text).toBe('资产类')
     expect(exampleSheet?.getRow(4).getCell(1).text).toBe('2991')
     expect(exampleSheet?.getRow(5).getCell(1).text).toBe('6991')
-    expect(exampleSheet?.getRow(5).getCell(7).text).toBe('4103')
+    expect(exampleSheet?.getRow(5).getCell(7).text).toBe('4103 本年利润')
 
     templateSheet?.addRow([
       '1619',
@@ -405,7 +531,7 @@ describe('subject template service', () => {
       '',
       '民营医院资产补充'
     ])
-    templateSheet?.addRow(['6608', '医疗业务成本', '损益类', '借', '否', '是', '4103', ''])
+    templateSheet?.addRow(['6608', '医疗业务成本', '损益类', '借', '否', '是', '4103 本年利润', ''])
     await workbook.xlsx.writeFile(templatePath)
 
     const parsed = await readCustomTopLevelSubjectTemplateImport(templatePath, 'enterprise')

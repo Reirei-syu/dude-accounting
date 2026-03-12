@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3'
 import ExcelJS from 'exceljs'
 import {
   getCarryForwardSourceCategories,
+  getCarryForwardTargetCategories,
   type AccountingStandardType,
   type SubjectCategory
 } from '../database/subjectCategoryRules'
@@ -57,6 +58,8 @@ const TEMPLATE_HEADERS = [
   '期末结转目标科目',
   '备注'
 ] as const
+
+const OPTION_SHEET_NAME = '选项数据'
 
 const TEMPLATE_EXAMPLES: Record<AccountingStandardType, Array<CustomTopLevelSubjectTemplateEntry>> = {
   enterprise: [
@@ -147,13 +150,29 @@ interface StoredSubjectTemplatePayload {
   version: number
   standardType: AccountingStandardType
   templateName: string
+  templateDescription: string | null
   updatedAt: string
   entries: CustomTopLevelSubjectTemplateEntry[]
+}
+
+interface StoredIndependentCustomTemplatePayload {
+  id: string
+  baseStandardType: AccountingStandardType
+  templateName: string
+  templateDescription: string | null
+  updatedAt: string
+  entries: CustomTopLevelSubjectTemplateEntry[]
+}
+
+interface StoredIndependentCustomTemplateCatalog {
+  version: number
+  templates: StoredIndependentCustomTemplatePayload[]
 }
 
 export interface CustomTopLevelSubjectTemplate {
   standardType: AccountingStandardType
   templateName: string
+  templateDescription: string | null
   updatedAt: string | null
   entryCount: number
   entries: CustomTopLevelSubjectTemplateEntry[]
@@ -170,6 +189,8 @@ export interface StandardTopLevelSubjectReference {
 
 const buildSettingKey = (standardType: AccountingStandardType): string =>
   `subject_template.${standardType}`
+
+const INDEPENDENT_CUSTOM_TEMPLATE_SETTING_KEY = 'subject_template.custom_catalog'
 
 const normalizeRequiredText = (value: unknown, fieldName: string): string => {
   const normalized = String(value ?? '').trim()
@@ -255,6 +276,19 @@ const requiresCarryForwardTarget = (
   category: SubjectCategory
 ): boolean => getCarryForwardSourceCategories(standardType).includes(category)
 
+const getCarryForwardTargetReferences = (
+  standardType: AccountingStandardType
+): StandardTopLevelSubjectReference[] => {
+  const allowedCategories = new Set(getCarryForwardTargetCategories(standardType))
+  return getStandardTopLevelSubjectReferences(standardType).filter((item) =>
+    allowedCategories.has(item.category)
+  )
+}
+
+const formatCarryForwardTargetOption = (
+  reference: Pick<StandardTopLevelSubjectReference, 'code' | 'name'>
+): string => `${reference.code} ${reference.name}`
+
 const normalizeCarryForwardTargetCode = (
   standardType: AccountingStandardType,
   category: SubjectCategory,
@@ -271,10 +305,21 @@ const normalizeCarryForwardTargetCode = (
         : '损益类科目必须指定期末结转目标科目'
     )
   }
-  if (!/^\d{4}$/.test(normalized)) {
+
+  const carryForwardTargets = getCarryForwardTargetReferences(standardType)
+  const matchedReference = carryForwardTargets.find(
+    (item) =>
+      normalized === item.code ||
+      normalized === item.name ||
+      normalized === formatCarryForwardTargetOption(item)
+  )
+  const candidateCode =
+    matchedReference?.code ?? normalized.match(/^(\d{4})(?:\s+.+)?$/)?.[1] ?? normalized
+
+  if (!/^\d{4}$/.test(candidateCode)) {
     throw new Error('期末结转目标科目必须为 4 位数字编码')
   }
-  return normalized
+  return candidateCode
 }
 
 const normalizeTemplateEntry = (
@@ -326,11 +371,13 @@ const sortEntriesByCode = (
 const buildStoredPayload = (
   standardType: AccountingStandardType,
   templateName: string,
+  templateDescription: string | null,
   entries: CustomTopLevelSubjectTemplateEntry[]
 ): StoredSubjectTemplatePayload => ({
   version: TEMPLATE_VERSION,
   standardType,
   templateName: templateName.trim() || TEMPLATE_NAME_BY_STANDARD[standardType],
+  templateDescription: normalizeOptionalText(templateDescription),
   updatedAt: new Date().toISOString(),
   entries: sortEntriesByCode(entries)
 })
@@ -354,6 +401,7 @@ const normalizeStoredPayload = (
   return {
     standardType,
     templateName: normalizeOptionalText(source.templateName) ?? TEMPLATE_NAME_BY_STANDARD[standardType],
+    templateDescription: normalizeOptionalText(source.templateDescription),
     updatedAt: normalizeOptionalText(source.updatedAt),
     entryCount: entries.length,
     entries: sortEntriesByCode(entries)
@@ -392,6 +440,7 @@ export const getCustomTopLevelSubjectTemplate = (
     return {
       standardType,
       templateName: TEMPLATE_NAME_BY_STANDARD[standardType],
+      templateDescription: null,
       updatedAt: null,
       entryCount: 0,
       entries: []
@@ -404,6 +453,7 @@ export const getCustomTopLevelSubjectTemplate = (
     return {
       standardType,
       templateName: TEMPLATE_NAME_BY_STANDARD[standardType],
+      templateDescription: null,
       updatedAt: null,
       entryCount: 0,
       entries: []
@@ -416,6 +466,7 @@ export const saveCustomTopLevelSubjectTemplate = (
   payload: {
     standardType: AccountingStandardType
     templateName?: string
+    templateDescription?: string | null
     entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
   }
 ): CustomTopLevelSubjectTemplate => {
@@ -427,6 +478,7 @@ export const saveCustomTopLevelSubjectTemplate = (
   const stored = buildStoredPayload(
     payload.standardType,
     payload.templateName ?? TEMPLATE_NAME_BY_STANDARD[payload.standardType],
+    payload.templateDescription ?? null,
     normalizedEntries
   )
 
@@ -439,10 +491,180 @@ export const saveCustomTopLevelSubjectTemplate = (
   return {
     standardType: payload.standardType,
     templateName: stored.templateName,
+    templateDescription: stored.templateDescription,
     updatedAt: stored.updatedAt,
     entryCount: stored.entries.length,
     entries: sortEntriesByCode(stored.entries)
   }
+}
+
+export interface IndependentCustomSubjectTemplate {
+  id: string
+  baseStandardType: AccountingStandardType
+  templateName: string
+  templateDescription: string | null
+  updatedAt: string
+  entryCount: number
+  entries: CustomTopLevelSubjectTemplateEntry[]
+}
+
+function createIndependentTemplateId(): string {
+  return `custom-template-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function readIndependentCustomTemplateCatalog(
+  db: Database.Database
+): StoredIndependentCustomTemplateCatalog {
+  const row = db
+    .prepare('SELECT value FROM system_settings WHERE key = ?')
+    .get(INDEPENDENT_CUSTOM_TEMPLATE_SETTING_KEY) as { value: string } | undefined
+
+  if (!row?.value) {
+    return { version: TEMPLATE_VERSION, templates: [] }
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as Partial<StoredIndependentCustomTemplateCatalog>
+    return {
+      version: TEMPLATE_VERSION,
+      templates: Array.isArray(parsed.templates) ? parsed.templates : []
+    }
+  } catch {
+    return { version: TEMPLATE_VERSION, templates: [] }
+  }
+}
+
+function writeIndependentCustomTemplateCatalog(
+  db: Database.Database,
+  catalog: StoredIndependentCustomTemplateCatalog
+): void {
+  db.prepare(
+    `INSERT INTO system_settings (key, value, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(INDEPENDENT_CUSTOM_TEMPLATE_SETTING_KEY, JSON.stringify(catalog))
+}
+
+function normalizeIndependentCustomTemplate(
+  payload: StoredIndependentCustomTemplatePayload
+): IndependentCustomSubjectTemplate {
+  const entries = sortEntriesByCode(
+    (payload.entries ?? []).map((entry, index) => {
+      return normalizeTemplateEntry(payload.baseStandardType, entry, index)
+    })
+  )
+
+  return {
+    id: payload.id,
+    baseStandardType: payload.baseStandardType,
+    templateName: normalizeRequiredText(payload.templateName, '模板名称'),
+    templateDescription: normalizeOptionalText(payload.templateDescription),
+    updatedAt: payload.updatedAt,
+    entryCount: entries.length,
+    entries
+  }
+}
+
+export function listIndependentCustomSubjectTemplates(
+  db: Database.Database
+): IndependentCustomSubjectTemplate[] {
+  const catalog = readIndependentCustomTemplateCatalog(db)
+  return catalog.templates
+    .map((template) => normalizeIndependentCustomTemplate(template))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+}
+
+export function getIndependentCustomSubjectTemplate(
+  db: Database.Database,
+  templateId: string
+): IndependentCustomSubjectTemplate | null {
+  const catalog = readIndependentCustomTemplateCatalog(db)
+  const found = catalog.templates.find((template) => template.id === templateId)
+  return found ? normalizeIndependentCustomTemplate(found) : null
+}
+
+export function saveIndependentCustomSubjectTemplate(
+  db: Database.Database,
+  payload: {
+    templateId?: string
+    baseStandardType: AccountingStandardType
+    templateName: string
+    templateDescription?: string | null
+    entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
+  }
+): IndependentCustomSubjectTemplate {
+  const normalizedEntries = sortEntriesByCode(
+    payload.entries.map((entry, index) => {
+      return normalizeTemplateEntry(payload.baseStandardType, entry, index)
+    })
+  )
+  assertUniqueCodes(normalizedEntries)
+
+  const catalog = readIndependentCustomTemplateCatalog(db)
+  const templateId = payload.templateId ?? createIndependentTemplateId()
+  const nextTemplate: StoredIndependentCustomTemplatePayload = {
+    id: templateId,
+    baseStandardType: payload.baseStandardType,
+    templateName: normalizeRequiredText(payload.templateName, '模板名称'),
+    templateDescription: normalizeOptionalText(payload.templateDescription),
+    updatedAt: new Date().toISOString(),
+    entries: normalizedEntries
+  }
+
+  const nextTemplates = catalog.templates.filter((template) => template.id !== templateId)
+  nextTemplates.push(nextTemplate)
+  writeIndependentCustomTemplateCatalog(db, {
+    version: TEMPLATE_VERSION,
+    templates: nextTemplates
+  })
+
+  return normalizeIndependentCustomTemplate(nextTemplate)
+}
+
+export function clearIndependentCustomSubjectTemplateEntries(
+  db: Database.Database,
+  templateId: string
+): IndependentCustomSubjectTemplate {
+  const catalog = readIndependentCustomTemplateCatalog(db)
+  const current = catalog.templates.find((template) => template.id === templateId)
+  if (!current) {
+    throw new Error('自定义模板不存在')
+  }
+
+  const clearedTemplate: StoredIndependentCustomTemplatePayload = {
+    ...current,
+    updatedAt: new Date().toISOString(),
+    entries: []
+  }
+
+  const nextTemplates = catalog.templates.map((template) =>
+    template.id === templateId ? clearedTemplate : template
+  )
+  writeIndependentCustomTemplateCatalog(db, {
+    version: TEMPLATE_VERSION,
+    templates: nextTemplates
+  })
+
+  return normalizeIndependentCustomTemplate(clearedTemplate)
+}
+
+export function deleteIndependentCustomSubjectTemplate(
+  db: Database.Database,
+  templateId: string
+): IndependentCustomSubjectTemplate {
+  const catalog = readIndependentCustomTemplateCatalog(db)
+  const current = catalog.templates.find((template) => template.id === templateId)
+  if (!current) {
+    throw new Error('自定义模板不存在')
+  }
+
+  const nextTemplates = catalog.templates.filter((template) => template.id !== templateId)
+  writeIndependentCustomTemplateCatalog(db, {
+    version: TEMPLATE_VERSION,
+    templates: nextTemplates
+  })
+
+  return normalizeIndependentCustomTemplate(current)
 }
 
 export const clearCustomTopLevelSubjectTemplate = (
@@ -550,7 +772,7 @@ export const writeCustomTopLevelSubjectImportTemplate = async (
   instructionSheet.addRow(['仅支持导入一级科目，科目编码为 4 位数字。'])
   instructionSheet.addRow(['科目类别请直接使用下拉框选择中文类别，导入时系统会自动映射到内部分类编码。'])
   instructionSheet.addRow(['余额方向填写“借”或“贷”；是否字段填写“是”或“否”。'])
-  instructionSheet.addRow(['损益类/收入类/费用类科目必须填写期末结转目标科目编码。'])
+  instructionSheet.addRow(['损益类/收入类/费用类科目必须通过下拉选择期末结转目标科目，显示内容为“科目代码 + 科目名称”，导入时系统会自动转译为内部科目代码。'])
   instructionSheet.addRow(['可参考“填写示例”工作表中的样例，再将自己的正式数据填写到“一级科目模板”工作表。'])
   instructionSheet.columns = [{ width: 72 }]
 
@@ -558,12 +780,55 @@ export const writeCustomTopLevelSubjectImportTemplate = async (
   templateSheet.addRow([IMPORT_TEMPLATE_NAME_BY_STANDARD[standardType]])
   templateSheet.addRow([...TEMPLATE_HEADERS])
   templateSheet.columns = TEMPLATE_HEADERS.map(() => ({ width: 18 }))
-  const categoryListFormula = `"${CATEGORY_OPTIONS[standardType].map((option) => option.label).join(',')}"`
+
+  const optionSheet = workbook.addWorksheet(OPTION_SHEET_NAME)
+  const carryForwardTargets = getCarryForwardTargetReferences(standardType)
+
+  CATEGORY_OPTIONS[standardType].forEach((option, index) => {
+    optionSheet.getCell(`A${index + 1}`).value = option.label
+  })
+  ;['借', '贷'].forEach((value, index) => {
+    optionSheet.getCell(`B${index + 1}`).value = value
+  })
+  ;['是', '否'].forEach((value, index) => {
+    optionSheet.getCell(`C${index + 1}`).value = value
+    optionSheet.getCell(`D${index + 1}`).value = value
+  })
+  carryForwardTargets.forEach((value, index) => {
+    optionSheet.getCell(`E${index + 1}`).value = formatCarryForwardTargetOption(value)
+  })
+  optionSheet.state = 'veryHidden'
+
+  const categoryListFormula = `'${OPTION_SHEET_NAME}'!$A$1:$A$${CATEGORY_OPTIONS[standardType].length}`
+  const balanceDirectionFormula = `'${OPTION_SHEET_NAME}'!$B$1:$B$2`
+  const booleanFormula = `'${OPTION_SHEET_NAME}'!$C$1:$C$2`
+  const enabledFormula = `'${OPTION_SHEET_NAME}'!$D$1:$D$2`
+  const carryForwardFormula = `'${OPTION_SHEET_NAME}'!$E$1:$E$${Math.max(carryForwardTargets.length, 1)}`
   for (let rowNumber = 3; rowNumber <= 200; rowNumber += 1) {
     templateSheet.getCell(`C${rowNumber}`).dataValidation = {
       type: 'list',
       allowBlank: true,
       formulae: [categoryListFormula]
+    }
+    templateSheet.getCell(`D${rowNumber}`).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [balanceDirectionFormula]
+    }
+    templateSheet.getCell(`E${rowNumber}`).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [booleanFormula]
+    }
+    templateSheet.getCell(`F${rowNumber}`).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [enabledFormula]
+    }
+    templateSheet.getCell(`G${rowNumber}`).dataValidation = {
+      type: 'list',
+      allowBlank: true,
+      formulae: [carryForwardFormula]
     }
   }
 
@@ -579,7 +844,15 @@ export const writeCustomTopLevelSubjectImportTemplate = async (
       entry.balanceDirection === 1 ? '借' : '贷',
       entry.isCashFlow ? '是' : '否',
       entry.enabled ? '是' : '否',
-      entry.carryForwardTargetCode ?? '',
+      entry.carryForwardTargetCode
+        ? formatCarryForwardTargetOption({
+            code: entry.carryForwardTargetCode,
+            name:
+              getCarryForwardTargetReferences(standardType).find(
+                (item) => item.code === entry.carryForwardTargetCode
+              )?.name ?? ''
+          }).trim()
+        : '',
       entry.note ?? ''
     ])
   }
@@ -637,6 +910,7 @@ export const readCustomTopLevelSubjectTemplateImport = async (
   return {
     standardType,
     templateName: IMPORT_TEMPLATE_NAME_BY_STANDARD[standardType],
+    templateDescription: null,
     updatedAt: new Date().toISOString(),
     entryCount: entries.length,
     entries: sortEntriesByCode(entries)

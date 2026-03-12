@@ -180,9 +180,16 @@ const api = {
       ipcRenderer.invoke('settings:getSubjectTemplate', standardType),
     getSubjectTemplateReference: (standardType: 'enterprise' | 'npo') =>
       ipcRenderer.invoke('settings:getSubjectTemplateReference', standardType),
+    listIndependentCustomSubjectTemplates: () =>
+      ipcRenderer.invoke('settings:listIndependentCustomSubjectTemplates'),
+    getIndependentCustomSubjectTemplate: (templateId: string) =>
+      ipcRenderer.invoke('settings:getIndependentCustomSubjectTemplate', templateId),
+    parseSubjectTemplateImport: (standardType: 'enterprise' | 'npo') =>
+      ipcRenderer.invoke('settings:parseSubjectTemplateImport', standardType),
     saveSubjectTemplate: (payload: {
       standardType: 'enterprise' | 'npo'
       templateName?: string
+      templateDescription?: string | null
       entries: Array<{
         code: string
         name: string
@@ -195,12 +202,33 @@ const api = {
         note: string | null
       }>
     }) => ipcRenderer.invoke('settings:saveSubjectTemplate', payload),
+    saveIndependentCustomSubjectTemplate: (payload: {
+      templateId?: string
+      baseStandardType: 'enterprise' | 'npo'
+      templateName: string
+      templateDescription?: string | null
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }) => ipcRenderer.invoke('settings:saveIndependentCustomSubjectTemplate', payload),
     downloadSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
       ipcRenderer.invoke('settings:downloadSubjectTemplate', standardType),
     importSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
       ipcRenderer.invoke('settings:importSubjectTemplate', standardType),
     clearSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:clearSubjectTemplate', standardType)
+      ipcRenderer.invoke('settings:clearSubjectTemplate', standardType),
+    clearIndependentCustomSubjectTemplateEntries: (templateId: string) =>
+      ipcRenderer.invoke('settings:clearIndependentCustomSubjectTemplateEntries', templateId),
+    deleteIndependentCustomSubjectTemplate: (templateId: string) =>
+      ipcRenderer.invoke('settings:deleteIndependentCustomSubjectTemplate', templateId)
   },
   auditLog: {
     list: (filters?: {

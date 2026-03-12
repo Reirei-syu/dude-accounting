@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
+import AccountingStandardCustomTemplateDialog, {
+  type IndependentCustomTemplateSummary
+} from './AccountingStandardCustomTemplateDialog'
 import AccountingStandardSubjectTemplateDialog, {
+  type CustomSubjectTemplateEntry,
   type CustomSubjectTemplate,
   type StandardSubjectReference,
   type StandardType
 } from './AccountingStandardSubjectTemplateDialog'
+import { mergeSubjectTemplateEntries } from './subjectTemplateMerge'
 import { useAuthStore } from '../stores/authStore'
 import { useLedgerStore } from '../stores/ledgerStore'
 
@@ -29,6 +34,7 @@ const EMPTY_CUSTOM_TEMPLATE: Record<StandardType, CustomSubjectTemplate> = {
   enterprise: {
     standardType: 'enterprise',
     templateName: '企业一级科目模板',
+    templateDescription: null,
     updatedAt: null,
     entryCount: 0,
     entries: []
@@ -36,6 +42,7 @@ const EMPTY_CUSTOM_TEMPLATE: Record<StandardType, CustomSubjectTemplate> = {
   npo: {
     standardType: 'npo',
     templateName: '民非一级科目模板',
+    templateDescription: null,
     updatedAt: null,
     entryCount: 0,
     entries: []
@@ -51,6 +58,9 @@ export default function AccountingStandard(): JSX.Element {
   const [templates, setTemplates] = useState<TemplateSummary[]>([])
   const [customTemplates, setCustomTemplates] =
     useState<Record<StandardType, CustomSubjectTemplate>>(EMPTY_CUSTOM_TEMPLATE)
+  const [independentCustomTemplates, setIndependentCustomTemplates] = useState<
+    IndependentCustomTemplateSummary[]
+  >([])
   const [referenceSubjects, setReferenceSubjects] = useState<
     Record<StandardType, StandardSubjectReference[]>
   >({
@@ -62,6 +72,16 @@ export default function AccountingStandard(): JSX.Element {
   const [pageMessage, setPageMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(
     null
   )
+  const [isCustomTemplateDialogOpen, setIsCustomTemplateDialogOpen] = useState(false)
+  const [customDialogDefaultStandardType, setCustomDialogDefaultStandardType] =
+    useState<StandardType>('enterprise')
+  const [editingIndependentTemplateId, setEditingIndependentTemplateId] = useState<string | null>(null)
+  const [customDialogBusyAction, setCustomDialogBusyAction] =
+    useState<'clear' | 'delete' | 'download' | 'import' | 'save' | null>(null)
+  const [customDialogMessage, setCustomDialogMessage] = useState<{
+    type: 'error' | 'success'
+    text: string
+  } | null>(null)
   const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false)
   const [dialogStandardType, setDialogStandardType] = useState<StandardType | null>(null)
   const [dialogBusyAction, setDialogBusyAction] =
@@ -73,6 +93,16 @@ export default function AccountingStandard(): JSX.Element {
   const currentType = (currentLedger?.standard_type || 'enterprise') as StandardType
   const currentTypeLabel = STANDARD_LABEL[currentType]
   const canManageTemplate = currentUser?.isAdmin === true
+
+  const loadIndependentCustomTemplates = useCallback(async (): Promise<void> => {
+    if (!window.electron) {
+      setIndependentCustomTemplates([])
+      return
+    }
+
+    const result = await window.api.settings.listIndependentCustomSubjectTemplates()
+    setIndependentCustomTemplates(result as IndependentCustomTemplateSummary[])
+  }, [])
 
   const loadStandardTemplates = useCallback(async (): Promise<void> => {
     if (!window.electron) {
@@ -121,7 +151,12 @@ export default function AccountingStandard(): JSX.Element {
   const refreshAll = useCallback(async (): Promise<void> => {
     setRefreshing(true)
     try {
-      await Promise.all([loadStandardTemplates(), loadCustomTemplates(), loadReferenceSubjects()])
+      await Promise.all([
+        loadStandardTemplates(),
+        loadCustomTemplates(),
+        loadReferenceSubjects(),
+        loadIndependentCustomTemplates()
+      ])
     } catch (error) {
       setPageMessage({
         type: 'error',
@@ -130,7 +165,7 @@ export default function AccountingStandard(): JSX.Element {
     } finally {
       setRefreshing(false)
     }
-  }, [loadCustomTemplates, loadReferenceSubjects, loadStandardTemplates])
+  }, [loadCustomTemplates, loadIndependentCustomTemplates, loadReferenceSubjects, loadStandardTemplates])
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(() => {
@@ -148,6 +183,8 @@ export default function AccountingStandard(): JSX.Element {
   }, [templates])
 
   const dialogTemplate = dialogStandardType ? customTemplates[dialogStandardType] : null
+  const customDialogTemplate =
+    independentCustomTemplates.find((item) => item.id === editingIndependentTemplateId) ?? null
 
   const closeTemplateDialog = useCallback((): void => {
     setIsTemplateDialogOpen(false)
@@ -161,6 +198,31 @@ export default function AccountingStandard(): JSX.Element {
     setDialogBusyAction(null)
     setDialogMessage(null)
   }, [])
+
+  const closeCustomTemplateDialog = useCallback((): void => {
+    setIsCustomTemplateDialogOpen(false)
+    setCustomDialogBusyAction(null)
+    setCustomDialogMessage(null)
+  }, [])
+
+  const openCustomTemplateDialog = useCallback((standardType: StandardType): void => {
+    setEditingIndependentTemplateId(null)
+    setCustomDialogDefaultStandardType(standardType)
+    setIsCustomTemplateDialogOpen(true)
+    setCustomDialogBusyAction(null)
+    setCustomDialogMessage(null)
+  }, [])
+
+  const openIndependentTemplateEditor = useCallback(
+    (templateId: string, baseStandardType: StandardType): void => {
+      setEditingIndependentTemplateId(templateId)
+      setCustomDialogDefaultStandardType(baseStandardType)
+      setIsCustomTemplateDialogOpen(true)
+      setCustomDialogBusyAction(null)
+      setCustomDialogMessage(null)
+    },
+    []
+  )
 
   const applyTemplate = async (standardType: StandardType): Promise<void> => {
     setPageMessage(null)
@@ -247,38 +309,53 @@ export default function AccountingStandard(): JSX.Element {
     }
   }, [dialogStandardType])
 
-  const handleImportTemplate = useCallback(async (): Promise<void> => {
-    if (!dialogStandardType || !window.electron) {
-      setDialogMessage({ type: 'error', text: '当前环境不支持模板导入' })
-      return
-    }
-
-    setDialogBusyAction('import')
-    setDialogMessage(null)
-    try {
-      const result = await window.api.settings.importSubjectTemplate(dialogStandardType)
-      if (result.cancelled) {
-        return
-      }
-      if (!result.success) {
-        setDialogMessage({ type: 'error', text: result.error || '导入一级科目模板失败' })
+  const handleImportTemplate = useCallback(
+    async (currentEntries: CustomSubjectTemplateEntry[]): Promise<void> => {
+      if (!dialogStandardType || !window.electron) {
+        setDialogMessage({ type: 'error', text: '当前环境不支持模板导入' })
         return
       }
 
-      await loadCustomTemplates()
-      setDialogMessage({
-        type: 'success',
-        text: `已导入 ${result.template?.entryCount ?? 0} 个一级科目模板条目`
-      })
-    } catch (error) {
-      setDialogMessage({
-        type: 'error',
-        text: error instanceof Error ? error.message : '导入一级科目模板失败'
-      })
-    } finally {
-      setDialogBusyAction(null)
-    }
-  }, [dialogStandardType, loadCustomTemplates])
+      setDialogBusyAction('import')
+      setDialogMessage(null)
+      try {
+        const parsed = await window.api.settings.parseSubjectTemplateImport(dialogStandardType)
+        if (parsed.cancelled) {
+          return
+        }
+        if (!parsed.success || !parsed.template) {
+          setDialogMessage({ type: 'error', text: parsed.error || '导入一级科目模板失败' })
+          return
+        }
+
+        const mergedEntries = mergeSubjectTemplateEntries(currentEntries, parsed.template.entries)
+        const result = await window.api.settings.saveSubjectTemplate({
+          standardType: dialogStandardType,
+          templateName: customTemplates[dialogStandardType]?.templateName,
+          templateDescription: customTemplates[dialogStandardType]?.templateDescription ?? null,
+          entries: mergedEntries
+        })
+        if (!result.success) {
+          setDialogMessage({ type: 'error', text: result.error || '导入一级科目模板失败' })
+          return
+        }
+
+        await loadCustomTemplates()
+        setDialogMessage({
+          type: 'success',
+          text: `已合并导入 ${parsed.template.entryCount} 个一级科目模板条目`
+        })
+      } catch (error) {
+        setDialogMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '导入一级科目模板失败'
+        })
+      } finally {
+        setDialogBusyAction(null)
+      }
+    },
+    [customTemplates, dialogStandardType, loadCustomTemplates]
+  )
 
   const handleClearTemplate = useCallback(async (): Promise<void> => {
     if (!dialogStandardType || !window.electron) {
@@ -364,6 +441,227 @@ export default function AccountingStandard(): JSX.Element {
     [canManageTemplate, customTemplates, dialogStandardType, loadCustomTemplates]
   )
 
+  const handleCustomTemplateDownload = useCallback(async (): Promise<void> => {
+    if (!window.electron) {
+      setCustomDialogMessage({ type: 'error', text: '当前环境不支持模板下载' })
+      return
+    }
+
+    const baseStandardType = customDialogTemplate?.baseStandardType ?? customDialogDefaultStandardType
+    setCustomDialogBusyAction('download')
+    setCustomDialogMessage(null)
+    try {
+      const result = await window.api.settings.downloadSubjectTemplate(baseStandardType)
+      if (result.cancelled) return
+      if (!result.success) {
+        setCustomDialogMessage({ type: 'error', text: result.error || '下载模板失败' })
+        return
+      }
+      setCustomDialogMessage({
+        type: 'success',
+        text: `模板已生成：${result.filePath ?? '保存成功'}`
+      })
+    } catch (error) {
+      setCustomDialogMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '下载模板失败'
+      })
+    } finally {
+      setCustomDialogBusyAction(null)
+    }
+  }, [customDialogDefaultStandardType, customDialogTemplate])
+
+  const handleCustomTemplateImport = useCallback(
+    async (payload: {
+      templateId?: string
+      baseStandardType: StandardType
+      templateName: string
+      templateDescription: string | null
+      entries: CustomSubjectTemplateEntry[]
+    }): Promise<void> => {
+      if (!window.electron) {
+        setCustomDialogMessage({ type: 'error', text: '当前环境不支持模板导入' })
+        return
+      }
+
+      setCustomDialogBusyAction('import')
+      setCustomDialogMessage(null)
+      try {
+        const parsed = await window.api.settings.parseSubjectTemplateImport(payload.baseStandardType)
+        if (parsed.cancelled) return
+        if (!parsed.success || !parsed.template) {
+          setCustomDialogMessage({ type: 'error', text: parsed.error || '批量导入失败' })
+          return
+        }
+
+        const mergedEntries = mergeSubjectTemplateEntries(payload.entries, parsed.template.entries)
+        const result = await window.api.settings.saveIndependentCustomSubjectTemplate({
+          templateId: payload.templateId,
+          baseStandardType: payload.baseStandardType,
+          templateName: payload.templateName,
+          templateDescription: payload.templateDescription,
+          entries: mergedEntries
+        })
+
+        if (!result.success) {
+          setCustomDialogMessage({ type: 'error', text: result.error || '批量导入失败' })
+          return
+        }
+
+        await loadIndependentCustomTemplates()
+        setCustomDialogMessage({
+          type: 'success',
+          text: `已合并导入 ${parsed.template.entryCount} 个自定义新增科目`
+        })
+      } catch (error) {
+        setCustomDialogMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '批量导入失败'
+        })
+      } finally {
+        setCustomDialogBusyAction(null)
+      }
+    },
+    [loadIndependentCustomTemplates]
+  )
+
+  const handleCustomTemplateClear = useCallback(async (): Promise<void> => {
+    if (!customDialogTemplate || !window.electron) {
+      setCustomDialogMessage({ type: 'error', text: '当前环境不支持模板清空' })
+      return
+    }
+
+    if (!window.confirm('确定一键删除自行添加的科目吗？')) {
+      return
+    }
+
+    setCustomDialogBusyAction('clear')
+    setCustomDialogMessage(null)
+    try {
+      const result = await window.api.settings.clearIndependentCustomSubjectTemplateEntries(
+        customDialogTemplate.id
+      )
+
+      if (!result.success) {
+        setCustomDialogMessage({ type: 'error', text: result.error || '清空模板失败' })
+        return
+      }
+
+      await loadIndependentCustomTemplates()
+      setCustomDialogMessage({ type: 'success', text: '已一键删除自行添加的科目' })
+    } catch (error) {
+      setCustomDialogMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '清空模板失败'
+      })
+    } finally {
+      setCustomDialogBusyAction(null)
+    }
+  }, [customDialogTemplate, loadIndependentCustomTemplates])
+
+  const handleCustomTemplateDelete = useCallback(async (): Promise<void> => {
+    if (!customDialogTemplate || !window.electron) {
+      setCustomDialogMessage({ type: 'error', text: '当前环境不支持删除自定义模板' })
+      return
+    }
+
+    if (!window.confirm(`确定删除自定义模板“${customDialogTemplate.templateName}”吗？删除后不可恢复。`)) {
+      return
+    }
+
+    setCustomDialogBusyAction('delete')
+    setCustomDialogMessage(null)
+    try {
+      const result = await window.api.settings.deleteIndependentCustomSubjectTemplate(
+        customDialogTemplate.id
+      )
+
+      if (!result.success) {
+        setCustomDialogMessage({ type: 'error', text: result.error || '删除自定义模板失败' })
+        return
+      }
+
+      await loadIndependentCustomTemplates()
+      closeCustomTemplateDialog()
+      setEditingIndependentTemplateId(null)
+      setPageMessage({
+        type: 'success',
+        text: `已删除自定义模板：${customDialogTemplate.templateName}`
+      })
+    } catch (error) {
+      setCustomDialogMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '删除自定义模板失败'
+      })
+    } finally {
+      setCustomDialogBusyAction(null)
+    }
+  }, [closeCustomTemplateDialog, customDialogTemplate, loadIndependentCustomTemplates])
+
+  const handleCustomTemplateSave = useCallback(
+    async (payload: {
+      templateId?: string
+      baseStandardType: StandardType
+      templateName: string
+      templateDescription: string | null
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }): Promise<void> => {
+      if (!window.electron) {
+        setCustomDialogMessage({ type: 'error', text: '当前环境不支持自定义模板维护' })
+        return
+      }
+      if (!canManageTemplate) {
+        setCustomDialogMessage({ type: 'error', text: '仅 admin 账号可维护自定义模板' })
+        return
+      }
+
+      setCustomDialogBusyAction('save')
+      setCustomDialogMessage(null)
+      try {
+        const result = await window.api.settings.saveIndependentCustomSubjectTemplate({
+          templateId: payload.templateId,
+          baseStandardType: payload.baseStandardType,
+          templateName: payload.templateName,
+          templateDescription: payload.templateDescription,
+          entries: payload.entries
+        })
+
+        if (!result.success) {
+          setCustomDialogMessage({ type: 'error', text: result.error || '保存自定义模板失败' })
+          return
+        }
+
+        await loadIndependentCustomTemplates()
+        if (result.template?.id) {
+          setEditingIndependentTemplateId(result.template.id)
+          setCustomDialogDefaultStandardType(result.template.baseStandardType)
+        }
+        setCustomDialogMessage({
+          type: 'success',
+          text: `已保存 ${payload.entries.length} 个自定义新增科目`
+        })
+      } catch (error) {
+        setCustomDialogMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '保存自定义模板失败'
+        })
+      } finally {
+        setCustomDialogBusyAction(null)
+      }
+    },
+    [canManageTemplate, loadIndependentCustomTemplates]
+  )
+
   return (
     <div className="h-full flex flex-col p-4 gap-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -375,9 +673,17 @@ export default function AccountingStandard(): JSX.Element {
             当前仅支持 `enterprise` 与 `npo` 两类账套；自定义一级科目模板只做现有准则口径扩展。
           </p>
         </div>
-        <button className="glass-btn-secondary" onClick={() => void refreshAll()} disabled={refreshing}>
-          {refreshing ? '刷新中...' : '刷新模板'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="glass-btn-secondary" onClick={() => void refreshAll()} disabled={refreshing}>
+            {refreshing ? '刷新中...' : '刷新模板'}
+          </button>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => openCustomTemplateDialog(currentType)}
+          >
+            自定义模板
+          </button>
+        </div>
       </div>
 
       <div className="glass-panel-light p-4">
@@ -487,6 +793,65 @@ export default function AccountingStandard(): JSX.Element {
         })}
       </div>
 
+      <div className="glass-panel p-4 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+              自定义模板
+            </h3>
+            <p className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              独立于系统预设模板保存，可按名称单独维护。
+            </p>
+          </div>
+        </div>
+
+        {independentCustomTemplates.length === 0 ? (
+          <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+            还没有独立的自定义模板，点击顶部“自定义模板”可以新建。
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {independentCustomTemplates.map((template) => (
+              <section key={template.id} className="glass-panel-light p-4 flex flex-col gap-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div
+                      className="text-lg font-semibold"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      {template.templateName}
+                    </div>
+                    <div className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                      基础口径：{STANDARD_LABEL[template.baseStandardType]}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <p>模板说明：{template.templateDescription || '未填写'}</p>
+                  <p>新增科目数：{template.entryCount}</p>
+                  <p>
+                    最近保存：
+                    {template.updatedAt
+                      ? new Date(template.updatedAt).toLocaleString('zh-CN', { hour12: false })
+                      : '未保存'}
+                  </p>
+                </div>
+
+                <div>
+                  <button
+                    className="glass-btn-secondary"
+                    onClick={() => openIndependentTemplateEditor(template.id, template.baseStandardType)}
+                  >
+                    模板维护
+                  </button>
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
+
       {pageMessage && (
         <div
           className="text-sm px-1"
@@ -517,6 +882,28 @@ export default function AccountingStandard(): JSX.Element {
         onImportTemplate={handleImportTemplate}
         onClearTemplate={handleClearTemplate}
         onSaveTemplate={handleSaveTemplate}
+      />
+
+      <AccountingStandardCustomTemplateDialog
+        open={isCustomTemplateDialogOpen}
+        template={customDialogTemplate}
+        referenceSubjects={
+          referenceSubjects[customDialogTemplate?.baseStandardType ?? customDialogDefaultStandardType]
+        }
+        defaultBaseStandardType={customDialogDefaultStandardType}
+        isAdmin={canManageTemplate}
+        busyAction={customDialogBusyAction}
+        message={customDialogMessage}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeCustomTemplateDialog()
+          }
+        }}
+        onDownloadTemplate={handleCustomTemplateDownload}
+        onImportTemplate={handleCustomTemplateImport}
+        onClearTemplate={handleCustomTemplateClear}
+        onDeleteTemplate={handleCustomTemplateDelete}
+        onSaveTemplate={handleCustomTemplateSave}
       />
     </div>
   )

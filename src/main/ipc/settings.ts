@@ -4,10 +4,15 @@ import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import {
   clearCustomTopLevelSubjectTemplate,
+  clearIndependentCustomSubjectTemplateEntries,
   type CustomTopLevelSubjectTemplateEntry,
+  deleteIndependentCustomSubjectTemplate,
   getCustomTopLevelSubjectTemplate,
+  getIndependentCustomSubjectTemplate,
   getStandardTopLevelSubjectReferences,
+  listIndependentCustomSubjectTemplates,
   readCustomTopLevelSubjectTemplateImport,
+  saveIndependentCustomSubjectTemplate,
   saveCustomTopLevelSubjectTemplate,
   writeCustomTopLevelSubjectImportTemplate
 } from '../services/subjectTemplate'
@@ -66,6 +71,16 @@ export function registerSettingsHandlers(): void {
   ipcMain.handle('settings:getSubjectTemplateReference', (event, standardType: StandardType) => {
     requireAuth(event)
     return getStandardTopLevelSubjectReferences(standardType)
+  })
+
+  ipcMain.handle('settings:listIndependentCustomSubjectTemplates', (event) => {
+    requireAuth(event)
+    return listIndependentCustomSubjectTemplates(db)
+  })
+
+  ipcMain.handle('settings:getIndependentCustomSubjectTemplate', (event, templateId: string) => {
+    requireAuth(event)
+    return getIndependentCustomSubjectTemplate(db, templateId)
   })
 
   ipcMain.handle('settings:downloadSubjectTemplate', async (event, standardType: StandardType) => {
@@ -156,12 +171,50 @@ export function registerSettingsHandlers(): void {
   })
 
   ipcMain.handle(
+    'settings:parseSubjectTemplateImport',
+    async (event, standardType: StandardType) => {
+      try {
+        requireAdmin(event)
+        const browserWindow = BrowserWindow.fromWebContents(event.sender)
+        const openResult = browserWindow
+          ? await dialog.showOpenDialog(browserWindow, {
+              filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }],
+              properties: ['openFile']
+            })
+          : await dialog.showOpenDialog({
+              filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }],
+              properties: ['openFile']
+            })
+
+        if (openResult.canceled || openResult.filePaths.length === 0) {
+          return { success: false, cancelled: true }
+        }
+
+        const sourcePath = openResult.filePaths[0]
+        const template = await readCustomTopLevelSubjectTemplateImport(sourcePath, standardType)
+
+        return {
+          success: true,
+          sourcePath,
+          template
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '解析一级科目模板失败'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
     'settings:saveSubjectTemplate',
     (
       event,
       payload: {
         standardType: StandardType
         templateName?: string
+        templateDescription?: string | null
         entries: CustomTopLevelSubjectTemplateEntry[]
       }
     ) => {
@@ -179,7 +232,8 @@ export function registerSettingsHandlers(): void {
           details: {
             standardType: payload.standardType,
             entryCount: savedTemplate.entryCount,
-            templateName: savedTemplate.templateName
+            templateName: savedTemplate.templateName,
+            templateDescription: savedTemplate.templateDescription
           }
         })
 
@@ -191,6 +245,50 @@ export function registerSettingsHandlers(): void {
         return {
           success: false,
           error: error instanceof Error ? error.message : '保存一级科目模板失败'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'settings:saveIndependentCustomSubjectTemplate',
+    (
+      event,
+      payload: {
+        templateId?: string
+        baseStandardType: StandardType
+        templateName: string
+        templateDescription?: string | null
+        entries: CustomTopLevelSubjectTemplateEntry[]
+      }
+    ) => {
+      try {
+        const user = requireAdmin(event)
+        const savedTemplate = saveIndependentCustomSubjectTemplate(db, payload)
+
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: payload.templateId ? 'update_independent_custom_subject_template' : 'create_independent_custom_subject_template',
+          targetType: 'independent_custom_subject_template',
+          targetId: savedTemplate.id,
+          details: {
+            baseStandardType: savedTemplate.baseStandardType,
+            templateName: savedTemplate.templateName,
+            templateDescription: savedTemplate.templateDescription,
+            entryCount: savedTemplate.entryCount
+          }
+        })
+
+        return {
+          success: true,
+          template: savedTemplate
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '保存自定义模板失败'
         }
       }
     }
@@ -221,6 +319,67 @@ export function registerSettingsHandlers(): void {
       return {
         success: false,
         error: error instanceof Error ? error.message : '清空一级科目模板失败'
+      }
+    }
+  })
+
+  ipcMain.handle('settings:clearIndependentCustomSubjectTemplateEntries', (event, templateId: string) => {
+    try {
+      const user = requireAdmin(event)
+      const clearedTemplate = clearIndependentCustomSubjectTemplateEntries(db, templateId)
+
+      appendOperationLog(db, {
+        userId: user.id,
+        username: user.username,
+        module: 'settings',
+        action: 'clear_independent_custom_subject_template_entries',
+        targetType: 'independent_custom_subject_template',
+        targetId: templateId,
+        details: {
+          templateName: clearedTemplate.templateName,
+          baseStandardType: clearedTemplate.baseStandardType
+        }
+      })
+
+      return {
+        success: true,
+        template: clearedTemplate
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '清空自定义模板失败'
+      }
+    }
+  })
+
+  ipcMain.handle('settings:deleteIndependentCustomSubjectTemplate', (event, templateId: string) => {
+    try {
+      const user = requireAdmin(event)
+      const deletedTemplate = deleteIndependentCustomSubjectTemplate(db, templateId)
+
+      appendOperationLog(db, {
+        userId: user.id,
+        username: user.username,
+        module: 'settings',
+        action: 'delete_independent_custom_subject_template',
+        targetType: 'independent_custom_subject_template',
+        targetId: templateId,
+        details: {
+          templateName: deletedTemplate.templateName,
+          baseStandardType: deletedTemplate.baseStandardType,
+          entryCount: deletedTemplate.entryCount
+        }
+      })
+
+      return {
+        success: true,
+        template: deletedTemplate
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '删除自定义模板失败'
       }
     }
   })

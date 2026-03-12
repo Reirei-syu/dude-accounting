@@ -197,6 +197,7 @@ interface SettingsAPI {
   getSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
     standardType: 'enterprise' | 'npo'
     templateName: string
+    templateDescription: string | null
     updatedAt: string | null
     entryCount: number
     entries: Array<{
@@ -221,9 +222,74 @@ interface SettingsAPI {
       isCashFlow: boolean
     }>
   >
+  listIndependentCustomSubjectTemplates: () => Promise<
+    Array<{
+      id: string
+      baseStandardType: 'enterprise' | 'npo'
+      templateName: string
+      templateDescription: string | null
+      updatedAt: string
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }>
+  >
+  getIndependentCustomSubjectTemplate: (templateId: string) => Promise<{
+    id: string
+    baseStandardType: 'enterprise' | 'npo'
+    templateName: string
+    templateDescription: string | null
+    updatedAt: string
+    entryCount: number
+    entries: Array<{
+      code: string
+      name: string
+      category: string
+      balanceDirection: 1 | -1
+      isCashFlow: boolean
+      enabled: boolean
+      sortOrder: number
+      carryForwardTargetCode: string | null
+      note: string | null
+    }>
+  } | null>
+  parseSubjectTemplateImport: (standardType: 'enterprise' | 'npo') => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    sourcePath?: string
+    template?: {
+      standardType: 'enterprise' | 'npo'
+      templateName: string
+      templateDescription: string | null
+      updatedAt: string | null
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }
+  }>
   saveSubjectTemplate: (payload: {
     standardType: 'enterprise' | 'npo'
     templateName?: string
+    templateDescription?: string | null
     entries: Array<{
       code: string
       name: string
@@ -241,7 +307,47 @@ interface SettingsAPI {
     template?: {
       standardType: 'enterprise' | 'npo'
       templateName: string
+      templateDescription: string | null
       updatedAt: string | null
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }
+  }>
+  saveIndependentCustomSubjectTemplate: (payload: {
+    templateId?: string
+    baseStandardType: 'enterprise' | 'npo'
+    templateName: string
+    templateDescription?: string | null
+    entries: Array<{
+      code: string
+      name: string
+      category: string
+      balanceDirection: 1 | -1
+      isCashFlow: boolean
+      enabled: boolean
+      sortOrder: number
+      carryForwardTargetCode: string | null
+      note: string | null
+    }>
+  }) => Promise<{
+    success: boolean
+    error?: string
+    template?: {
+      id: string
+      baseStandardType: 'enterprise' | 'npo'
+      templateName: string
+      templateDescription: string | null
+      updatedAt: string
       entryCount: number
       entries: Array<{
         code: string
@@ -270,6 +376,7 @@ interface SettingsAPI {
     template?: {
       standardType: 'enterprise' | 'npo'
       templateName: string
+      templateDescription: string | null
       updatedAt: string | null
       entryCount: number
       entries: Array<{
@@ -288,6 +395,52 @@ interface SettingsAPI {
   clearSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
     success: boolean
     error?: string
+  }>
+  clearIndependentCustomSubjectTemplateEntries: (templateId: string) => Promise<{
+    success: boolean
+    error?: string
+    template?: {
+      id: string
+      baseStandardType: 'enterprise' | 'npo'
+      templateName: string
+      templateDescription: string | null
+      updatedAt: string
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }
+  }>
+  deleteIndependentCustomSubjectTemplate: (templateId: string) => Promise<{
+    success: boolean
+    error?: string
+    template?: {
+      id: string
+      baseStandardType: 'enterprise' | 'npo'
+      templateName: string
+      templateDescription: string | null
+      updatedAt: string
+      entryCount: number
+      entries: Array<{
+        code: string
+        name: string
+        category: string
+        balanceDirection: 1 | -1
+        isCashFlow: boolean
+        enabled: boolean
+        sortOrder: number
+        carryForwardTargetCode: string | null
+        note: string | null
+      }>
+    }
   }>
 }
 
