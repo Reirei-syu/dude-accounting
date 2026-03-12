@@ -244,6 +244,27 @@ export default function VoucherList(): JSX.Element {
   const previousRowsRef = useRef<Map<number, VoucherRow> | null>(null)
   const selectAllRef = useRef<HTMLInputElement | null>(null)
 
+  useEffect(() => {
+    if (!window.electron) return
+
+    window.api.settings
+      .getAll()
+      .then((settings) => {
+        if (
+          settings.voucher_list_default_status === 'pending' ||
+          settings.voucher_list_default_status === 'audited' ||
+          settings.voucher_list_default_status === 'posted'
+        ) {
+          setActiveStatusTab(settings.voucher_list_default_status)
+        } else {
+          setActiveStatusTab('all')
+        }
+      })
+      .catch((error) => {
+        console.error('load voucher list settings failed', error)
+      })
+  }, [])
+
   const canOperate = Boolean(window.electron && currentLedger)
   const canReverseBookkeep =
     currentUser?.isAdmin === true || currentUser?.permissions?.unbookkeep === true

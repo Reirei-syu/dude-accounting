@@ -2,10 +2,10 @@
 import TabBar from '../components/TabBar'
 import Workspace from '../components/Workspace'
 import SuspendedOverlay from '../components/SuspendedOverlay'
-import { hasPermissionAccess, useUIStore } from '../stores/uiStore'
-import { useLedgerStore } from '../stores/ledgerStore'
+import { getHomeTabPreset, hasPermissionAccess, useUIStore } from '../stores/uiStore'
+import { pickInitialLedger, useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import wallpaper from '../assets/wallpaper.png'
 
 const generateRandomString = (length = 10): string => {
@@ -18,19 +18,21 @@ const generateRandomString = (length = 10): string => {
 }
 
 export default function MainLayout(): JSX.Element {
-  const { isMenuSuspended } = useUIStore()
+  const { isMenuSuspended, openTab, tabs, resetWorkspace } = useUIStore()
   const {
     ledgers,
     currentLedger,
     currentPeriod,
     setLedgers,
     setCurrentLedger,
-    updateCurrentLedgerPeriod
+    updateCurrentLedgerPeriod,
+    reset: resetLedgerState
   } = useLedgerStore()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const userDisplayName = user?.realName || user?.username || '当前用户'
   const canManageLedgers = hasPermissionAccess(user, 'ledger_settings')
+  const startupAppliedRef = useRef(false)
 
   const handleLogout = async (): Promise<void> => {
     if (window.electron) {
@@ -40,6 +42,8 @@ export default function MainLayout(): JSX.Element {
         // ignore ipc logout errors and proceed to clear local state
       }
     }
+    resetWorkspace()
+    resetLedgerState()
     logout()
   }
 
@@ -52,6 +56,10 @@ export default function MainLayout(): JSX.Element {
   const [isDeletingLedger, setIsDeletingLedger] = useState(false)
   const [deleteValidationCode, setDeleteValidationCode] = useState('')
   const [deleteInputCode, setDeleteInputCode] = useState('')
+
+  useEffect(() => {
+    startupAppliedRef.current = false
+  }, [user?.id])
 
   const handleSwitchLedger = (ledgerId: number): void => {
     const target = ledgers.find((ledger) => ledger.id === ledgerId)
@@ -169,10 +177,21 @@ export default function MainLayout(): JSX.Element {
           }
           setLedgers([mockLedger])
           setCurrentLedger(mockLedger)
+          if (!startupAppliedRef.current && tabs.length === 0) {
+            openTab({
+              id: 'voucher-entry',
+              title: '凭证录入',
+              componentType: 'VoucherEntry'
+            })
+            startupAppliedRef.current = true
+          }
           return
         }
 
-        const loadedLedgers = await window.api.ledger.getAll()
+        const [loadedLedgers, preferences] = await Promise.all([
+          window.api.ledger.getAll(),
+          window.api.settings.getUserPreferences()
+        ])
         if (loadedLedgers.length === 0 && user?.isAdmin) {
           const now = new Date()
           const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -185,10 +204,21 @@ export default function MainLayout(): JSX.Element {
 
         const finalLedgers = await window.api.ledger.getAll()
         setLedgers(finalLedgers)
-        if (finalLedgers.length === 0) {
-          setCurrentLedger(null)
-        } else if (!currentLedger || !finalLedgers.some((ledger) => ledger.id === currentLedger.id)) {
-          setCurrentLedger(finalLedgers[0])
+        const preferredLedgerId = Number(preferences.default_ledger_id || 0)
+        const nextLedger = pickInitialLedger(
+          finalLedgers,
+          Number.isInteger(preferredLedgerId) && preferredLedgerId > 0 ? preferredLedgerId : null
+        )
+        if (nextLedger?.id !== currentLedger?.id || (nextLedger === null && currentLedger !== null)) {
+          setCurrentLedger(nextLedger)
+        }
+
+        if (!startupAppliedRef.current && tabs.length === 0) {
+          const preset = getHomeTabPreset(preferences.default_home_tab || 'voucher-entry')
+          if (preset) {
+            openTab(preset)
+          }
+          startupAppliedRef.current = true
         }
       } catch (error) {
         console.error('load ledgers failed', error)
@@ -196,13 +226,7 @@ export default function MainLayout(): JSX.Element {
     }
 
     void loadLedgers()
-  }, [currentLedger, setCurrentLedger, setLedgers, user?.isAdmin])
-
-  const formatPeriod = (period: string): string => {
-    if (!period) return ''
-    const [year, month] = period.split('-')
-    return `${year}年${month}月`
-  }
+  }, [currentLedger?.id, openTab, setCurrentLedger, setLedgers, tabs.length, user?.id, user?.isAdmin])
 
   return (
     <div
@@ -220,64 +244,84 @@ export default function MainLayout(): JSX.Element {
         <header className="main-info-row">
           <h1 className="sr-only">Dude Accounting 主界面</h1>
 
-          <div className="main-meta-group" role="group" aria-label="账套切换">
-            <label className="main-meta-label" htmlFor="ledger-selector">
-              账套：
-            </label>
-            <select
-              id="ledger-selector"
-              className="main-meta-control"
-              value={currentLedger?.id ?? ''}
-              onChange={(e) => handleSwitchLedger(Number(e.target.value))}
-              aria-label="选择账套"
+          <div className="main-info-primary">
+            <div className="main-meta-group" role="group" aria-label="账套切换">
+              <label className="main-meta-label" htmlFor="ledger-selector">
+                账套：
+              </label>
+              <select
+                id="ledger-selector"
+                className="main-meta-control"
+                value={currentLedger?.id ?? ''}
+                onChange={(e) => handleSwitchLedger(Number(e.target.value))}
+                aria-label="选择账套"
+              >
+                <option value="">未选择</option>
+                {ledgers.map((ledger) => (
+                  <option key={ledger.id} value={ledger.id}>
+                    {ledger.name}（{ledger.standard_type === 'npo' ? '民非' : '企业'}）
+                  </option>
+                ))}
+              </select>
+
+              {window.electron && canManageLedgers && (
+                <>
+                  <button
+                    className="glass-btn-secondary main-create-ledger-btn"
+                    onClick={openCreateLedger}
+                    aria-label="新建账套"
+                  >
+                    新建账套
+                  </button>
+                  <button
+                    className="glass-btn-secondary main-create-ledger-btn"
+                    style={{ color: 'var(--color-danger)', borderColor: 'rgba(185, 28, 28, 0.3)' }}
+                    onClick={openDeleteLedger}
+                    aria-label="删除当期账套"
+                  >
+                    删除账套
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div className="main-meta-group" role="group" aria-label="会计期间切换">
+              <label className="main-meta-label" htmlFor="period-input">
+                会计期间：
+              </label>
+              <input
+                id="period-input"
+                type="month"
+                className="main-meta-control"
+                value={currentPeriod || ''}
+                onChange={(e) => void handleSwitchPeriod(e.target.value)}
+                aria-label="选择会计期间"
+              />
+            </div>
+          </div>
+
+          <div className="main-info-actions">
+            <button
+              type="button"
+              className="glass-btn-secondary px-4 py-2"
+              onClick={() =>
+                openTab({
+                  id: 'my-preferences',
+                  title: '我的偏好',
+                  componentType: 'MyPreferences'
+                })
+              }
             >
-              <option value="">未选择</option>
-              {ledgers.map((ledger) => (
-                <option key={ledger.id} value={ledger.id}>
-                  {ledger.name}（{ledger.standard_type === 'npo' ? '民非' : '企业'}）
-                </option>
-              ))}
-            </select>
-
-            {window.electron && canManageLedgers && (
-              <>
-                <button
-                  className="glass-btn-secondary main-create-ledger-btn"
-                  onClick={openCreateLedger}
-                  aria-label="新建账套"
-                >
-                  新建账套
-                </button>
-                <button
-                  className="glass-btn-secondary main-create-ledger-btn"
-                  style={{ color: 'var(--color-danger)', borderColor: 'rgba(185, 28, 28, 0.3)' }}
-                  onClick={openDeleteLedger}
-                  aria-label="删除当期账套"
-                >
-                  删除账套
-                </button>
-              </>
-            )}
+              我的偏好
+            </button>
+            <button
+              type="button"
+              className="main-logout-btn"
+              onClick={() => void handleLogout()}
+            >
+              {userDisplayName} | 退出登录
+            </button>
           </div>
-
-          <div className="main-meta-group" role="group" aria-label="会计期间切换">
-            <label className="main-meta-label" htmlFor="period-input">
-              会计期间：
-            </label>
-            <input
-              id="period-input"
-              type="month"
-              className="main-meta-control"
-              value={currentPeriod || ''}
-              onChange={(e) => void handleSwitchPeriod(e.target.value)}
-              aria-label="选择会计期间"
-            />
-            <span className="main-period-text">{formatPeriod(currentPeriod)}</span>
-          </div>
-
-          <button type="button" className="main-logout-btn" onClick={() => void handleLogout()}>
-            {userDisplayName} | 退出登录
-          </button>
         </header>
 
         <TabBar />

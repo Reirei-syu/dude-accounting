@@ -40,6 +40,12 @@ export interface MainModuleItem extends PermissionBoundItem {
   label: string
 }
 
+export interface HomeTabPreset {
+  id: string
+  title: string
+  componentType: string
+}
+
 export interface SubMenuItem extends PermissionBoundItem {
   id: string
   title: string
@@ -52,6 +58,14 @@ export const MAIN_MODULES: MainModuleItem[] = [
   { id: 'ledger-query', label: '账簿查询' },
   { id: 'reports', label: '报表输出' },
   { id: 'system-settings', label: '系统设置', requiredPermission: 'system_settings' }
+]
+
+export const HOME_TAB_PRESETS: HomeTabPreset[] = [
+  { id: 'voucher-entry', title: '凭证录入', componentType: 'VoucherEntry' },
+  { id: 'voucher-list', title: '凭证管理', componentType: 'VoucherList' },
+  { id: 'voucher-query', title: '凭证查询', componentType: 'VoucherQuery' },
+  { id: 'subject-balance', title: '科目余额表', componentType: 'SubjectBalance' },
+  { id: 'report-query', title: '报表查询', componentType: 'ReportQuery' }
 ]
 
 const REPORT_SUB_MENUS: Record<AccountingStandardType, SubMenuItem[]> = {
@@ -164,6 +178,10 @@ export function getVisibleMainModules(
   return MAIN_MODULES.filter((module) => hasPermissionAccess(user, module.requiredPermission))
 }
 
+export function getHomeTabPreset(key: string): HomeTabPreset | null {
+  return HOME_TAB_PRESETS.find((preset) => preset.id === key) ?? null
+}
+
 export function getModuleSubMenus(
   module: MainModule,
   standardType: AccountingStandardType = 'enterprise'
@@ -198,6 +216,7 @@ interface UIState {
   closeTab: (tabId: string) => void
   setActiveTab: (tabId: string) => void
   setSuspended: (module: MainModule | null) => void
+  resetWorkspace: () => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -280,5 +299,13 @@ export const useUIStore = create<UIState>((set, get) => ({
     set({
       isMenuSuspended: module !== null,
       suspendedModule: module
+    }),
+
+  resetWorkspace: () =>
+    set({
+      tabs: [],
+      activeTabId: null,
+      isMenuSuspended: false,
+      suspendedModule: null
     })
 }))

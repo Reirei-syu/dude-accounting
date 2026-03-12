@@ -512,6 +512,10 @@ export default function VoucherEntry({
   const [editingVoucherId, setEditingVoucherId] = useState<number | null>(null)
   const [currentVoucherStatus, setCurrentVoucherStatus] = useState<0 | 1 | 2 | 3 | null>(null)
   const [navigableVouchers, setNavigableVouchers] = useState<VoucherListItem[]>([])
+  const [defaultVoucherWord, setDefaultVoucherWord] = useState('记')
+  const [newVoucherDateStrategy, setNewVoucherDateStrategy] = useState<
+    'last_voucher_date' | 'period_start'
+  >('last_voucher_date')
   const [loadingVoucher, setLoadingVoucher] = useState(false)
   const [dismissedEditRequestToken, setDismissedEditRequestToken] = useState<string | null>(null)
   const [baselineSignature, setBaselineSignature] = useState<string>('')
@@ -613,6 +617,24 @@ export default function VoucherEntry({
       cancelled = true
     }
   }, [currentLedger])
+
+  useEffect(() => {
+    if (!window.electron) return
+
+    window.api.settings
+      .getAll()
+      .then((settings) => {
+        setDefaultVoucherWord(settings.default_voucher_word || '记')
+        setNewVoucherDateStrategy(
+          settings.new_voucher_date_strategy === 'period_start'
+            ? 'period_start'
+            : 'last_voucher_date'
+        )
+      })
+      .catch((error) => {
+        console.error('load voucher entry settings failed', error)
+      })
+  }, [])
 
   useEffect(() => {
     if (!currentLedger || !activePeriod || !window.electron) {
@@ -1024,7 +1046,9 @@ export default function VoucherEntry({
         if (!cancelled) {
           setNavigableVouchers(list)
           if (editingVoucherId === null && activePeriod) {
-            setDate(getDefaultVoucherDateForNewVoucher(activePeriod, list))
+            setDate(
+              getDefaultVoucherDateForNewVoucher(activePeriod, list, newVoucherDateStrategy)
+            )
           }
         }
       } catch (error) {
@@ -1038,7 +1062,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [activePeriod, currentLedger?.id, editingVoucherId, navigableVoucherPeriod])
+  }, [activePeriod, currentLedger?.id, editingVoucherId, navigableVoucherPeriod, newVoucherDateStrategy])
 
   const loadVoucherForEdit = async (voucherId: number): Promise<boolean> => {
     if (!currentLedger || !window.electron) return false
@@ -1205,7 +1229,11 @@ export default function VoucherEntry({
 
       const navigableList = await refreshNavigableVouchers(currentLedger.id, activePeriod || undefined)
       if (activePeriod) {
-        targetDate = getDefaultVoucherDateForNewVoucher(activePeriod, navigableList)
+        targetDate = getDefaultVoucherDateForNewVoucher(
+          activePeriod,
+          navigableList,
+          newVoucherDateStrategy
+        )
         setDate(targetDate)
       }
 
@@ -1231,7 +1259,15 @@ export default function VoucherEntry({
         })
       }
     },
-    [activePeriod, currentEditRequestToken, currentLedger, date, periodStatus, resetVoucher]
+    [
+      activePeriod,
+      currentEditRequestToken,
+      currentLedger,
+      date,
+      newVoucherDateStrategy,
+      periodStatus,
+      resetVoucher
+    ]
   )
 
   const handleNewVoucher = async (): Promise<void> => {
@@ -1320,7 +1356,7 @@ export default function VoucherEntry({
           ? await window.api.voucher.save({
               ledgerId: currentLedger.id,
               voucherDate: date,
-              voucherWord: '记',
+              voucherWord: defaultVoucherWord,
               entries: payloadEntries
             })
           : await window.api.voucher.update({
@@ -1340,7 +1376,7 @@ export default function VoucherEntry({
       if (editingVoucherId === null) {
         setMessage({
           type: 'success',
-          text: `凭证已保存（记-${String(result.voucherNumber).padStart(4, '0')}）`
+          text: `凭证已保存（${defaultVoucherWord}-${String(result.voucherNumber).padStart(4, '0')}）`
         })
         if (mode === 'newAfterSave') {
           await handleNewVoucher()
@@ -1348,7 +1384,7 @@ export default function VoucherEntry({
       } else {
         setMessage({
           type: 'success',
-          text: `凭证已更新（记-${String(voucherNumber).padStart(4, '0')}）`
+          text: `凭证已更新（${defaultVoucherWord}-${String(voucherNumber).padStart(4, '0')}）`
         })
         setRows(normalizedRows)
         setBaselineSignature(buildDraftSignature(date, normalizedRows))

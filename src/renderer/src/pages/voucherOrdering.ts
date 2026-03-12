@@ -38,8 +38,12 @@ export function sortVouchersForDisplay<T extends VoucherOrderItem>(rows: T[]): T
 
 export function getDefaultVoucherDateForNewVoucher(
   activePeriod: string,
-  rows: VoucherOrderItem[]
+  rows: VoucherOrderItem[],
+  strategy: 'last_voucher_date' | 'period_start' = 'last_voucher_date'
 ): string {
+  if (strategy === 'period_start') {
+    return `${activePeriod}-01`
+  }
   const sortedRows = sortVouchersForDisplay(rows)
   const latestVoucher = sortedRows[sortedRows.length - 1]
   return latestVoucher?.voucher_date ?? `${activePeriod}-01`

@@ -304,9 +304,9 @@ button {
   min-height: 64px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 10px 14px;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 14px;
   padding: 6px 12px;
   border-radius: var(--radius-md);
   background: rgba(255, 255, 255, 0.78);
@@ -314,10 +314,21 @@ button {
   box-shadow: var(--shadow-sm);
 }
 
+.main-info-primary {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: nowrap;
+}
+
 .main-meta-group {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .main-meta-label {
@@ -330,9 +341,12 @@ button {
   min-width: 172px;
 }
 
-.main-period-text {
-  font-size: 13px;
-  color: var(--color-muted);
+.main-info-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .main-create-ledger-btn {
@@ -777,6 +791,12 @@ button {
 
   .main-info-row {
     justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .main-info-primary {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .main-meta-group {
@@ -787,6 +807,12 @@ button {
   .main-meta-control {
     flex: 1;
     min-width: 0;
+  }
+
+  .main-info-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
   }
 
   .feature-panel {

@@ -177,7 +177,10 @@ const api = {
   settings: {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     getAll: () => ipcRenderer.invoke('settings:getAll'),
+    getUserPreferences: () => ipcRenderer.invoke('settings:getUserPreferences'),
     set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
+    setUserPreferences: (preferences: Record<string, string>) =>
+      ipcRenderer.invoke('settings:setUserPreferences', preferences),
     getSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
       ipcRenderer.invoke('settings:getSubjectTemplate', standardType),
     getSubjectTemplateReference: (standardType: 'enterprise' | 'npo') =>

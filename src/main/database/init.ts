@@ -43,6 +43,15 @@ export function initializeDatabase(): void {
       FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id INTEGER NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, key),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     -- 账套表
     CREATE TABLE IF NOT EXISTS ledgers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,6 +371,7 @@ export function initializeDatabase(): void {
   ensureInitialBalanceSchema(db)
   ensureCashFlowMappingSchema(db)
   ensureUserLedgerAccessSchema(db)
+  ensureUserPreferenceSchema(db)
   ensureComplianceSchema(db)
   ensureReportingSchema(db)
 
@@ -412,6 +422,26 @@ export function ensureUserLedgerAccessSchema(db: Database.Database): void {
         WHERE u.is_admin = 0`
     ).run()
   }
+}
+
+export function ensureUserPreferenceSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('user_preferences')").all() as Array<{ name: string }>
+  if (columns.length === 0) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_preferences (
+        user_id INTEGER NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (user_id, key),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+    `)
+  }
+
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_user_preferences_user ON user_preferences(user_id)'
+  ).run()
 }
 
 export function ensureSubjectSchema(db: Database.Database): void {

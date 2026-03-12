@@ -197,7 +197,9 @@ interface AuxiliaryAPI {
 interface SettingsAPI {
   get: (key: string) => Promise<string | null>
   getAll: () => Promise<Record<string, string>>
+  getUserPreferences: () => Promise<Record<string, string>>
   set: (key: string, value: string) => Promise<{ success: boolean }>
+  setUserPreferences: (preferences: Record<string, string>) => Promise<{ success: boolean }>
   getSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
     standardType: 'enterprise' | 'npo'
     templateName: string

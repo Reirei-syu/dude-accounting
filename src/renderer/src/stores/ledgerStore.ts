@@ -1,12 +1,28 @@
 import { create } from 'zustand'
 
-interface Ledger {
+export interface Ledger {
   id: number
   name: string
   standard_type: 'enterprise' | 'npo'
   start_period: string
   current_period: string
   created_at: string
+}
+
+export function pickInitialLedger(
+  ledgers: Ledger[],
+  preferredLedgerId?: number | null
+): Ledger | null {
+  if (ledgers.length === 0) {
+    return null
+  }
+  if (typeof preferredLedgerId === 'number') {
+    const matched = ledgers.find((ledger) => ledger.id === preferredLedgerId)
+    if (matched) {
+      return matched
+    }
+  }
+  return ledgers[0]
 }
 
 interface LedgerState {
@@ -17,6 +33,7 @@ interface LedgerState {
   setCurrentLedger: (ledger: Ledger | null) => void
   setCurrentPeriod: (period: string) => void
   updateCurrentLedgerPeriod: (period: string) => void
+  reset: () => void
 }
 
 export const useLedgerStore = create<LedgerState>((set) => ({
@@ -41,5 +58,11 @@ export const useLedgerStore = create<LedgerState>((set) => ({
           ledger.id === currentLedger.id ? { ...ledger, current_period: period } : ledger
         )
       }
+    }),
+  reset: () =>
+    set({
+      ledgers: [],
+      currentLedger: null,
+      currentPeriod: ''
     })
 }))

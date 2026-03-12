@@ -52,6 +52,37 @@ export function registerSettingsHandlers(): void {
     return settings
   })
 
+  ipcMain.handle('settings:getUserPreferences', (event) => {
+    const user = requireAuth(event)
+    const rows = db.prepare('SELECT key, value FROM user_preferences WHERE user_id = ?').all(user.id) as {
+      key: string
+      value: string
+    }[]
+    const settings: Record<string, string> = {}
+    for (const row of rows) {
+      settings[row.key] = row.value
+    }
+    return settings
+  })
+
+  ipcMain.handle('settings:setUserPreferences', (event, preferences: Record<string, string>) => {
+    const user = requireAuth(event)
+    const entries = Object.entries(preferences || {})
+    const saveTx = db.transaction(() => {
+      const upsertStmt = db.prepare(
+        `INSERT INTO user_preferences (user_id, key, value, updated_at)
+         VALUES (?, ?, ?, datetime('now'))
+         ON CONFLICT(user_id, key)
+         DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+      )
+      for (const [key, value] of entries) {
+        upsertStmt.run(user.id, key, value ?? '')
+      }
+    })
+    saveTx()
+    return { success: true }
+  })
+
   // 更新系统设置
   ipcMain.handle('settings:set', (event, key: string, value: string) => {
     requirePermission(event, 'system_settings')

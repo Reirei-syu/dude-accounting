@@ -32,4 +32,23 @@ describe('voucherOrdering', () => {
       ])
     ).toBe('2026-03-31')
   })
+
+  it('supports period-start strategy for new voucher default dates', () => {
+    const getDateByStrategy = getDefaultVoucherDateForNewVoucher as unknown as (
+      activePeriod: string,
+      rows: VoucherOrderItem[],
+      strategy: 'last_voucher_date' | 'period_start'
+    ) => string
+
+    expect(
+      getDateByStrategy(
+        '2026-03',
+        [
+          { id: 2, voucher_number: 2, voucher_word: '记', voucher_date: '2026-03-08' },
+          { id: 1, voucher_number: 1, voucher_word: '记', voucher_date: '2026-03-03' }
+        ],
+        'period_start'
+      )
+    ).toBe('2026-03-01')
+  })
 })

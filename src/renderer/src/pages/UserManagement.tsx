@@ -390,36 +390,40 @@ export default function UserManagement(): JSX.Element {
                     ) : ledgers.length === 0 ? (
                       <span style={{ color: 'var(--color-text-muted)' }}>暂无账套</span>
                     ) : (
-                      <div className="flex flex-col gap-1">
-                        {ledgers.map((ledger) => (
-                          <label
-                            key={`${user.id}-ledger-${ledger.id}`}
-                            className="text-xs"
-                            style={{ color: 'var(--color-text-secondary)' }}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-col gap-1">
+                          {ledgers.map((ledger) => (
+                            <label
+                              key={`${user.id}-ledger-${ledger.id}`}
+                              className="text-xs"
+                              style={{ color: 'var(--color-text-secondary)' }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={Boolean(ledgerDrafts[user.id]?.includes(ledger.id))}
+                                onChange={(event) =>
+                                  handleLedgerToggle(user.id, ledger.id, event.target.checked)
+                                }
+                              />{' '}
+                              {ledger.name}
+                            </label>
+                          ))}
+                        </div>
+                        <div>
+                          <button
+                            className="glass-btn-secondary px-3 py-1 text-xs"
+                            onClick={() => void handleSavePermissions(user.id)}
+                            disabled={savingUserId === user.id}
                           >
-                            <input
-                              type="checkbox"
-                              checked={Boolean(ledgerDrafts[user.id]?.includes(ledger.id))}
-                              onChange={(event) =>
-                                handleLedgerToggle(user.id, ledger.id, event.target.checked)
-                              }
-                            />{' '}
-                            {ledger.name}
-                          </label>
-                        ))}
+                            {savingUserId === user.id ? '保存中...' : '保存权限'}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
                   <div className="col-span-2 text-right">
                     {!user.isAdmin && (
                       <div className="flex justify-end gap-2">
-                        <button
-                          className="glass-btn-secondary px-3 py-1 text-xs"
-                          onClick={() => void handleSavePermissions(user.id)}
-                          disabled={savingUserId === user.id}
-                        >
-                          {savingUserId === user.id ? '保存中...' : '保存权限'}
-                        </button>
                         <button
                           className="glass-btn-secondary px-3 py-1 text-xs"
                           onClick={() => void handleDelete(user.id)}

@@ -19,6 +19,7 @@ Current Stage:
 
 - 已具备登录、账套、凭证、科目、辅助、期初余额、损益结转、结账等基础流程。
 - 账号权限模型已从“仅功能权限”扩展为“功能权限 + 账套访问权限”；普通用户后续将按被分配账套范围获取账套列表与业务操作权限，`admin` 默认可访问全部账套。
+- “系统参数设置”正从单一参数页扩展为“双层配置”：管理员维护系统级规则，普通用户维护个人偏好；第一阶段重点覆盖默认账套、默认首页、凭证默认值与高频列表默认行为。
 - 账套设置中的“期末损益结转设置”已从只读预览升级为正式维护页，可按末级损益科目保存结转目标规则。
 - 正在从“桌面记账应用雏形”改造为“具备合规基础能力的代理记账单机软件”。
 - 已识别的重点改造方向为：已记账不可逆、关键操作日志、电子凭证处理底座、备份与电子档案导出、账簿报表输出。
@@ -111,6 +112,16 @@ Key Channels:
 - `ledger:getAll/create/update/delete/getPeriods`
 - `ledger:getStandardTemplates`
 - `ledger:applyStandardTemplate`
+
+### UserPreferenceModule
+
+Responsibility:
+维护当前登录用户的个人偏好，仅影响当前用户的默认行为，不得突破系统级规则边界。
+
+Planned Channels:
+
+- `settings:getUserPreferences`
+- `settings:setUserPreferences`
 
 ### AccountSetupModule
 
@@ -247,6 +258,7 @@ Existing Tables:
 
 - `users`
 - `user_ledger_permissions`
+- `user_preferences`
 - `ledgers`
 - `subjects`
 - `auxiliary_items`
@@ -315,6 +327,7 @@ Current Authorization Semantics:
 - `auth:login` 返回功能权限与账套访问范围信息。
 - `auth:getUsers/createUser/updateUser` 需同时读取/维护账号被授权的账套 ID 集合。
 - `ledger:getAll` 返回当前登录用户可访问的账套列表；`admin` 返回全部账套。
+- 系统级规则保存在 `system_settings`；个人偏好保存在 `user_preferences`，按当前登录用户作用域读取。
 
 Settings Extension:
 
@@ -325,6 +338,8 @@ Settings Extension:
 - `settings:importSubjectTemplate`
 - `settings:downloadSubjectTemplate`
 - `settings:clearSubjectTemplate`
+- `settings:getUserPreferences`
+- `settings:setUserPreferences`
 
 In-flight:
 
@@ -342,6 +357,8 @@ In-flight:
 - `admin` 默认拥有全部账套访问权，无需显式勾选单个账套授权。
 - 普通用户仅可查看和操作被分配的账套；未分配账套不得出现在账套列表、功能入口、查询结果或可提交的业务操作中。
 - 新增或调整账套级授权时，需同时检查登录会话、账套列表、业务 IPC 与账号管理界面是否保持一致，不允许仅前端隐藏而后端放行。
+- 系统参数仅承载系统级规则；个人偏好必须与系统规则分层，且个人偏好只能在系统允许范围内生效。
+- 个人偏好中的默认账套必须限制在当前用户被授权的账套集合内；若偏好中的账套失效，应自动回退到首个可访问账套或空状态。
 - 普通用户不得对已记账凭证执行反记账。
 - 管理员紧急逆转必须强制记录原因并写入操作日志。
 - 末级损益科目必须维护完整结转规则；若存在未配置或失效规则，不得执行期末损益结转。
