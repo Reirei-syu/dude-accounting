@@ -5,7 +5,7 @@ import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { buildArchiveManifest, writeArchiveManifest } from '../services/archiveExport'
 import { buildTimestampToken, computeFileSha256, ensureDirectory } from '../services/fileIntegrity'
-import { requirePermission } from './session'
+import { requireLedgerAccess, requirePermission } from './session'
 
 function getArchiveRootDir(): string {
   return path.join(app.getPath('userData'), 'archive-exports')
@@ -18,6 +18,7 @@ export function registerArchiveHandlers(): void {
       try {
         const user = requirePermission(event, 'ledger_settings')
         const db = getDatabase()
+        requireLedgerAccess(event, db, payload.ledgerId)
         const ledger = db.prepare('SELECT id, name FROM ledgers WHERE id = ?').get(payload.ledgerId) as
           | { id: number; name: string }
           | undefined
@@ -189,10 +190,11 @@ export function registerArchiveHandlers(): void {
   )
 
   ipcMain.handle('archive:list', (event, ledgerId?: number) => {
-    requirePermission(event, 'ledger_settings')
+    const user = requirePermission(event, 'ledger_settings')
     const db = getDatabase()
 
     if (typeof ledgerId === 'number') {
+      requireLedgerAccess(event, db, ledgerId)
       return db
         .prepare(
           `SELECT *
@@ -203,19 +205,32 @@ export function registerArchiveHandlers(): void {
         .all(ledgerId)
     }
 
-    return db.prepare('SELECT * FROM archive_exports ORDER BY id DESC').all()
+    if (user.isAdmin) {
+      return db.prepare('SELECT * FROM archive_exports ORDER BY id DESC').all()
+    }
+
+    return db
+      .prepare(
+        `SELECT ae.*
+           FROM archive_exports ae
+           INNER JOIN user_ledger_permissions ulp ON ulp.ledger_id = ae.ledger_id
+          WHERE ulp.user_id = ?
+          ORDER BY ae.id DESC`
+      )
+      .all(user.id)
   })
 
   ipcMain.handle('archive:getManifest', (event, exportId: number) => {
     requirePermission(event, 'ledger_settings')
     const db = getDatabase()
-    const row = db.prepare('SELECT manifest_path FROM archive_exports WHERE id = ?').get(exportId) as
-      | { manifest_path: string }
+    const row = db.prepare('SELECT ledger_id, manifest_path FROM archive_exports WHERE id = ?').get(exportId) as
+      | { ledger_id: number; manifest_path: string }
       | undefined
 
     if (!row) {
       throw new Error('档案导出记录不存在')
     }
+    requireLedgerAccess(event, db, row.ledger_id)
 
     if (!fs.existsSync(row.manifest_path)) {
       throw new Error('归档清单文件不存在')

@@ -12,12 +12,14 @@ const api = {
       realName: string
       password: string
       permissions: Record<string, boolean>
+      ledgerIds?: number[]
     }) => ipcRenderer.invoke('auth:createUser', data),
     updateUser: (data: {
       id: number
       realName?: string
       password?: string
       permissions?: Record<string, boolean>
+      ledgerIds?: number[]
     }) => ipcRenderer.invoke('auth:updateUser', data),
     deleteUser: (userId: number) => ipcRenderer.invoke('auth:deleteUser', userId)
   },

@@ -2,7 +2,7 @@
 import TabBar from '../components/TabBar'
 import Workspace from '../components/Workspace'
 import SuspendedOverlay from '../components/SuspendedOverlay'
-import { useUIStore } from '../stores/uiStore'
+import { hasPermissionAccess, useUIStore } from '../stores/uiStore'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
 import { useEffect, useState, type JSX } from 'react'
@@ -30,6 +30,7 @@ export default function MainLayout(): JSX.Element {
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
   const userDisplayName = user?.realName || user?.username || '当前用户'
+  const canManageLedgers = hasPermissionAccess(user, 'ledger_settings')
 
   const handleLogout = async (): Promise<void> => {
     if (window.electron) {
@@ -172,7 +173,7 @@ export default function MainLayout(): JSX.Element {
         }
 
         const loadedLedgers = await window.api.ledger.getAll()
-        if (loadedLedgers.length === 0) {
+        if (loadedLedgers.length === 0 && user?.isAdmin) {
           const now = new Date()
           const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
           await window.api.ledger.create({
@@ -184,7 +185,9 @@ export default function MainLayout(): JSX.Element {
 
         const finalLedgers = await window.api.ledger.getAll()
         setLedgers(finalLedgers)
-        if (finalLedgers.length > 0 && !currentLedger) {
+        if (finalLedgers.length === 0) {
+          setCurrentLedger(null)
+        } else if (!currentLedger || !finalLedgers.some((ledger) => ledger.id === currentLedger.id)) {
           setCurrentLedger(finalLedgers[0])
         }
       } catch (error) {
@@ -193,7 +196,7 @@ export default function MainLayout(): JSX.Element {
     }
 
     void loadLedgers()
-  }, [currentLedger, setCurrentLedger, setLedgers])
+  }, [currentLedger, setCurrentLedger, setLedgers, user?.isAdmin])
 
   const formatPeriod = (period: string): string => {
     if (!period) return ''
@@ -236,7 +239,7 @@ export default function MainLayout(): JSX.Element {
               ))}
             </select>
 
-            {window.electron && (
+            {window.electron && canManageLedgers && (
               <>
                 <button
                   className="glass-btn-secondary main-create-ledger-btn"

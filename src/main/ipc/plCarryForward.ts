@@ -6,13 +6,14 @@ import {
   savePLCarryForwardRules,
   previewPLCarryForward
 } from '../services/plCarryForward'
-import { requireAuth, requirePermission } from './session'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 export function registerPLCarryForwardHandlers(): void {
   const db = getDatabase()
 
   ipcMain.handle('plCarryForward:listRules', (event, ledgerId: number) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     return listPLCarryForwardRules(db, ledgerId)
   })
 
@@ -30,6 +31,7 @@ export function registerPLCarryForwardHandlers(): void {
     ) => {
       try {
         requirePermission(event, 'ledger_settings')
+        requireLedgerAccess(event, db, payload.ledgerId)
         const savedCount = savePLCarryForwardRules(db, payload)
         return { success: true, savedCount }
       } catch (error) {
@@ -45,6 +47,7 @@ export function registerPLCarryForwardHandlers(): void {
     'plCarryForward:preview',
     (event, payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) => {
       requireAuth(event)
+      requireLedgerAccess(event, db, payload.ledgerId)
       return previewPLCarryForward(db, payload)
     }
   )
@@ -54,6 +57,7 @@ export function registerPLCarryForwardHandlers(): void {
     (event, payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) => {
       try {
         const user = requirePermission(event, 'bookkeeping')
+        requireLedgerAccess(event, db, payload.ledgerId)
         const result = executePLCarryForward(db, {
           ledgerId: payload.ledgerId,
           period: payload.period,

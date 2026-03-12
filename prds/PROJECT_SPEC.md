@@ -18,6 +18,7 @@ Goal:
 Current Stage:
 
 - 已具备登录、账套、凭证、科目、辅助、期初余额、损益结转、结账等基础流程。
+- 账号权限模型已从“仅功能权限”扩展为“功能权限 + 账套访问权限”；普通用户后续将按被分配账套范围获取账套列表与业务操作权限，`admin` 默认可访问全部账套。
 - 账套设置中的“期末损益结转设置”已从只读预览升级为正式维护页，可按末级损益科目保存结转目标规则。
 - 正在从“桌面记账应用雏形”改造为“具备合规基础能力的代理记账单机软件”。
 - 已识别的重点改造方向为：已记账不可逆、关键操作日志、电子凭证处理底座、备份与电子档案导出、账簿报表输出。
@@ -92,7 +93,7 @@ Infrastructure:
 ### AuthSessionModule
 
 Responsibility:
-登录认证、会话绑定、权限校验。
+登录认证、会话绑定、功能权限校验、账套访问权限校验。
 
 Key Channels:
 
@@ -245,6 +246,7 @@ Current Channels:
 Existing Tables:
 
 - `users`
+- `user_ledger_permissions`
 - `ledgers`
 - `subjects`
 - `auxiliary_items`
@@ -308,6 +310,12 @@ Current:
 - `bookQuery:listSubjectBalances/getDetailLedger/getJournal/getAuxiliaryBalances/getAuxiliaryDetail`
 - `reporting:generate/list/getDetail/delete/export`
 
+Current Authorization Semantics:
+
+- `auth:login` 返回功能权限与账套访问范围信息。
+- `auth:getUsers/createUser/updateUser` 需同时读取/维护账号被授权的账套 ID 集合。
+- `ledger:getAll` 返回当前登录用户可访问的账套列表；`admin` 返回全部账套。
+
 Settings Extension:
 
 - `settings:getSubjectTemplate`
@@ -331,6 +339,9 @@ In-flight:
 
 - 默认离线单机模式，核心数据保存在本地 SQLite。
 - 一个账套对应一个委托单位，不支持政府和事业单位会计模板。
+- `admin` 默认拥有全部账套访问权，无需显式勾选单个账套授权。
+- 普通用户仅可查看和操作被分配的账套；未分配账套不得出现在账套列表、功能入口、查询结果或可提交的业务操作中。
+- 新增或调整账套级授权时，需同时检查登录会话、账套列表、业务 IPC 与账号管理界面是否保持一致，不允许仅前端隐藏而后端放行。
 - 普通用户不得对已记账凭证执行反记账。
 - 管理员紧急逆转必须强制记录原因并写入操作日志。
 - 末级损益科目必须维护完整结转规则；若存在未配置或失效规则，不得执行期末损益结转。

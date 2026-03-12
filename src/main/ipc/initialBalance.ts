@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import Decimal from 'decimal.js'
 import { ensureInitialBalanceSchema, getDatabase } from '../database/init'
-import { requireAuth, requirePermission } from './session'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 interface InitialBalanceEntryInput {
   subjectCode: string
@@ -33,6 +33,7 @@ export function registerInitialBalanceHandlers(): void {
 
   ipcMain.handle('initialBalance:list', (event, ledgerId: number, period: string) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     return db
       .prepare(
         `SELECT
@@ -69,6 +70,7 @@ export function registerInitialBalanceHandlers(): void {
         if (!ledgerId) {
           return { success: false, error: '请选择账套' }
         }
+        requireLedgerAccess(event, db, ledgerId)
         if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
           return { success: false, error: '期初期间格式应为 YYYY-MM' }
         }

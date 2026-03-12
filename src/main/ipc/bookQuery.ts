@@ -22,7 +22,7 @@ import {
   type JournalQuery,
   type SubjectBalanceQuery
 } from '../services/bookQuery'
-import { requireAuth } from './session'
+import { requireAuth, requireLedgerAccess } from './session'
 
 const BOOK_QUERY_EXPORT_LAST_DIR_KEY = 'book_query_export_last_dir'
 
@@ -74,26 +74,31 @@ export function registerBookQueryHandlers(): void {
 
   ipcMain.handle('bookQuery:listSubjectBalances', (event, query: SubjectBalanceQuery) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, query.ledgerId)
     return listSubjectBalances(db, query)
   })
 
   ipcMain.handle('bookQuery:getDetailLedger', (event, query: DetailLedgerQuery) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, query.ledgerId)
     return getDetailLedger(db, query)
   })
 
   ipcMain.handle('bookQuery:getJournal', (event, query: JournalQuery) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, query.ledgerId)
     return getJournal(db, query)
   })
 
   ipcMain.handle('bookQuery:getAuxiliaryBalances', (event, query: AuxiliaryBalanceQuery) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, query.ledgerId)
     return getAuxiliaryBalances(db, query)
   })
 
   ipcMain.handle('bookQuery:getAuxiliaryDetail', (event, query: AuxiliaryDetailQuery) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, query.ledgerId)
     return getAuxiliaryDetail(db, query)
   })
 
@@ -104,6 +109,7 @@ export function registerBookQueryHandlers(): void {
       if (!payload.ledgerId) {
         return { success: false, error: '请选择账套' }
       }
+      requireLedgerAccess(event, db, payload.ledgerId)
 
       if (!payload.title.trim()) {
         return { success: false, error: '导出标题不能为空' }

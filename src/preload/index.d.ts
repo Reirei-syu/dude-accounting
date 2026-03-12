@@ -13,6 +13,7 @@ interface AuthAPI {
       realName: string
       permissions: Record<string, boolean>
       isAdmin: boolean
+      ledgerIds: number[]
     }
   }>
   logout: () => Promise<{ success: boolean }>
@@ -23,6 +24,7 @@ interface AuthAPI {
       realName: string
       permissions: Record<string, boolean>
       isAdmin: boolean
+      ledgerIds: number[]
     }>
   >
   createUser: (data: {
@@ -30,12 +32,14 @@ interface AuthAPI {
     realName: string
     password: string
     permissions: Record<string, boolean>
+    ledgerIds?: number[]
   }) => Promise<{ success: boolean; error?: string }>
   updateUser: (data: {
     id: number
     realName?: string
     password?: string
     permissions?: Record<string, boolean>
+    ledgerIds?: number[]
   }) => Promise<{ success: boolean; error?: string }>
   deleteUser: (userId: number) => Promise<{ success: boolean; error?: string }>
 }

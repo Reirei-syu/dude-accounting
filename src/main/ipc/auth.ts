@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { hashPassword, verifyPassword } from '../security/password'
+import { listUserLedgerIds, replaceUserLedgerIds } from '../services/userLedgerAccess'
 import {
   clearSessionByEvent,
   getSessionByEvent,
@@ -74,7 +75,8 @@ export function registerAuthHandlers(): void {
         username: user.username,
         realName: user.real_name,
         permissions: sessionUser.permissions,
-        isAdmin: user.is_admin === 1
+        isAdmin: user.is_admin === 1,
+        ledgerIds: user.is_admin === 1 ? [] : listUserLedgerIds(db, Number(user.id))
       }
     }
   })
@@ -108,7 +110,8 @@ export function registerAuthHandlers(): void {
       username: user.username,
       realName: user.real_name,
       permissions: parsePermissions(user.permissions),
-      isAdmin: user.is_admin === 1
+      isAdmin: user.is_admin === 1,
+      ledgerIds: user.is_admin === 1 ? [] : listUserLedgerIds(db, Number(user.id))
     }))
   })
 
@@ -121,19 +124,28 @@ export function registerAuthHandlers(): void {
         realName: string
         password: string
         permissions: Record<string, boolean>
+        ledgerIds?: number[]
       }
     ) => {
       try {
         const admin = requireAdmin(event)
-        db.prepare(
-          `INSERT INTO users (username, real_name, password_hash, permissions, is_admin)
-           VALUES (?, ?, ?, ?, 0)`
-        ).run(
-          data.username.trim(),
-          data.realName.trim(),
-          hashPassword(data.password),
-          JSON.stringify(data.permissions || {})
-        )
+        const created = db.transaction(() => {
+          const result = db
+            .prepare(
+              `INSERT INTO users (username, real_name, password_hash, permissions, is_admin)
+               VALUES (?, ?, ?, ?, 0)`
+            )
+            .run(
+              data.username.trim(),
+              data.realName.trim(),
+              hashPassword(data.password),
+              JSON.stringify(data.permissions || {})
+            )
+
+          const userId = Number(result.lastInsertRowid)
+          const ledgerIds = replaceUserLedgerIds(db, userId, data.ledgerIds || [])
+          return { userId, ledgerIds }
+        })()
 
         appendOperationLog(db, {
           userId: admin.id,
@@ -141,9 +153,11 @@ export function registerAuthHandlers(): void {
           module: 'auth',
           action: 'create_user',
           targetType: 'user',
-          targetId: data.username.trim(),
+          targetId: created.userId,
           details: {
-            realName: data.realName.trim()
+            username: data.username.trim(),
+            realName: data.realName.trim(),
+            ledgerIds: created.ledgerIds
           }
         })
 
@@ -163,6 +177,7 @@ export function registerAuthHandlers(): void {
         realName?: string
         password?: string
         permissions?: Record<string, boolean>
+        ledgerIds?: number[]
       }
     ) => {
       try {
@@ -178,34 +193,46 @@ export function registerAuthHandlers(): void {
         if (target.is_admin === 1 && data.permissions !== undefined) {
           return { success: false, error: '管理员账号权限不可修改' }
         }
+        if (target.is_admin === 1 && data.ledgerIds !== undefined) {
+          return { success: false, error: '管理员账号账套权限不可修改' }
+        }
 
-        if (data.realName !== undefined) {
-          db.prepare('UPDATE users SET real_name = ? WHERE id = ?').run(data.realName, data.id)
-        }
-        if (data.password !== undefined) {
-          db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
-            hashPassword(data.password),
-            data.id
-          )
-        }
-        if (data.permissions !== undefined) {
-          db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(
-            JSON.stringify(data.permissions),
-            data.id
-          )
-        }
+        const ledgerIds = db.transaction(() => {
+          if (data.realName !== undefined) {
+            db.prepare('UPDATE users SET real_name = ? WHERE id = ?').run(data.realName, data.id)
+          }
+          if (data.password !== undefined) {
+            db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+              hashPassword(data.password),
+              data.id
+            )
+          }
+          if (data.permissions !== undefined) {
+            db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(
+              JSON.stringify(data.permissions),
+              data.id
+            )
+          }
+          return data.ledgerIds !== undefined
+            ? replaceUserLedgerIds(db, data.id, data.ledgerIds)
+            : undefined
+        })()
 
         appendOperationLog(db, {
           userId: admin.id,
           username: admin.username,
           module: 'auth',
-          action: data.permissions !== undefined ? 'update_permissions' : 'update_user',
+          action:
+            data.permissions !== undefined || data.ledgerIds !== undefined
+              ? 'update_permissions'
+              : 'update_user',
           targetType: 'user',
           targetId: data.id,
           details: {
             realName: data.realName,
             passwordUpdated: data.password !== undefined,
-            permissionKeys: data.permissions ? Object.keys(data.permissions) : []
+            permissionKeys: data.permissions ? Object.keys(data.permissions) : [],
+            ledgerIds
           }
         })
 

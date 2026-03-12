@@ -9,7 +9,7 @@ import {
   buildImportedVoucherMetadata
 } from '../services/electronicVoucher'
 import { buildTimestampToken, ensureDirectory } from '../services/fileIntegrity'
-import { requirePermission } from './session'
+import { requireLedgerAccess, requirePermission } from './session'
 
 function getElectronicVoucherRootDir(): string {
   return path.join(app.getPath('userData'), 'electronic-vouchers')
@@ -31,6 +31,7 @@ export function registerElectronicVoucherHandlers(): void {
       try {
         const user = requirePermission(event, 'voucher_entry')
         const db = getDatabase()
+        requireLedgerAccess(event, db, payload.ledgerId)
 
         if (!fs.existsSync(payload.sourcePath)) {
           return { success: false, error: '电子凭证源文件不存在' }
@@ -152,6 +153,7 @@ export function registerElectronicVoucherHandlers(): void {
   ipcMain.handle('eVoucher:list', (event, ledgerId: number) => {
     requirePermission(event, 'voucher_entry')
     const db = getDatabase()
+    requireLedgerAccess(event, db, ledgerId)
     return db
       .prepare(
         `SELECT
@@ -198,6 +200,7 @@ export function registerElectronicVoucherHandlers(): void {
         if (!record) {
           return { success: false, error: '电子凭证记录不存在' }
         }
+        requireLedgerAccess(event, db, record.ledger_id)
 
         const verificationStatus =
           payload.verificationStatus ??
@@ -290,6 +293,7 @@ export function registerElectronicVoucherHandlers(): void {
         if (!record) {
           return { success: false, error: '电子凭证记录不存在' }
         }
+        requireLedgerAccess(event, db, record.ledger_id)
 
         const fingerprint = buildElectronicVoucherFingerprint({
           sha256: record.sha256,
@@ -395,6 +399,7 @@ export function registerElectronicVoucherHandlers(): void {
         if (!record) {
           return { success: false, error: '电子凭证记录不存在' }
         }
+        requireLedgerAccess(event, db, record.ledger_id)
 
         const draftVoucher = {
           ledgerId: record.ledger_id,

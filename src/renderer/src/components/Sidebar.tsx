@@ -1,18 +1,12 @@
-﻿import { useUIStore } from '../stores/uiStore'
 import type { JSX } from 'react'
 
-type MainModule = 'ledger-settings' | 'accounting' | 'ledger-query' | 'reports' | 'system-settings'
-
-const MODULES: { id: MainModule; label: string }[] = [
-  { id: 'ledger-settings', label: '账套设置' },
-  { id: 'accounting', label: '账务处理' },
-  { id: 'ledger-query', label: '账簿查询' },
-  { id: 'reports', label: '报表输出' },
-  { id: 'system-settings', label: '系统设置' }
-]
+import { useAuthStore } from '../stores/authStore'
+import { getVisibleMainModules, useUIStore, type MainModule } from '../stores/uiStore'
 
 export default function Sidebar(): JSX.Element {
   const { suspendedModule, setSuspended } = useUIStore()
+  const currentUser = useAuthStore((state) => state.user)
+  const visibleModules = getVisibleMainModules(currentUser)
 
   const handleModuleClick = (moduleId: MainModule): void => {
     if (suspendedModule === moduleId) {
@@ -30,15 +24,15 @@ export default function Sidebar(): JSX.Element {
       </div>
 
       <nav className="main-sidebar-nav" aria-label="功能模块">
-        {MODULES.map((mod) => (
+        {visibleModules.map((module) => (
           <button
-            key={mod.id}
+            key={module.id}
             type="button"
-            className={`sidebar-btn ${suspendedModule === mod.id ? 'active' : ''}`}
-            onClick={() => handleModuleClick(mod.id)}
-            aria-pressed={suspendedModule === mod.id}
+            className={`sidebar-btn ${suspendedModule === module.id ? 'active' : ''}`}
+            onClick={() => handleModuleClick(module.id)}
+            aria-pressed={suspendedModule === module.id}
           >
-            {mod.label}
+            {module.label}
           </button>
         ))}
       </nav>

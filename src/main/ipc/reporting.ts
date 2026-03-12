@@ -14,7 +14,7 @@ import {
   type GenerateReportSnapshotParams,
   type ReportListFilters
 } from '../services/reporting'
-import { requireAuth } from './session'
+import { requireAuth, requireLedgerAccess } from './session'
 
 const REPORT_EXPORT_LAST_DIR_KEY = 'report_export_last_dir'
 
@@ -79,12 +79,16 @@ async function printReportHtmlToPdf(filePath: string, html: string): Promise<str
 export function registerReportingHandlers(): void {
   ipcMain.handle('reporting:list', (event, filters: ReportListFilters) => {
     requireAuth(event)
+    requireLedgerAccess(event, getDatabase(), filters.ledgerId)
     return listReportSnapshots(getDatabase(), filters)
   })
 
   ipcMain.handle('reporting:getDetail', (event, payload: { snapshotId: number; ledgerId?: number }) => {
     requireAuth(event)
-    return getReportSnapshotDetail(getDatabase(), payload.snapshotId, payload.ledgerId)
+    const db = getDatabase()
+    const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+    requireLedgerAccess(event, db, detail.ledger_id)
+    return detail
   })
 
   ipcMain.handle(
@@ -102,6 +106,7 @@ export function registerReportingHandlers(): void {
       const user = requireAuth(event)
       const db = getDatabase()
       const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+      requireLedgerAccess(event, db, detail.ledger_id)
       const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
       const defaultPath = path.join(
         preferredDir,
@@ -190,6 +195,9 @@ export function registerReportingHandlers(): void {
         const details = payload.snapshotIds.map((snapshotId) =>
           getReportSnapshotDetail(db, snapshotId, payload.ledgerId)
         )
+        for (const detail of details) {
+          requireLedgerAccess(event, db, detail.ledger_id)
+        }
         const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
         const browserWindow = BrowserWindow.fromWebContents(event.sender)
         const openResult = payload.directoryPath
@@ -252,6 +260,7 @@ export function registerReportingHandlers(): void {
     try {
       const user = requireAuth(event)
       const db = getDatabase()
+      requireLedgerAccess(event, db, payload.ledgerId)
       const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
       const deleted = deleteReportSnapshot(db, payload.snapshotId, payload.ledgerId)
 
@@ -287,6 +296,7 @@ export function registerReportingHandlers(): void {
     try {
       const user = requireAuth(event)
       const db = getDatabase()
+      requireLedgerAccess(event, db, payload.ledgerId)
       const snapshot = generateReportSnapshot(db, {
         ...payload,
         generatedBy: user.id

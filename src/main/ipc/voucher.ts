@@ -5,7 +5,7 @@ import { appendOperationLog } from '../services/auditLog'
 import { applyCashFlowMappings } from '../services/cashFlowMapping'
 import { assertPeriodWritable } from '../services/periodState'
 import { assertVoucherSwapAllowed, normalizeEmergencyReversalPayload } from '../services/voucherControl'
-import { requireAuth, requirePermission } from './session'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
 import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
 
@@ -147,6 +147,7 @@ export function registerVoucherHandlers(): void {
 
   ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) => {
     requirePermission(event, 'voucher_entry')
+    requireLedgerAccess(event, db, ledgerId)
     const periodCheck = ensureVoucherPeriod(ledgerId, period, 'period')
     if (!periodCheck.ok) {
       throw new Error(periodCheck.error)
@@ -165,6 +166,7 @@ export function registerVoucherHandlers(): void {
       if (!payload.ledgerId) {
         return { success: false, error: '请选择账套' }
       }
+      requireLedgerAccess(event, db, payload.ledgerId)
       if (!payload.voucherDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.voucherDate)) {
         return { success: false, error: '凭证日期格式不正确' }
       }
@@ -385,6 +387,7 @@ export function registerVoucherHandlers(): void {
       if (!payload.ledgerId) {
         return { success: false, error: '请选择账套' }
       }
+      requireLedgerAccess(event, db, payload.ledgerId)
       if (!payload.voucherDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.voucherDate)) {
         return { success: false, error: '凭证日期格式不正确' }
       }
@@ -547,6 +550,7 @@ export function registerVoucherHandlers(): void {
       }
     ) => {
       requireAuth(event)
+      requireLedgerAccess(event, db, query.ledgerId)
 
       const whereClauses = ['v.ledger_id = ?']
       const params: Array<string | number> = [query.ledgerId]
@@ -630,6 +634,13 @@ export function registerVoucherHandlers(): void {
 
   ipcMain.handle('voucher:getEntries', (event, voucherId: number) => {
     requireAuth(event)
+    const voucher = db.prepare('SELECT ledger_id FROM vouchers WHERE id = ?').get(voucherId) as
+      | { ledger_id: number }
+      | undefined
+    if (!voucher) {
+      throw new Error('凭证不存在')
+    }
+    requireLedgerAccess(event, db, voucher.ledger_id)
     return db
       .prepare(
         `SELECT
@@ -703,6 +714,9 @@ export function registerVoucherHandlers(): void {
           success: false,
           error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
         }
+      }
+      for (const voucher of voucherRows) {
+        requireLedgerAccess(event, db, voucher.ledger_id)
       }
 
       const vouchersById = new Map<number, VoucherSwapVoucher>(
@@ -959,6 +973,9 @@ export function registerVoucherHandlers(): void {
 
         if (vouchers.length !== payload.voucherIds.length) {
           return { success: false, error: '存在无效凭证，操作中止' }
+        }
+        for (const voucher of vouchers) {
+          requireLedgerAccess(event, db, voucher.ledger_id)
         }
 
         const { applicable: applicableVouchers, skipped: skippedVouchers } =

@@ -1,4 +1,5 @@
 import type { IpcMainInvokeEvent } from 'electron'
+import type Database from 'better-sqlite3'
 
 export interface SessionUser {
   id: number
@@ -54,5 +55,28 @@ export function requirePermission(
   if (!session.permissions[permission]) {
     throw new Error('无权限执行该操作')
   }
+  return session
+}
+
+export function requireLedgerAccess(
+  event: IpcMainInvokeEvent,
+  db: Pick<Database.Database, 'prepare'>,
+  ledgerId: number
+): SessionUser {
+  const session = requireAuth(event)
+  if (session.isAdmin) {
+    return session
+  }
+
+  const row = db
+    .prepare(
+      'SELECT 1 AS ok FROM user_ledger_permissions WHERE user_id = ? AND ledger_id = ?'
+    )
+    .get(session.id, ledgerId) as { ok: number } | undefined
+
+  if (!row) {
+    throw new Error('无权访问该账套')
+  }
+
   return session
 }

@@ -4,7 +4,7 @@ import { app, ipcMain } from 'electron'
 import { closeDatabase, getDatabase, getDatabasePath } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { createBackupArtifact, validateBackupArtifact } from '../services/backupRecovery'
-import { requireAdmin, requirePermission } from './session'
+import { requireAdmin, requireLedgerAccess, requirePermission } from './session'
 
 function getBackupRootDir(): string {
   return path.join(app.getPath('userData'), 'backups')
@@ -17,6 +17,7 @@ export function registerBackupHandlers(): void {
       try {
         const user = requirePermission(event, 'ledger_settings')
         const db = getDatabase()
+        requireLedgerAccess(event, db, payload.ledgerId)
         const ledger = db.prepare('SELECT id, name FROM ledgers WHERE id = ?').get(payload.ledgerId) as
           | { id: number; name: string }
           | undefined
@@ -87,10 +88,11 @@ export function registerBackupHandlers(): void {
   )
 
   ipcMain.handle('backup:list', (event, ledgerId?: number) => {
-    requirePermission(event, 'ledger_settings')
+    const user = requirePermission(event, 'ledger_settings')
     const db = getDatabase()
 
     if (typeof ledgerId === 'number') {
+      requireLedgerAccess(event, db, ledgerId)
       return db
         .prepare(
           `SELECT *
@@ -101,7 +103,19 @@ export function registerBackupHandlers(): void {
         .all(ledgerId)
     }
 
-    return db.prepare('SELECT * FROM backup_packages ORDER BY id DESC').all()
+    if (user.isAdmin) {
+      return db.prepare('SELECT * FROM backup_packages ORDER BY id DESC').all()
+    }
+
+    return db
+      .prepare(
+        `SELECT bp.*
+           FROM backup_packages bp
+           INNER JOIN user_ledger_permissions ulp ON ulp.ledger_id = bp.ledger_id
+          WHERE ulp.user_id = ?
+          ORDER BY bp.id DESC`
+      )
+      .all(user.id)
   })
 
   ipcMain.handle('backup:validate', (event, backupId: number) => {
@@ -120,6 +134,7 @@ export function registerBackupHandlers(): void {
       if (!row) {
         return { success: false, error: '备份记录不存在' }
       }
+      requireLedgerAccess(event, db, row.ledger_id)
 
       const validation = validateBackupArtifact(row.backup_path, row.checksum)
       db.prepare(
@@ -169,6 +184,7 @@ export function registerBackupHandlers(): void {
       if (!row) {
         return { success: false, error: '备份记录不存在' }
       }
+      requireLedgerAccess(event, db, row.ledger_id)
 
       const validation = validateBackupArtifact(row.backup_path, row.checksum)
       if (!validation.valid) {

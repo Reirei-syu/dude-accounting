@@ -1,18 +1,20 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import { createSubject, listSubjects, updateSubject } from '../services/accountSetup'
-import { requireAuth, requirePermission } from './session'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 export function registerSubjectHandlers(): void {
   const db = getDatabase()
 
   ipcMain.handle('subject:getAll', (event, ledgerId: number) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     return listSubjects(db, ledgerId)
   })
 
   ipcMain.handle('subject:search', (event, ledgerId: number, keyword: string) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     const normalizedKeyword = keyword.trim()
     if (!normalizedKeyword) {
       return []
@@ -57,6 +59,7 @@ export function registerSubjectHandlers(): void {
     ) => {
       try {
         requirePermission(event, 'ledger_settings')
+        requireLedgerAccess(event, db, data.ledgerId)
         createSubject(db, data)
         return { success: true }
       } catch (error) {
@@ -79,6 +82,13 @@ export function registerSubjectHandlers(): void {
     ) => {
       try {
         requirePermission(event, 'ledger_settings')
+        const subject = db.prepare('SELECT ledger_id FROM subjects WHERE id = ?').get(data.subjectId) as
+          | { ledger_id: number }
+          | undefined
+        if (!subject) {
+          return { success: false, error: '科目不存在' }
+        }
+        requireLedgerAccess(event, db, subject.ledger_id)
         updateSubject(db, data)
         return { success: true }
       } catch (error) {
@@ -91,12 +101,13 @@ export function registerSubjectHandlers(): void {
     try {
       requirePermission(event, 'ledger_settings')
 
-      const subject = db.prepare('SELECT is_system FROM subjects WHERE id = ?').get(id) as
-        | { is_system: number }
+      const subject = db.prepare('SELECT ledger_id, is_system FROM subjects WHERE id = ?').get(id) as
+        | { ledger_id: number; is_system: number }
         | undefined
       if (!subject) {
         return { success: false, error: '科目不存在' }
       }
+      requireLedgerAccess(event, db, subject.ledger_id)
       if (subject.is_system === 1) {
         return { success: false, error: '系统科目不可删除' }
       }

@@ -34,6 +34,15 @@ export function initializeDatabase(): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS user_ledger_permissions (
+      user_id INTEGER NOT NULL,
+      ledger_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, ledger_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
+    );
+
     -- 账套表
     CREATE TABLE IF NOT EXISTS ledgers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -352,6 +361,7 @@ export function initializeDatabase(): void {
   ensureVoucherSchema(db)
   ensureInitialBalanceSchema(db)
   ensureCashFlowMappingSchema(db)
+  ensureUserLedgerAccessSchema(db)
   ensureComplianceSchema(db)
   ensureReportingSchema(db)
 
@@ -367,6 +377,41 @@ export function initializeDatabase(): void {
   )
   insertSetting.run('allow_same_maker_auditor', '0')
   insertSetting.run('wallpaper_path', '')
+}
+
+export function ensureUserLedgerAccessSchema(db: Database.Database): void {
+  const columns = db
+    .prepare("PRAGMA table_info('user_ledger_permissions')")
+    .all() as Array<{ name: string }>
+  const isNewTable = columns.length === 0
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_ledger_permissions (
+      user_id INTEGER NOT NULL,
+      ledger_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, ledger_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (ledger_id) REFERENCES ledgers(id) ON DELETE CASCADE
+    );
+  `)
+
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_user_ledger_permissions_user ON user_ledger_permissions(user_id)'
+  ).run()
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_user_ledger_permissions_ledger ON user_ledger_permissions(ledger_id)'
+  ).run()
+
+  if (isNewTable) {
+    db.prepare(
+      `INSERT OR IGNORE INTO user_ledger_permissions (user_id, ledger_id)
+       SELECT u.id, l.id
+         FROM users u
+         CROSS JOIN ledgers l
+        WHERE u.is_admin = 0`
+    ).run()
+  }
 }
 
 export function ensureSubjectSchema(db: Database.Database): void {

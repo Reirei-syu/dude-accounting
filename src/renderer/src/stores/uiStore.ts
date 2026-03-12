@@ -10,15 +10,49 @@ export interface TabItem {
 export const BLANK_TAB_COMPONENT = '__blank_tab__'
 
 export type AccountingStandardType = 'enterprise' | 'npo'
-type MainModule = 'ledger-settings' | 'accounting' | 'ledger-query' | 'reports' | 'system-settings'
+export type MainModule =
+  | 'ledger-settings'
+  | 'accounting'
+  | 'ledger-query'
+  | 'reports'
+  | 'system-settings'
+type PermissionKey =
+  | 'voucher_entry'
+  | 'audit'
+  | 'bookkeeping'
+  | 'unbookkeep'
+  | 'system_settings'
+  | 'ledger_settings'
+
+export interface PermissionBoundUser {
+  isAdmin: boolean
+  permissions?: Record<string, boolean>
+}
 
 const isBlankTab = (tab: TabItem): boolean => tab.componentType === BLANK_TAB_COMPONENT
 
-interface SubMenuItem {
+interface PermissionBoundItem {
+  requiredPermission?: PermissionKey
+}
+
+export interface MainModuleItem extends PermissionBoundItem {
+  id: MainModule
+  label: string
+}
+
+export interface SubMenuItem extends PermissionBoundItem {
   id: string
   title: string
   componentType: string
 }
+
+export const MAIN_MODULES: MainModuleItem[] = [
+  { id: 'ledger-settings', label: '账套设置', requiredPermission: 'ledger_settings' },
+  { id: 'accounting', label: '账务处理' },
+  { id: 'ledger-query', label: '账簿查询' },
+  { id: 'reports', label: '报表输出' },
+  { id: 'system-settings', label: '系统设置', requiredPermission: 'system_settings' }
+]
 
 const REPORT_SUB_MENUS: Record<AccountingStandardType, SubMenuItem[]> = {
   enterprise: [
@@ -38,11 +72,36 @@ const REPORT_SUB_MENUS: Record<AccountingStandardType, SubMenuItem[]> = {
 
 const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> = {
   'ledger-settings': [
-    { id: 'subject-settings', title: '会计科目设置', componentType: 'SubjectSettings' },
-    { id: 'auxiliary-settings', title: '辅助账设置', componentType: 'AuxiliarySettings' },
-    { id: 'initial-balance', title: '期初数录入', componentType: 'InitialBalance' },
-    { id: 'cashflow-mapping', title: '现金流量匹配设置', componentType: 'CashFlowMapping' },
-    { id: 'pl-carryforward', title: '期末损益结转设置', componentType: 'PLCarryForward' }
+    {
+      id: 'subject-settings',
+      title: '会计科目设置',
+      componentType: 'SubjectSettings',
+      requiredPermission: 'ledger_settings'
+    },
+    {
+      id: 'auxiliary-settings',
+      title: '辅助账设置',
+      componentType: 'AuxiliarySettings',
+      requiredPermission: 'ledger_settings'
+    },
+    {
+      id: 'initial-balance',
+      title: '期初数录入',
+      componentType: 'InitialBalance',
+      requiredPermission: 'ledger_settings'
+    },
+    {
+      id: 'cashflow-mapping',
+      title: '现金流量匹配设置',
+      componentType: 'CashFlowMapping',
+      requiredPermission: 'ledger_settings'
+    },
+    {
+      id: 'pl-carryforward',
+      title: '期末损益结转设置',
+      componentType: 'PLCarryForward',
+      requiredPermission: 'ledger_settings'
+    }
   ],
   accounting: [
     { id: 'voucher-entry', title: '凭证录入', componentType: 'VoucherEntry' },
@@ -59,11 +118,50 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
     { id: 'auxiliary-detail', title: '辅助明细账', componentType: 'AuxiliaryDetail' }
   ],
   'system-settings': [
-    { id: 'system-params', title: '系统参数设置', componentType: 'SystemParams' },
-    { id: 'user-management', title: '账号管理', componentType: 'UserManagement' },
-    { id: 'accounting-standard', title: '会计准则设置', componentType: 'AccountingStandard' },
-    { id: 'backup', title: '账套备份', componentType: 'Backup' }
+    {
+      id: 'system-params',
+      title: '系统参数设置',
+      componentType: 'SystemParams',
+      requiredPermission: 'system_settings'
+    },
+    {
+      id: 'user-management',
+      title: '账号管理',
+      componentType: 'UserManagement',
+      requiredPermission: 'system_settings'
+    },
+    {
+      id: 'accounting-standard',
+      title: '会计准则设置',
+      componentType: 'AccountingStandard',
+      requiredPermission: 'system_settings'
+    },
+    {
+      id: 'backup',
+      title: '账套备份',
+      componentType: 'Backup',
+      requiredPermission: 'system_settings'
+    }
   ]
+}
+
+export function hasPermissionAccess(
+  user: PermissionBoundUser | null | undefined,
+  permission?: PermissionKey
+): boolean {
+  if (!permission) {
+    return true
+  }
+  if (user?.isAdmin) {
+    return true
+  }
+  return Boolean(user?.permissions?.[permission])
+}
+
+export function getVisibleMainModules(
+  user: PermissionBoundUser | null | undefined
+): MainModuleItem[] {
+  return MAIN_MODULES.filter((module) => hasPermissionAccess(user, module.requiredPermission))
 }
 
 export function getModuleSubMenus(
@@ -74,6 +172,19 @@ export function getModuleSubMenus(
     return REPORT_SUB_MENUS[standardType]
   }
   return BASE_MODULE_SUB_MENUS[module]
+}
+
+export function getVisibleModuleSubMenus(
+  module: MainModule,
+  standardType: AccountingStandardType = 'enterprise',
+  user?: PermissionBoundUser | null
+): SubMenuItem[] {
+  if (!getVisibleMainModules(user).some((item) => item.id === module)) {
+    return []
+  }
+  return getModuleSubMenus(module, standardType).filter((item) =>
+    hasPermissionAccess(user, item.requiredPermission)
+  )
 }
 
 interface UIState {

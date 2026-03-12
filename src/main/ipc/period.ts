@@ -7,7 +7,7 @@ import {
   getPeriodStatusSummary
 } from '../services/periodState'
 import { assertPLCarryForwardCompleted } from '../services/plCarryForward'
-import { requireAuth, requirePermission } from './session'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 function getPeriodParts(period: string): { year: number; month: number } {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
@@ -142,6 +142,7 @@ export function registerPeriodHandlers(): void {
       }
     }
 
+    requireLedgerAccess(event, db, ledgerId)
     return getPeriodStatusSummary(db, ledgerId, period)
   })
 
@@ -153,6 +154,7 @@ export function registerPeriodHandlers(): void {
       if (!ledgerId) {
         return { success: false, error: '请选择账套' }
       }
+      requireLedgerAccess(event, db, ledgerId)
 
       const { year, month } = getPeriodParts(period)
       const nextPeriod = getNextPeriod(period)
@@ -239,6 +241,7 @@ export function registerPeriodHandlers(): void {
       if (!ledgerId) {
         return { success: false, error: '请选择账套' }
       }
+      requireLedgerAccess(event, db, ledgerId)
 
       getPeriodParts(period)
       assertPeriodReopenAllowed(db, ledgerId, period)

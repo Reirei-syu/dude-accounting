@@ -10,7 +10,8 @@ import {
 import { appendOperationLog } from '../services/auditLog'
 import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
 import { applyCustomTopLevelSubjectTemplate } from '../services/subjectTemplate'
-import { requireAuth, requirePermission } from './session'
+import { grantUserLedgerAccess } from '../services/userLedgerAccess'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 function normalizeLedgerStartPeriods(db: ReturnType<typeof getDatabase>): void {
   const ledgers = db.prepare('SELECT id, start_period, current_period FROM ledgers').all() as Array<{
@@ -58,9 +59,20 @@ export function registerLedgerHandlers(): void {
   const db = getDatabase()
 
   ipcMain.handle('ledger:getAll', (event) => {
-    requireAuth(event)
+    const user = requireAuth(event)
     normalizeLedgerStartPeriods(db)
-    return db.prepare('SELECT * FROM ledgers ORDER BY created_at DESC').all()
+    if (user.isAdmin) {
+      return db.prepare('SELECT * FROM ledgers ORDER BY created_at DESC').all()
+    }
+    return db
+      .prepare(
+        `SELECT l.*
+           FROM ledgers l
+           INNER JOIN user_ledger_permissions ulp ON ulp.ledger_id = l.id
+          WHERE ulp.user_id = ?
+          ORDER BY l.created_at DESC`
+      )
+      .all(user.id)
   })
 
   ipcMain.handle(
@@ -92,6 +104,9 @@ export function registerLedgerHandlers(): void {
           ledgerId,
           data.startPeriod
         )
+        if (!user.isAdmin) {
+          grantUserLedgerAccess(db, user.id, ledgerId)
+        }
 
         appendOperationLog(db, {
           ledgerId,
@@ -120,6 +135,7 @@ export function registerLedgerHandlers(): void {
     (event, data: { id: number; name?: string; currentPeriod?: string }) => {
       try {
         const user = requirePermission(event, 'ledger_settings')
+        requireLedgerAccess(event, db, data.id)
         if (data.name !== undefined) {
           db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(data.name, data.id)
         }
@@ -170,6 +186,7 @@ export function registerLedgerHandlers(): void {
   ipcMain.handle('ledger:delete', (event, id: number) => {
     try {
       const user = requirePermission(event, 'ledger_settings')
+      requireLedgerAccess(event, db, id)
       assertLedgerDeletionAllowed(db, id)
       db.prepare('DELETE FROM ledgers WHERE id = ?').run(id)
 
@@ -191,6 +208,7 @@ export function registerLedgerHandlers(): void {
 
   ipcMain.handle('ledger:getPeriods', (event, ledgerId: number) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     return db.prepare('SELECT * FROM periods WHERE ledger_id = ? ORDER BY period').all(ledgerId)
   })
 
@@ -210,6 +228,7 @@ export function registerLedgerHandlers(): void {
     ) => {
       try {
         const user = requirePermission(event, 'ledger_settings')
+        requireLedgerAccess(event, db, data.ledgerId)
         const ledger = db.prepare('SELECT id FROM ledgers WHERE id = ?').get(data.ledgerId) as
           | { id: number }
           | undefined

@@ -6,13 +6,14 @@ import {
   listCashFlowMappings,
   updateCashFlowMapping
 } from '../services/cashFlowMapping'
-import { requireAuth, requirePermission } from './session'
+import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 export function registerCashFlowHandlers(): void {
   const db = getDatabase()
 
   ipcMain.handle('cashflow:getItems', (event, ledgerId: number) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     return db
       .prepare(
         `SELECT id, code, name, category, direction
@@ -25,6 +26,7 @@ export function registerCashFlowHandlers(): void {
 
   ipcMain.handle('cashflow:getMappings', (event, ledgerId: number) => {
     requireAuth(event)
+    requireLedgerAccess(event, db, ledgerId)
     return listCashFlowMappings(db, ledgerId)
   })
 
@@ -42,6 +44,7 @@ export function registerCashFlowHandlers(): void {
     ) => {
       try {
         requirePermission(event, 'ledger_settings')
+        requireLedgerAccess(event, db, data.ledgerId)
         const id = createCashFlowMapping(db, data)
         return { success: true, id }
       } catch (error) {
@@ -64,6 +67,13 @@ export function registerCashFlowHandlers(): void {
     ) => {
       try {
         requirePermission(event, 'ledger_settings')
+        const mapping = db.prepare('SELECT ledger_id FROM cash_flow_mappings WHERE id = ?').get(data.id) as
+          | { ledger_id: number }
+          | undefined
+        if (!mapping) {
+          return { success: false, error: '现金流量匹配规则不存在' }
+        }
+        requireLedgerAccess(event, db, mapping.ledger_id)
         updateCashFlowMapping(db, data)
         return { success: true }
       } catch (error) {
@@ -75,6 +85,13 @@ export function registerCashFlowHandlers(): void {
   ipcMain.handle('cashflow:deleteMapping', (event, id: number) => {
     try {
       requirePermission(event, 'ledger_settings')
+      const mapping = db.prepare('SELECT ledger_id FROM cash_flow_mappings WHERE id = ?').get(id) as
+        | { ledger_id: number }
+        | undefined
+      if (!mapping) {
+        return { success: false, error: '现金流量匹配规则不存在' }
+      }
+      requireLedgerAccess(event, db, mapping.ledger_id)
       deleteCashFlowMapping(db, id)
       return { success: true }
     } catch (error) {
