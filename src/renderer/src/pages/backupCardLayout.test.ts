@@ -24,4 +24,17 @@ describe('backup card layout helpers', () => {
       )
     ).toEqual(new Set([8, 5]))
   })
+
+  it('can collapse all records into a single latest id when workflow only keeps one latest version', () => {
+    expect(
+      getLatestRecordIdsByGroup(
+        [
+          { id: 8, groupKey: '2026-03' },
+          { id: 7, groupKey: '2026-02' },
+          { id: 5, groupKey: '2025-12' }
+        ],
+        () => 'all'
+      )
+    ).toEqual(new Set([8]))
+  })
 })

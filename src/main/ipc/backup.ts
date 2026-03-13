@@ -12,6 +12,11 @@ import {
 } from '../services/backupRecovery'
 import { formatLocalDateTime } from '../services/localTime'
 import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
+import {
+  clearPendingRestoreLog,
+  getPendingRestoreLogPath,
+  writePendingRestoreLog
+} from '../services/pendingRestoreLog'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requireAdmin, requireLedgerAccess, requirePermission } from './session'
 
@@ -285,10 +290,9 @@ export function registerBackupHandlers(): void {
           `SELECT id
              FROM backup_packages
             WHERE ledger_id = ?
-              AND COALESCE(backup_period, '') = COALESCE(?, '')
             ORDER BY id DESC`
         )
-        .all(row.ledger_id, row.backup_period) as Array<{ id: number }>
+        .all(row.ledger_id) as Array<{ id: number }>
 
       assertHistoricalVersionDeletable(
         row.id,
@@ -344,6 +348,7 @@ export function registerBackupHandlers(): void {
       }
     ) => {
       let databaseClosed = false
+      let pendingRestoreLogPath: string | null = null
       let restoreLogContext:
         | {
             ledgerId: number | null
@@ -427,6 +432,18 @@ export function registerBackupHandlers(): void {
           username: user.username
         }
 
+        pendingRestoreLogPath = getPendingRestoreLogPath(app.getPath('userData'))
+        writePendingRestoreLog(pendingRestoreLogPath, {
+          userId: restoreLogContext.userId,
+          username: restoreLogContext.username,
+          ledgerId: restoreLogContext.ledgerId,
+          targetType: restoreLogContext.targetType,
+          targetId: restoreLogContext.targetId,
+          backupPath: restoreLogContext.backupPath,
+          manifestPath: restoreLogContext.manifestPath,
+          backupMode: 'system_db_snapshot'
+        })
+
         closeDatabase()
         databaseClosed = true
 
@@ -434,36 +451,18 @@ export function registerBackupHandlers(): void {
           backupPath,
           targetPath: getDatabasePath()
         })
-
-        initializeDatabase()
-        databaseClosed = false
-
-        appendOperationLog(getDatabase(), {
-          ledgerId: restoreLogContext.ledgerId,
-          userId: restoreLogContext.userId,
-          username: restoreLogContext.username,
-          module: 'backup',
-          action: 'restore',
-          targetType: restoreLogContext.targetType,
-          targetId: restoreLogContext.targetId,
-          details: {
-            backupPath: restoreLogContext.backupPath,
-            manifestPath: restoreLogContext.manifestPath,
-            restartRequired: true,
-            backupMode: 'system_db_snapshot'
-          }
-        })
-
-        setTimeout(() => {
-          app.relaunch()
-          app.exit(0)
-        }, 200)
+        app.relaunch()
+        app.exit(0)
 
         return {
           success: true,
           restartRequired: true
         }
       } catch (error) {
+        if (pendingRestoreLogPath) {
+          clearPendingRestoreLog(pendingRestoreLogPath)
+        }
+
         if (databaseClosed) {
           initializeDatabase()
           databaseClosed = false

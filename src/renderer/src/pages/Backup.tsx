@@ -54,6 +54,16 @@ const formatFileSize = (bytes: number): string => {
 const actionButtonClass =
   'glass-btn-secondary text-sm disabled:cursor-not-allowed disabled:opacity-45'
 
+const confirmRecordedRestore = (): boolean =>
+  window.confirm(
+    '整库恢复会用所选系统备份包完整覆盖当前系统数据，当前所有账套都会回到该备份创建时的状态，包括刚新建的账套。该操作不是导入单个账套。恢复完成后应用会自动重启。是否继续？'
+  )
+
+const confirmPathRestore = (): boolean =>
+  window.confirm(
+    '从路径整库恢复会在你选择备份包后，完整覆盖当前系统数据，当前所有账套都会回到该备份创建时的状态，包括刚新建的账套。该操作不是导入单个账套。恢复完成后应用会自动重启。是否继续？'
+  )
+
 export default function Backup(): JSX.Element {
   const { currentLedger, currentPeriod } = useLedgerStore()
   const [backupPeriod, setBackupPeriod] = useState('')
@@ -69,12 +79,11 @@ export default function Backup(): JSX.Element {
   const backupPeriodOptions = useMemo(() => getBackupPeriodOptions(periods), [periods])
   const archiveYearOptions = useMemo(() => getArchiveYearOptions(periods), [periods])
   const latestBackupIds = useMemo(
-    () =>
-      getLatestRecordIdsByGroup(backups, (item) => item.backup_period ?? item.fiscal_year ?? 'default'),
+    () => getLatestRecordIdsByGroup(backups, () => 'all'),
     [backups]
   )
   const latestArchiveIds = useMemo(
-    () => getLatestRecordIdsByGroup(archives, (item) => item.fiscal_year),
+    () => getLatestRecordIdsByGroup(archives, () => 'all'),
     [archives]
   )
 
@@ -190,35 +199,32 @@ export default function Backup(): JSX.Element {
     await loadData()
   }
 
-  const confirmRestore = (): boolean =>
-    window.confirm('恢复备份会覆盖当前整库数据，并在完成后重启应用。是否继续？')
-
   const restoreBackup = async (backupId: number): Promise<void> => {
-    if (!confirmRestore()) return
+    if (!confirmRecordedRestore()) return
 
     setMessage(null)
     const result = await window.api.backup.restore({ backupId })
     if (result.cancelled) return
     if (!result.success) {
-      setMessage({ type: 'error', text: result.error || '恢复备份失败' })
+      setMessage({ type: 'error', text: result.error || '整库恢复失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '备份恢复已启动，应用即将重启。' })
+    setMessage({ type: 'success', text: '整库恢复已启动，应用即将重启。' })
   }
 
   const restoreBackupFromPath = async (): Promise<void> => {
-    if (!confirmRestore()) return
+    if (!confirmPathRestore()) return
 
     setMessage(null)
     const result = await window.api.backup.restore()
     if (result.cancelled) return
     if (!result.success) {
-      setMessage({ type: 'error', text: result.error || '从自选路径恢复备份失败' })
+      setMessage({ type: 'error', text: result.error || '从自选路径整库恢复失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '已从自选路径启动恢复，应用即将重启。' })
+    setMessage({ type: 'success', text: '已从自选路径启动整库恢复，应用即将重启。' })
   }
 
   const createArchive = async (): Promise<void> => {
@@ -320,7 +326,7 @@ export default function Backup(): JSX.Element {
             合规备份与归档
           </h2>
           <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-            备份包与档案包卡片统一为三行布局：标题、时间戳、按钮行；其他字段统一放进“详细信息”弹框。
+            系统备份包属于整库快照；“整库恢复”会覆盖当前所有账套，不是单个账套导入。其他字段统一放进“详细信息”弹框。
           </p>
         </div>
 
@@ -373,7 +379,7 @@ export default function Backup(): JSX.Element {
             onClick={() => void restoreBackupFromPath()}
             disabled={!canOperate}
           >
-            从路径恢复
+            从路径整库恢复
           </button>
           <button className="glass-btn-secondary" onClick={() => void createArchive()} disabled={!canOperate}>
             创建归档
@@ -388,12 +394,15 @@ export default function Backup(): JSX.Element {
         <section className="glass-panel-light p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              系统备份包
+              系统备份包（整库快照）
             </h3>
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               {backups.length} 条记录
             </span>
           </div>
+          <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            整库恢复会用选中的备份包覆盖当前全部账套，不支持把备份包导入为单独的新账套。
+          </p>
 
           <div className="space-y-2 max-h-[56vh] overflow-auto">
             {backups.map((backup) => {
@@ -424,7 +433,7 @@ export default function Backup(): JSX.Element {
                       校验
                     </button>
                     <button className={actionButtonClass} onClick={() => void restoreBackup(backup.id)}>
-                      恢复
+                      整库恢复
                     </button>
                     <button
                       className={actionButtonClass}
@@ -485,7 +494,7 @@ export default function Backup(): JSX.Element {
                       校验
                     </button>
                     <button className={actionButtonClass} disabled>
-                      恢复
+                      整库恢复
                     </button>
                     <button
                       className={actionButtonClass}

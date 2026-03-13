@@ -2,7 +2,13 @@ import { app, shell, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { initializeDatabase, closeDatabase } from './database/init'
+import { initializeDatabase, closeDatabase, getDatabase } from './database/init'
+import { appendOperationLog } from './services/auditLog'
+import {
+  clearPendingRestoreLog,
+  getPendingRestoreLogPath,
+  readPendingRestoreLog
+} from './services/pendingRestoreLog'
 import { registerAuthHandlers } from './ipc/auth'
 import { registerLedgerHandlers } from './ipc/ledger'
 import { registerSubjectHandlers } from './ipc/subject'
@@ -52,6 +58,34 @@ function createWindow(): void {
   }
 }
 
+function flushPendingRestoreLog(): void {
+  const pendingLogPath = getPendingRestoreLogPath(app.getPath('userData'))
+  const payload = readPendingRestoreLog(pendingLogPath)
+  if (!payload) {
+    return
+  }
+
+  try {
+    appendOperationLog(getDatabase(), {
+      ledgerId: payload.ledgerId,
+      userId: payload.userId,
+      username: payload.username,
+      module: 'backup',
+      action: 'restore',
+      targetType: payload.targetType,
+      targetId: payload.targetId,
+      details: {
+        backupPath: payload.backupPath,
+        manifestPath: payload.manifestPath,
+        restartRequired: true,
+        backupMode: payload.backupMode
+      }
+    })
+  } finally {
+    clearPendingRestoreLog(pendingLogPath)
+  }
+}
+
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.dudeaccounting')
 
@@ -61,6 +95,7 @@ app.whenReady().then(() => {
 
   // Initialize database
   initializeDatabase()
+  flushPendingRestoreLog()
 
   // Register IPC handlers
   registerAuthHandlers()

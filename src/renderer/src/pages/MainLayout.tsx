@@ -5,7 +5,7 @@ import SuspendedOverlay from '../components/SuspendedOverlay'
 import { getHomeTabPreset, hasPermissionAccess, useUIStore } from '../stores/uiStore'
 import { pickInitialLedger, useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
-import { useEffect, useRef, useState, type JSX } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import wallpaper from '../assets/wallpaper.png'
 
 const generateRandomString = (length = 10): string => {
@@ -33,6 +33,7 @@ export default function MainLayout(): JSX.Element {
   const userDisplayName = user?.realName || user?.username || '当前用户'
   const canManageLedgers = hasPermissionAccess(user, 'ledger_settings')
   const startupAppliedRef = useRef(false)
+  const createLedgerNameInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleLogout = async (): Promise<void> => {
     if (window.electron) {
@@ -60,6 +61,27 @@ export default function MainLayout(): JSX.Element {
   useEffect(() => {
     startupAppliedRef.current = false
   }, [user?.id])
+
+  useLayoutEffect(() => {
+    if (!isCreatingLedger) {
+      return
+    }
+
+    let frame1 = 0
+    let frame2 = 0
+    frame1 = window.requestAnimationFrame(() => {
+      frame2 = window.requestAnimationFrame(() => {
+        window.focus()
+        createLedgerNameInputRef.current?.focus()
+        createLedgerNameInputRef.current?.select()
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame1)
+      window.cancelAnimationFrame(frame2)
+    }
+  }, [isCreatingLedger])
 
   const handleSwitchLedger = (ledgerId: number): void => {
     const target = ledgers.find((ledger) => ledger.id === ledgerId)
@@ -274,6 +296,11 @@ export default function MainLayout(): JSX.Element {
                 <>
                   <button
                     className="glass-btn-secondary main-create-ledger-btn"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.98)',
+                      color: '#0f172a',
+                      borderColor: 'rgba(148, 163, 184, 0.85)'
+                    }}
                     onClick={openCreateLedger}
                     aria-label="新建账套"
                   >
@@ -350,11 +377,11 @@ export default function MainLayout(): JSX.Element {
                 <div className="flex flex-col gap-1">
                   <label className="text-sm font-semibold text-slate-600">账套名称</label>
                   <input
+                    ref={createLedgerNameInputRef}
                     className="glass-input"
                     placeholder="例如：杜小德科技有限公司"
                     value={createForm.name}
                     onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
-                    autoFocus
                   />
                 </div>
 
@@ -393,7 +420,13 @@ export default function MainLayout(): JSX.Element {
                     取消
                   </button>
                   <button
-                    className="px-4 py-2 bg-blue-900 text-white font-medium rounded-lg hover:bg-blue-800 shadow transition"
+                    type="button"
+                    className="glass-btn-secondary px-4 py-2"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.98)',
+                      color: '#0f172a',
+                      borderColor: 'rgba(148, 163, 184, 0.85)'
+                    }}
                     onClick={() => void submitCreateLedger()}
                   >
                     确认创建

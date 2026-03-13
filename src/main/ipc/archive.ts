@@ -365,10 +365,10 @@ export function registerArchiveHandlers(): void {
         .prepare(
           `SELECT id
              FROM archive_exports
-            WHERE ledger_id = ? AND fiscal_year = ?
+            WHERE ledger_id = ?
             ORDER BY id DESC`
         )
-        .all(row.ledger_id, row.fiscal_year) as Array<{ id: number }>
+        .all(row.ledger_id) as Array<{ id: number }>
 
       assertHistoricalVersionDeletable(
         row.id,
