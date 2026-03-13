@@ -1,11 +1,22 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { useLedgerStore } from '../stores/ledgerStore'
+import { formatArchiveCardTitle, formatBackupCardTitle, getLatestRecordIdsByGroup } from './backupCardLayout'
+import { getArchivePackageName, getBackupPackageName } from './backupRecordDisplay'
+import {
+  getArchiveYearOptions,
+  getBackupPeriodOptions,
+  pickDefaultArchiveYear,
+  pickDefaultBackupPeriod,
+  type SelectablePeriod
+} from './backupSelection'
 
 interface BackupRow {
   id: number
   ledger_id: number
+  backup_period: string | null
   fiscal_year: string | null
   backup_path: string
+  manifest_path: string | null
   checksum: string
   file_size: number
   status: 'generated' | 'validated' | 'failed'
@@ -23,6 +34,15 @@ interface ArchiveRow {
   status: 'generated' | 'validated' | 'failed'
   item_count: number
   created_at: string
+  validated_at: string | null
+}
+
+interface DetailModalState {
+  title: string
+  rows: Array<{
+    label: string
+    value: string
+  }>
 }
 
 const formatFileSize = (bytes: number): string => {
@@ -31,37 +51,75 @@ const formatFileSize = (bytes: number): string => {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
 }
 
+const actionButtonClass =
+  'glass-btn-secondary text-sm disabled:cursor-not-allowed disabled:opacity-45'
+
 export default function Backup(): JSX.Element {
   const { currentLedger, currentPeriod } = useLedgerStore()
-  const [fiscalYear, setFiscalYear] = useState(currentPeriod?.slice(0, 4) ?? '')
+  const [backupPeriod, setBackupPeriod] = useState('')
+  const [archiveYear, setArchiveYear] = useState('')
   const [backups, setBackups] = useState<BackupRow[]>([])
   const [archives, setArchives] = useState<ArchiveRow[]>([])
+  const [periods, setPeriods] = useState<SelectablePeriod[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
-
-  useEffect(() => {
-    setFiscalYear(currentPeriod?.slice(0, 4) ?? '')
-  }, [currentPeriod])
+  const [detailModal, setDetailModal] = useState<DetailModalState | null>(null)
 
   const canOperate = Boolean(window.electron && currentLedger)
-  const yearValue = useMemo(() => fiscalYear.trim(), [fiscalYear])
+  const backupPeriodOptions = useMemo(() => getBackupPeriodOptions(periods), [periods])
+  const archiveYearOptions = useMemo(() => getArchiveYearOptions(periods), [periods])
+  const latestBackupIds = useMemo(
+    () =>
+      getLatestRecordIdsByGroup(backups, (item) => item.backup_period ?? item.fiscal_year ?? 'default'),
+    [backups]
+  )
+  const latestArchiveIds = useMemo(
+    () => getLatestRecordIdsByGroup(archives, (item) => item.fiscal_year),
+    [archives]
+  )
+
+  useEffect(() => {
+    if (!backupPeriodOptions.includes(backupPeriod)) {
+      setBackupPeriod(pickDefaultBackupPeriod(periods))
+    }
+  }, [backupPeriod, backupPeriodOptions, periods])
+
+  useEffect(() => {
+    if (!archiveYearOptions.includes(archiveYear)) {
+      setArchiveYear(pickDefaultArchiveYear(periods))
+    }
+  }, [archiveYear, archiveYearOptions, periods])
+
+  useEffect(() => {
+    if (currentPeriod && backupPeriodOptions.includes(currentPeriod)) {
+      setBackupPeriod(currentPeriod)
+    }
+  }, [currentPeriod, backupPeriodOptions])
 
   const loadData = async (): Promise<void> => {
     if (!currentLedger || !window.electron) {
       setBackups([])
       setArchives([])
+      setPeriods([])
       return
     }
 
     setLoading(true)
     try {
-      const [backupRows, archiveRows] = await Promise.all([
+      const [backupRows, archiveRows, ledgerPeriods] = await Promise.all([
         window.api.backup.list(currentLedger.id),
-        window.api.archive.list(currentLedger.id)
+        window.api.archive.list(currentLedger.id),
+        window.api.ledger.getPeriods(currentLedger.id)
       ])
 
       setBackups(backupRows as BackupRow[])
       setArchives(archiveRows as ArchiveRow[])
+      setPeriods(
+        (ledgerPeriods as Array<{ period: string; is_closed: number }>).map((item) => ({
+          period: item.period,
+          is_closed: item.is_closed
+        }))
+      )
     } catch (error) {
       setMessage({
         type: 'error',
@@ -78,18 +136,29 @@ export default function Backup(): JSX.Element {
 
   const createBackup = async (): Promise<void> => {
     if (!currentLedger || !canOperate) return
+    if (!backupPeriod) {
+      setMessage({ type: 'error', text: '当前没有已结账会计期间可用于备份。' })
+      return
+    }
+
     setMessage(null)
     const result = await window.api.backup.create({
       ledgerId: currentLedger.id,
-      fiscalYear: yearValue || null
+      period: backupPeriod
     })
 
+    if (result.cancelled) return
     if (!result.success) {
       setMessage({ type: 'error', text: result.error || '创建备份失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '系统备份已创建' })
+    setMessage({
+      type: 'success',
+      text: result.directoryPath
+        ? `系统备份包已创建到：${result.directoryPath}`
+        : '系统备份包已创建。'
+    })
     await loadData()
   }
 
@@ -101,44 +170,146 @@ export default function Backup(): JSX.Element {
       return
     }
 
-    setMessage({ type: 'success', text: '备份校验通过' })
+    setMessage({ type: 'success', text: '备份包校验通过。' })
     await loadData()
   }
 
-  const restoreBackup = async (backupId: number): Promise<void> => {
-    if (!window.confirm('恢复备份会替换当前数据库并触发应用重启，是否继续？')) {
+  const deleteBackup = async (backup: BackupRow): Promise<void> => {
+    if (!window.confirm(`确认删除备份“${getBackupPackageName(backup.backup_path)}”吗？仅旧版本允许删除。`)) {
       return
     }
 
-    const result = await window.api.backup.restore(backupId)
+    setMessage(null)
+    const result = await window.api.backup.delete(backup.id)
+    if (!result.success) {
+      setMessage({ type: 'error', text: result.error || '删除备份失败' })
+      return
+    }
+
+    setMessage({ type: 'success', text: '旧版本备份已删除。' })
+    await loadData()
+  }
+
+  const confirmRestore = (): boolean =>
+    window.confirm('恢复备份会覆盖当前整库数据，并在完成后重启应用。是否继续？')
+
+  const restoreBackup = async (backupId: number): Promise<void> => {
+    if (!confirmRestore()) return
+
+    setMessage(null)
+    const result = await window.api.backup.restore({ backupId })
+    if (result.cancelled) return
     if (!result.success) {
       setMessage({ type: 'error', text: result.error || '恢复备份失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '备份恢复已启动，应用将重启。' })
+    setMessage({ type: 'success', text: '备份恢复已启动，应用即将重启。' })
+  }
+
+  const restoreBackupFromPath = async (): Promise<void> => {
+    if (!confirmRestore()) return
+
+    setMessage(null)
+    const result = await window.api.backup.restore()
+    if (result.cancelled) return
+    if (!result.success) {
+      setMessage({ type: 'error', text: result.error || '从自选路径恢复备份失败' })
+      return
+    }
+
+    setMessage({ type: 'success', text: '已从自选路径启动恢复，应用即将重启。' })
   }
 
   const createArchive = async (): Promise<void> => {
     if (!currentLedger || !canOperate) return
-    if (!/^\d{4}$/.test(yearValue)) {
-      setMessage({ type: 'error', text: '请输入 4 位归档年度' })
+    if (!archiveYear) {
+      setMessage({ type: 'error', text: '当前没有可归档的已结账年度。' })
       return
     }
 
     setMessage(null)
     const result = await window.api.archive.export({
       ledgerId: currentLedger.id,
-      fiscalYear: yearValue
+      fiscalYear: archiveYear
     })
 
+    if (result.cancelled) return
     if (!result.success) {
       setMessage({ type: 'error', text: result.error || '创建电子档案导出失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '电子档案导出已生成' })
+    setMessage({
+      type: 'success',
+      text: result.directoryPath
+        ? `电子档案已导出到：${result.directoryPath}`
+        : '电子档案导出已生成。'
+    })
     await loadData()
+  }
+
+  const validateArchive = async (exportId: number): Promise<void> => {
+    setMessage(null)
+    const result = await window.api.archive.validate(exportId)
+    if (!result.success) {
+      setMessage({ type: 'error', text: result.error || '电子档案校验失败' })
+      return
+    }
+
+    setMessage({ type: 'success', text: '电子档案导出包校验通过。' })
+    await loadData()
+  }
+
+  const deleteArchive = async (archive: ArchiveRow): Promise<void> => {
+    if (!window.confirm(`确认删除归档“${getArchivePackageName(archive.export_path)}”吗？仅旧版本允许删除。`)) {
+      return
+    }
+
+    setMessage(null)
+    const result = await window.api.archive.delete(archive.id)
+    if (!result.success) {
+      setMessage({ type: 'error', text: result.error || '删除电子档案失败' })
+      return
+    }
+
+    setMessage({ type: 'success', text: '旧版本电子档案已删除。' })
+    await loadData()
+  }
+
+  const openBackupDetail = (backup: BackupRow): void => {
+    setDetailModal({
+      title: getBackupPackageName(backup.backup_path),
+      rows: [
+        { label: '包件名称', value: getBackupPackageName(backup.backup_path) },
+        { label: '创建时间', value: backup.created_at },
+        { label: '备份期间', value: backup.backup_period ?? '未指定' },
+        { label: '归属年度', value: backup.fiscal_year ?? '未指定' },
+        { label: '状态', value: backup.status },
+        { label: '校验时间', value: backup.validated_at ?? '未校验' },
+        { label: '文件大小', value: formatFileSize(backup.file_size) },
+        { label: '校验值', value: backup.checksum },
+        { label: '备份文件', value: backup.backup_path },
+        { label: 'Manifest', value: backup.manifest_path ?? '无' }
+      ]
+    })
+  }
+
+  const openArchiveDetail = (archive: ArchiveRow): void => {
+    setDetailModal({
+      title: getArchivePackageName(archive.export_path),
+      rows: [
+        { label: '包件名称', value: getArchivePackageName(archive.export_path) },
+        { label: '创建时间', value: archive.created_at },
+        { label: '归档年度', value: archive.fiscal_year },
+        { label: '状态', value: archive.status },
+        { label: '校验时间', value: archive.validated_at ?? '未校验' },
+        { label: '项目数量', value: String(archive.item_count) },
+        { label: '校验值', value: archive.checksum ?? '无' },
+        { label: '导出目录', value: archive.export_path },
+        { label: 'Manifest', value: archive.manifest_path }
+      ]
+    })
   }
 
   return (
@@ -149,19 +320,60 @@ export default function Backup(): JSX.Element {
             合规备份与归档
           </h2>
           <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-            系统备份文件与电子档案导出文件分别管理，删除账套前必须先完成已校验备份与归档。
+            备份包与档案包卡片统一为三行布局：标题、时间戳、按钮行；其他字段统一放进“详细信息”弹框。
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <input
-            className="glass-input px-3 py-2 text-sm"
-            value={fiscalYear}
-            onChange={(event) => setFiscalYear(event.target.value)}
-            placeholder="归档年度，例如 2026"
-          />
+          <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            备份期间
+            <select
+              className="glass-input px-3 py-2 text-sm"
+              value={backupPeriod}
+              onChange={(event) => setBackupPeriod(event.target.value)}
+              disabled={!canOperate || backupPeriodOptions.length === 0}
+            >
+              {backupPeriodOptions.length === 0 ? (
+                <option value="">暂无已结账期间</option>
+              ) : (
+                backupPeriodOptions.map((period) => (
+                  <option key={period} value={period}>
+                    {period}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
+          <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+            归档年度
+            <select
+              className="glass-input px-3 py-2 text-sm"
+              value={archiveYear}
+              onChange={(event) => setArchiveYear(event.target.value)}
+              disabled={!canOperate || archiveYearOptions.length === 0}
+            >
+              {archiveYearOptions.length === 0 ? (
+                <option value="">暂无可归档年度</option>
+              ) : (
+                archiveYearOptions.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
+
           <button className="glass-btn-secondary" onClick={() => void createBackup()} disabled={!canOperate}>
             创建备份
+          </button>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void restoreBackupFromPath()}
+            disabled={!canOperate}
+          >
+            从路径恢复
           </button>
           <button className="glass-btn-secondary" onClick={() => void createArchive()} disabled={!canOperate}>
             创建归档
@@ -176,7 +388,7 @@ export default function Backup(): JSX.Element {
         <section className="glass-panel-light p-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              系统备份
+              系统备份包
             </h3>
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               {backups.length} 条记录
@@ -184,44 +396,47 @@ export default function Backup(): JSX.Element {
           </div>
 
           <div className="space-y-2 max-h-[56vh] overflow-auto">
-            {backups.map((backup) => (
-              <div
-                key={backup.id}
-                className="rounded-xl border p-3"
-                style={{ borderColor: 'var(--color-glass-border-light)' }}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                      #{backup.id} {backup.fiscal_year ?? '未分年度'}
-                    </div>
-                    <div className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-                      {backup.created_at} · {formatFileSize(backup.file_size)}
-                    </div>
+            {backups.map((backup) => {
+              const canDelete = !latestBackupIds.has(backup.id)
+              return (
+                <div
+                  key={backup.id}
+                  className="rounded-xl border p-4"
+                  style={{ borderColor: 'var(--color-glass-border-light)' }}
+                >
+                  <div
+                    className="text-base font-medium text-center"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    {formatBackupCardTitle(backup.backup_period)}
                   </div>
-                  <div className="flex gap-2">
-                    <button
-                      className="glass-btn-secondary text-sm"
-                      onClick={() => void validateBackup(backup.id)}
-                    >
+                  <div
+                    className="mt-2 text-sm text-center"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    {backup.created_at}
+                  </div>
+                  <div className="mt-3 grid grid-cols-4 gap-2">
+                    <button className={actionButtonClass} onClick={() => openBackupDetail(backup)}>
+                      详细信息
+                    </button>
+                    <button className={actionButtonClass} onClick={() => void validateBackup(backup.id)}>
                       校验
                     </button>
-                    <button
-                      className="glass-btn-secondary text-sm"
-                      onClick={() => void restoreBackup(backup.id)}
-                    >
+                    <button className={actionButtonClass} onClick={() => void restoreBackup(backup.id)}>
                       恢复
+                    </button>
+                    <button
+                      className={actionButtonClass}
+                      onClick={() => void deleteBackup(backup)}
+                      disabled={!canDelete}
+                    >
+                      删除旧版
                     </button>
                   </div>
                 </div>
-                <div className="text-xs mt-2 break-all" style={{ color: 'var(--color-text-secondary)' }}>
-                  {backup.backup_path}
-                </div>
-                <div className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-                  状态：{backup.status} {backup.validated_at ? `· 校验时间 ${backup.validated_at}` : ''}
-                </div>
-              </div>
-            ))}
+              )
+            })}
 
             {backups.length === 0 && (
               <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -242,29 +457,47 @@ export default function Backup(): JSX.Element {
           </div>
 
           <div className="space-y-2 max-h-[56vh] overflow-auto">
-            {archives.map((archive) => (
-              <div
-                key={archive.id}
-                className="rounded-xl border p-3"
-                style={{ borderColor: 'var(--color-glass-border-light)' }}
-              >
-                <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                  #{archive.id} {archive.fiscal_year}
+            {archives.map((archive) => {
+              const canDelete = !latestArchiveIds.has(archive.id)
+              return (
+                <div
+                  key={archive.id}
+                  className="rounded-xl border p-4"
+                  style={{ borderColor: 'var(--color-glass-border-light)' }}
+                >
+                  <div
+                    className="text-base font-medium text-center"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    {formatArchiveCardTitle(archive.fiscal_year)}
+                  </div>
+                  <div
+                    className="mt-2 text-sm text-center"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    {archive.created_at}
+                  </div>
+                  <div className="mt-3 grid grid-cols-4 gap-2">
+                    <button className={actionButtonClass} onClick={() => openArchiveDetail(archive)}>
+                      详细信息
+                    </button>
+                    <button className={actionButtonClass} onClick={() => void validateArchive(archive.id)}>
+                      校验
+                    </button>
+                    <button className={actionButtonClass} disabled>
+                      恢复
+                    </button>
+                    <button
+                      className={actionButtonClass}
+                      onClick={() => void deleteArchive(archive)}
+                      disabled={!canDelete}
+                    >
+                      删除旧版
+                    </button>
+                  </div>
                 </div>
-                <div className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
-                  {archive.created_at} · 项目数 {archive.item_count}
-                </div>
-                <div className="text-xs mt-2 break-all" style={{ color: 'var(--color-text-secondary)' }}>
-                  {archive.export_path}
-                </div>
-                <div className="text-xs mt-1 break-all" style={{ color: 'var(--color-text-secondary)' }}>
-                  Manifest: {archive.manifest_path}
-                </div>
-                <div className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-                  状态：{archive.status}
-                </div>
-              </div>
-            ))}
+              )
+            })}
 
             {archives.length === 0 && (
               <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -283,6 +516,56 @@ export default function Backup(): JSX.Element {
           }}
         >
           {message.text}
+        </div>
+      )}
+
+      {detailModal && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center px-4"
+          style={{ background: 'rgba(15, 23, 42, 0.28)' }}
+        >
+          <div className="glass-panel w-full max-w-2xl p-5 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                  {detailModal.title}
+                </h3>
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  包件详细信息
+                </p>
+              </div>
+              <button
+                type="button"
+                className="glass-btn-secondary px-3 py-1 text-xs"
+                onClick={() => setDetailModal(null)}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {detailModal.rows.map((row) => (
+                <div key={row.label} className="glass-panel-light p-3">
+                  <div className="text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>
+                    {row.label}
+                  </div>
+                  <div className="text-sm break-all" style={{ color: 'var(--color-text-primary)' }}>
+                    {row.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="glass-btn-secondary"
+                onClick={() => setDetailModal(null)}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

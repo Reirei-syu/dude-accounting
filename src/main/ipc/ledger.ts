@@ -8,6 +8,7 @@ import {
   seedSubjectsForLedger
 } from '../database/seed'
 import { appendOperationLog } from '../services/auditLog'
+import { assertLedgerNameAvailable, normalizeLedgerName } from '../services/ledgerNaming'
 import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
 import { applyCustomTopLevelSubjectTemplate } from '../services/subjectTemplate'
 import { grantUserLedgerAccess } from '../services/userLedgerAccess'
@@ -87,12 +88,14 @@ export function registerLedgerHandlers(): void {
     ) => {
       try {
         const user = requirePermission(event, 'ledger_settings')
+        const normalizedName = normalizeLedgerName(data.name)
+        assertLedgerNameAvailable(db, normalizedName)
         const result = db
           .prepare(
             `INSERT INTO ledgers (name, standard_type, start_period, current_period)
              VALUES (?, ?, ?, ?)`
           )
-          .run(data.name, data.standardType, data.startPeriod, data.startPeriod)
+          .run(normalizedName, data.standardType, data.startPeriod, data.startPeriod)
 
         const ledgerId = Number(result.lastInsertRowid)
         seedSubjectsForLedger(db, ledgerId, data.standardType)
@@ -137,7 +140,9 @@ export function registerLedgerHandlers(): void {
         const user = requirePermission(event, 'ledger_settings')
         requireLedgerAccess(event, db, data.id)
         if (data.name !== undefined) {
-          db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(data.name, data.id)
+          const normalizedName = normalizeLedgerName(data.name)
+          assertLedgerNameAvailable(db, normalizedName, data.id)
+          db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(normalizedName, data.id)
         }
         if (data.currentPeriod !== undefined) {
           const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(data.id) as

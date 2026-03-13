@@ -22,6 +22,14 @@ const systemSettingsUser: TestUser = {
   }
 }
 
+const ledgerSettingsUser: TestUser = {
+  isAdmin: false,
+  permissions: {
+    system_settings: false,
+    ledger_settings: true
+  }
+}
+
 const adminUser: TestUser = {
   isAdmin: true,
   permissions: {}
@@ -86,6 +94,34 @@ describe('ui access control', () => {
         (item) => item.id
       )
     ).toContain('system-params')
+  })
+
+  it('shows backup submenu for users with ledger settings permission', () => {
+    const getVisibleMainModules = (
+      uiStore as {
+        getVisibleMainModules?: (
+          user: typeof ledgerSettingsUser
+        ) => Array<{ id: string; label: string }>
+      }
+    ).getVisibleMainModules
+    const getVisibleModuleSubMenus = (
+      uiStore as {
+        getVisibleModuleSubMenus?: (
+          module: string,
+          standardType: 'enterprise' | 'npo',
+          user: typeof ledgerSettingsUser
+        ) => Array<{ id: string }>
+      }
+    ).getVisibleModuleSubMenus
+
+    expect(getVisibleMainModules?.(ledgerSettingsUser).map((item) => item.id)).toContain(
+      'ledger-settings'
+    )
+    expect(
+      getVisibleModuleSubMenus?.('ledger-settings', 'enterprise', ledgerSettingsUser).map(
+        (item) => item.id
+      )
+    ).toContain('backup')
   })
 
   it('keeps all modules visible for administrators', () => {

@@ -301,15 +301,18 @@ export function initializeDatabase(): void {
         CHECK(status IN ('generated', 'validated', 'failed')),
       item_count INTEGER NOT NULL DEFAULT 0,
       created_by INTEGER DEFAULT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      validated_at TEXT DEFAULT NULL
     );
 
     -- 备份包记录
     CREATE TABLE IF NOT EXISTS backup_packages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ledger_id INTEGER NOT NULL,
+      backup_period TEXT DEFAULT NULL,
       fiscal_year TEXT DEFAULT NULL,
       backup_path TEXT NOT NULL,
+      manifest_path TEXT DEFAULT NULL,
       checksum TEXT NOT NULL,
       file_size INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'generated'
@@ -373,6 +376,8 @@ export function initializeDatabase(): void {
   ensureUserLedgerAccessSchema(db)
   ensureUserPreferenceSchema(db)
   ensureComplianceSchema(db)
+  ensureArchiveSchema(db)
+  ensureBackupSchema(db)
   ensureReportingSchema(db)
 
   // Seed default data
@@ -705,6 +710,28 @@ export function ensureComplianceSchema(db: Database.Database): void {
   addColumnIfMissing('emergency_reversal_by', 'emergency_reversal_by INTEGER DEFAULT NULL')
   addColumnIfMissing('emergency_reversal_at', 'emergency_reversal_at TEXT DEFAULT NULL')
   addColumnIfMissing('reversal_approval_tag', 'reversal_approval_tag TEXT DEFAULT NULL')
+}
+
+export function ensureBackupSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('backup_packages')").all() as Array<{ name: string }>
+  if (columns.length === 0) return
+
+  if (!columns.some((column) => column.name === 'manifest_path')) {
+    db.exec("ALTER TABLE backup_packages ADD COLUMN manifest_path TEXT DEFAULT NULL")
+  }
+
+  if (!columns.some((column) => column.name === 'backup_period')) {
+    db.exec("ALTER TABLE backup_packages ADD COLUMN backup_period TEXT DEFAULT NULL")
+  }
+}
+
+export function ensureArchiveSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('archive_exports')").all() as Array<{ name: string }>
+  if (columns.length === 0) return
+
+  if (!columns.some((column) => column.name === 'validated_at')) {
+    db.exec("ALTER TABLE archive_exports ADD COLUMN validated_at TEXT DEFAULT NULL")
+  }
 }
 
 export function ensureCashFlowMappingSchema(db: Database.Database): void {

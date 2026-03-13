@@ -769,11 +769,19 @@ interface AuditLogAPI {
 }
 
 interface BackupAPI {
-  create: (payload: { ledgerId: number; fiscalYear?: string | null }) => Promise<{
+  create: (payload: {
+    ledgerId: number
+    period?: string | null
+    directoryPath?: string
+  }) => Promise<{
     success: boolean
+    cancelled?: boolean
     error?: string
     backupId?: number
+    directoryPath?: string
+    period?: string | null
     backupPath?: string
+    manifestPath?: string
     checksum?: string
     fileSize?: number
   }>
@@ -781,8 +789,10 @@ interface BackupAPI {
     Array<{
       id: number
       ledger_id: number
+      backup_period: string | null
       fiscal_year: string | null
       backup_path: string
+      manifest_path: string | null
       checksum: string
       file_size: number
       status: 'generated' | 'validated' | 'failed'
@@ -797,17 +807,28 @@ interface BackupAPI {
     actualChecksum?: string | null
     error?: string
   }>
-  restore: (backupId: number) => Promise<{
+  delete: (backupId: number) => Promise<{
     success: boolean
+    error?: string
+  }>
+  restore: (payload?: { backupId?: number; packagePath?: string }) => Promise<{
+    success: boolean
+    cancelled?: boolean
     restartRequired?: boolean
     error?: string
   }>
 }
 
 interface ArchiveAPI {
-  export: (payload: { ledgerId: number; fiscalYear: string }) => Promise<{
+  export: (payload: {
+    ledgerId: number
+    fiscalYear: string
+    directoryPath?: string
+  }) => Promise<{
     success: boolean
+    cancelled?: boolean
     exportId?: number
+    directoryPath?: string
     exportPath?: string
     manifestPath?: string
     error?: string
@@ -824,8 +845,19 @@ interface ArchiveAPI {
       item_count: number
       created_by: number | null
       created_at: string
+      validated_at: string | null
     }>
   >
+  validate: (exportId: number) => Promise<{
+    success: boolean
+    valid?: boolean
+    actualChecksum?: string | null
+    error?: string
+  }>
+  delete: (exportId: number) => Promise<{
+    success: boolean
+    error?: string
+  }>
   getManifest: (exportId: number) => Promise<{
     schemaVersion: '1.0'
     ledgerId: number

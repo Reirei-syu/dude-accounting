@@ -215,11 +215,20 @@ Planned Channels:
 Responsibility:
 账套备份包生成、校验、恢复。
 
-Planned Channels:
+Status:
+
+- 已支持系统级数据库快照备份包生成、manifest 清单写入、完整性校验与整库恢复。
+- 备份创建支持用户自定义保存目录，并记忆最近一次使用的备份目录。
+- 恢复既支持按系统内备份记录恢复，也支持从自选备份包目录直接发起恢复。
+- 备份时间选择器需基于已结账会计期间提供选择，并默认指向最近一次已结账期间。
+- 当前恢复语义仍为“整库覆盖 + 应用重启”，不支持单账套局部恢复。
+
+Current Channels:
 
 - `backup:create`
 - `backup:list`
 - `backup:validate`
+- `backup:delete`
 - `backup:restore`
 
 ### ArchiveExportModule
@@ -227,10 +236,18 @@ Planned Channels:
 Responsibility:
 生成电子会计档案导出包，保留元数据、校验信息、结构化入账数据和导出记录。
 
-Planned Channels:
+Status:
+
+- 归档导出支持用户自定义保存目录，并记忆最近一次使用的归档目录。
+- 已支持电子档案导出包完整性校验，覆盖 manifest 校验、必要文件存在性检查与原始凭证目录数量核对。
+- 归档时间选择器需基于已结账期间可归并出的会计年度提供选择，不再允许自由录入年度文本。
+
+Current Channels:
 
 - `archive:export`
 - `archive:list`
+- `archive:validate`
+- `archive:delete`
 - `archive:getManifest`
 
 ### ReportingOutputModule
@@ -309,8 +326,8 @@ Compliance Tables Added / To Be Added:
 - `electronic_voucher_records`
 - `electronic_voucher_verifications`
 - `voucher_source_links`
-- `archive_exports`
-- `backup_packages`
+- `archive_exports`（含 `validated_at` 字段）
+- `backup_packages`（含 `manifest_path`、`backup_period` 字段）
 
 Voucher Model Direction:
 
@@ -338,6 +355,8 @@ Current:
 - `bookQuery:listSubjectBalances/getDetailLedger/getJournal/getAuxiliaryBalances/getAuxiliaryDetail`
 - `reporting:generate/list/getDetail/delete/export`
 - `print:*`
+- `backup:create/list/validate/delete/restore`
+- `archive:export/list/validate/delete/getManifest`
 
 Current Authorization Semantics:
 
@@ -368,9 +387,7 @@ User Preference Keys:
 In-flight:
 
 - `auditLog:list/export`
-- `backup:create/list/restore/validate`
 - `eVoucher:import/list/verify/parse/convert`
-- `archive:export/list/getManifest`
 
 ---
 
@@ -381,6 +398,7 @@ In-flight:
 - `admin` 默认拥有全部账套访问权，无需显式勾选单个账套授权。
 - 普通用户仅可查看和操作被分配的账套；未分配账套不得出现在账套列表、功能入口、查询结果或可提交的业务操作中。
 - 新增或调整账套级授权时，需同时检查登录会话、账套列表、业务 IPC 与账号管理界面是否保持一致，不允许仅前端隐藏而后端放行。
+- 新建或重命名账套时，账套名称在去除首尾空格后必须与现有账套名称保持唯一，不得与既有账套完全同名。
 - 系统参数仅承载系统级规则；个人偏好必须与系统规则分层，且个人偏好只能在系统允许范围内生效。
 - 个人偏好中的默认账套必须限制在当前用户被授权的账套集合内；若偏好中的账套失效，应自动回退到首个可访问账套或空状态。
 - 打印预览、系统打印与打印版 PDF 导出必须使用同一份 HTML 打印文档，不允许按输出方式分别维护多套模板。
@@ -401,6 +419,10 @@ In-flight:
 - 电子凭证处理必须具备重复入账拦截能力。
 - 账套删除必须经过备份/导出前置校验。
 - 备份文件与档案导出文件不得混用。
+- 备份与归档创建目录允许用户自定义；恢复允许用户从自选备份包目录发起，但恢复目标始终为当前系统数据库。
+- 备份与归档的校验时间戳应采用本地时间写入，不再使用 UTC 时间戳显示。
+- 当存在更新版本的备份包或归档包时，允许删除旧版本产物；最新版本不得直接删除。
+- 备份与归档时间选择器必须采用选择方式；备份默认选中最近一次已结账会计期间，归档默认选中最近一次可归档年度。
 - 金额按“分”存储，输入允许两位小数。
 - 凭证列表与凭证录入导航序列应保持一致的字号排序规则：普通记账凭证在前，结账凭证在后。
 - 民间非营利组织报表模板行取数必须按显式科目映射汇总，并兼容父级科目下新增明细科目余额。
@@ -423,9 +445,9 @@ Additional NPO Constraint:
 
 - 账簿查询仍未完成；财务报表已具备基础快照生成、查询、删除与 Excel/PDF 另存为导出能力，但打印和标准数据导出尚未完成。
 - 电子凭证标准化接收、验签/验真、解析、结构化入账尚未完成。
-- 电子会计档案导出接口尚未完成。
+- 电子会计档案已支持导出与包级校验，但仍缺少更细粒度的结构化入账文件校验规则与可读性检查记录。
 - 操作日志查询与导出尚未完成。
-- 账套备份/恢复尚未完成。
+- 账套备份已支持系统级数据库快照包生成、manifest 校验与整库恢复，但仍缺少单账套局部恢复、自定义外部存储策略与异地备份机制。
 - 已记账凭证控制需要从当前实现继续收紧。
 
 ---

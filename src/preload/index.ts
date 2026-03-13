@@ -257,16 +257,20 @@ const api = {
     }) => ipcRenderer.invoke('auditLog:export', payload)
   },
   backup: {
-    create: (payload: { ledgerId: number; fiscalYear?: string | null }) =>
+    create: (payload: { ledgerId: number; period?: string | null; directoryPath?: string }) =>
       ipcRenderer.invoke('backup:create', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('backup:list', ledgerId),
     validate: (backupId: number) => ipcRenderer.invoke('backup:validate', backupId),
-    restore: (backupId: number) => ipcRenderer.invoke('backup:restore', backupId)
+    delete: (backupId: number) => ipcRenderer.invoke('backup:delete', backupId),
+    restore: (payload?: { backupId?: number; packagePath?: string }) =>
+      ipcRenderer.invoke('backup:restore', payload)
   },
   archive: {
-    export: (payload: { ledgerId: number; fiscalYear: string }) =>
+    export: (payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
       ipcRenderer.invoke('archive:export', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('archive:list', ledgerId),
+    validate: (exportId: number) => ipcRenderer.invoke('archive:validate', exportId),
+    delete: (exportId: number) => ipcRenderer.invoke('archive:delete', exportId),
     getManifest: (exportId: number) => ipcRenderer.invoke('archive:getManifest', exportId)
   },
   eVoucher: {

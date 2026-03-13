@@ -91,9 +91,15 @@ export default function MainLayout(): JSX.Element {
   const submitCreateLedger = async (): Promise<void> => {
     if (!window.electron) return
     const { name, startPeriod, standardType } = createForm
+    const normalizedName = name.trim()
 
-    if (!name.trim()) {
+    if (!normalizedName) {
       window.alert('账套名称不能为空')
+      return
+    }
+
+    if (ledgers.some((ledger) => ledger.name === normalizedName)) {
+      window.alert('已存在同名账套，请使用其他名称')
       return
     }
 
@@ -104,7 +110,7 @@ export default function MainLayout(): JSX.Element {
 
     try {
       const result = await window.api.ledger.create({
-        name: name.trim(),
+        name: normalizedName,
         standardType,
         startPeriod
       })

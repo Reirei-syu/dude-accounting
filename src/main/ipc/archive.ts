@@ -1,20 +1,56 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { app, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
-import { buildArchiveManifest, writeArchiveManifest } from '../services/archiveExport'
+import {
+  buildArchiveManifest,
+  validateArchiveExportPackage,
+  writeArchiveManifest
+} from '../services/archiveExport'
 import { buildTimestampToken, computeFileSha256, ensureDirectory } from '../services/fileIntegrity'
+import { formatLocalDateTime } from '../services/localTime'
+import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
+import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requireLedgerAccess, requirePermission } from './session'
 
-function getArchiveRootDir(): string {
-  return path.join(app.getPath('userData'), 'archive-exports')
+const ARCHIVE_LAST_DIR_KEY = 'archive_export_last_dir'
+
+function getDefaultArchiveRootDir(): string {
+  return path.join(app.getPath('documents'), 'Dude Accounting', '电子档案导出')
+}
+
+async function pickArchiveRootDirectory(
+  sender: Electron.WebContents,
+  defaultPath: string
+): Promise<{ cancelled: boolean; directoryPath?: string }> {
+  const browserWindow = BrowserWindow.fromWebContents(sender)
+  const options = {
+    title: '选择电子档案导出目录',
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'>
+  }
+  const result = browserWindow
+    ? await dialog.showOpenDialog(browserWindow, options)
+    : await dialog.showOpenDialog(options)
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { cancelled: true }
+  }
+
+  return {
+    cancelled: false,
+    directoryPath: result.filePaths[0]
+  }
 }
 
 export function registerArchiveHandlers(): void {
   ipcMain.handle(
     'archive:export',
-    (event, payload: { ledgerId: number; fiscalYear: string }) => {
+    async (
+      event,
+      payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }
+    ) => {
       try {
         const user = requirePermission(event, 'ledger_settings')
         const db = getDatabase()
@@ -27,8 +63,19 @@ export function registerArchiveHandlers(): void {
           return { success: false, error: '账套不存在' }
         }
 
+        const preferredDir = getPathPreference(db, ARCHIVE_LAST_DIR_KEY) ?? getDefaultArchiveRootDir()
+        const picked = payload.directoryPath
+          ? { cancelled: false, directoryPath: payload.directoryPath }
+          : await pickArchiveRootDirectory(event.sender, preferredDir)
+
+        if (picked.cancelled || !picked.directoryPath) {
+          return { success: false, cancelled: true }
+        }
+
+        rememberPathPreference(db, ARCHIVE_LAST_DIR_KEY, picked.directoryPath)
+
         const exportDir = path.join(
-          getArchiveRootDir(),
+          picked.directoryPath,
           `ledger-${payload.ledgerId}-${payload.fiscalYear}-${buildTimestampToken()}`
         )
         const originalVoucherDir = path.join(exportDir, 'original-vouchers')
@@ -121,6 +168,7 @@ export function registerArchiveHandlers(): void {
           reportCount: 0,
           metadata: {
             exportMode: 'export-first',
+            selectedDirectory: picked.directoryPath,
             generatedFiles: [
               'manifest.json',
               'vouchers.json',
@@ -168,6 +216,7 @@ export function registerArchiveHandlers(): void {
           targetId: Number(result.lastInsertRowid),
           details: {
             fiscalYear: payload.fiscalYear,
+            selectedDirectory: picked.directoryPath,
             exportPath: exportDir,
             manifestPath,
             copiedOriginalVoucherCount
@@ -177,6 +226,7 @@ export function registerArchiveHandlers(): void {
         return {
           success: true,
           exportId: Number(result.lastInsertRowid),
+          directoryPath: picked.directoryPath,
           exportPath: exportDir,
           manifestPath
         }
@@ -218,6 +268,142 @@ export function registerArchiveHandlers(): void {
           ORDER BY ae.id DESC`
       )
       .all(user.id)
+  })
+
+  ipcMain.handle('archive:validate', (event, exportId: number) => {
+    try {
+      const user = requirePermission(event, 'ledger_settings')
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(exportId) as
+        | {
+            id: number
+            ledger_id: number
+            fiscal_year: string
+            export_path: string
+            manifest_path: string
+            checksum: string | null
+          }
+        | undefined
+
+      if (!row) {
+        return { success: false, error: '电子档案导出记录不存在' }
+      }
+
+      requireLedgerAccess(event, db, row.ledger_id)
+
+      const validation = validateArchiveExportPackage({
+        exportPath: row.export_path,
+        manifestPath: row.manifest_path,
+        expectedChecksum: row.checksum,
+        ledgerId: row.ledger_id,
+        fiscalYear: row.fiscal_year
+      })
+
+      db.prepare(
+        `UPDATE archive_exports
+         SET status = ?, validated_at = CASE WHEN ? = 'validated' THEN ? ELSE validated_at END
+         WHERE id = ?`
+      ).run(
+        validation.valid ? 'validated' : 'failed',
+        validation.valid ? 'validated' : 'failed',
+        validation.valid ? formatLocalDateTime() : null,
+        exportId
+      )
+
+      appendOperationLog(db, {
+        ledgerId: row.ledger_id,
+        userId: user.id,
+        username: user.username,
+        module: 'archive',
+        action: 'validate',
+        targetType: 'archive_export',
+        targetId: row.id,
+        details: {
+          valid: validation.valid,
+          actualChecksum: validation.actualChecksum,
+          error: validation.error ?? null,
+          manifest: validation.manifest ?? null,
+          missingFiles: validation.missingFiles ?? []
+        }
+      })
+
+      return {
+        success: validation.valid,
+        valid: validation.valid,
+        actualChecksum: validation.actualChecksum,
+        error: validation.error
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '校验电子档案失败'
+      }
+    }
+  })
+
+  ipcMain.handle('archive:delete', (event, exportId: number) => {
+    try {
+      const user = requirePermission(event, 'ledger_settings')
+      const db = getDatabase()
+      const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(exportId) as
+        | {
+            id: number
+            ledger_id: number
+            fiscal_year: string
+            export_path: string
+            manifest_path: string
+          }
+        | undefined
+
+      if (!row) {
+        return { success: false, error: '电子档案导出记录不存在' }
+      }
+
+      requireLedgerAccess(event, db, row.ledger_id)
+
+      const versionRows = db
+        .prepare(
+          `SELECT id
+             FROM archive_exports
+            WHERE ledger_id = ? AND fiscal_year = ?
+            ORDER BY id DESC`
+        )
+        .all(row.ledger_id, row.fiscal_year) as Array<{ id: number }>
+
+      assertHistoricalVersionDeletable(
+        row.id,
+        versionRows.map((item) => item.id),
+        '归档'
+      )
+
+      db.prepare('DELETE FROM archive_exports WHERE id = ?').run(exportId)
+
+      if (fs.existsSync(row.export_path)) {
+        fs.rmSync(row.export_path, { recursive: true, force: true })
+      }
+
+      appendOperationLog(db, {
+        ledgerId: row.ledger_id,
+        userId: user.id,
+        username: user.username,
+        module: 'archive',
+        action: 'delete',
+        targetType: 'archive_export',
+        targetId: row.id,
+        details: {
+          fiscalYear: row.fiscal_year,
+          exportPath: row.export_path,
+          manifestPath: row.manifest_path
+        }
+      })
+
+      return { success: true }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '删除电子档案失败'
+      }
+    }
   })
 
   ipcMain.handle('archive:getManifest', (event, exportId: number) => {

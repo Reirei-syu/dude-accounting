@@ -115,6 +115,12 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
       title: '期末损益结转设置',
       componentType: 'PLCarryForward',
       requiredPermission: 'ledger_settings'
+    },
+    {
+      id: 'backup',
+      title: '账套备份',
+      componentType: 'Backup',
+      requiredPermission: 'ledger_settings'
     }
   ],
   accounting: [
@@ -150,12 +156,6 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
       componentType: 'AccountingStandard',
       requiredPermission: 'system_settings'
     },
-    {
-      id: 'backup',
-      title: '账套备份',
-      componentType: 'Backup',
-      requiredPermission: 'system_settings'
-    }
   ]
 }
 
