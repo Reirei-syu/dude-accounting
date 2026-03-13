@@ -8,13 +8,25 @@ import {
   validateArchiveExportPackage,
   writeArchiveManifest
 } from '../services/archiveExport'
-import { buildTimestampToken, computeFileSha256, ensureDirectory } from '../services/fileIntegrity'
+import { deleteArchivePhysicalPackage, getArchivePhysicalPackageStatus } from '../services/packageDeletion'
+import {
+  buildUniqueDirectoryPath,
+  computeFileSha256,
+  ensureDirectory,
+  sanitizePathSegment
+} from '../services/fileIntegrity'
 import { formatLocalDateTime } from '../services/localTime'
 import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requireLedgerAccess, requirePermission } from './session'
 
 const ARCHIVE_LAST_DIR_KEY = 'archive_export_last_dir'
+
+function buildArchivePackageDirectoryName(ledgerName: string, fiscalYear: string): string {
+  const ledgerLabel = sanitizePathSegment(ledgerName.trim() || '未命名账套', '未命名账套')
+  const periodLabel = sanitizePathSegment(fiscalYear.trim() || '未设置期间', '未设置期间')
+  return `${ledgerLabel}_${periodLabel}_档案包`
+}
 
 function getDefaultArchiveRootDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '电子档案导出')
@@ -73,10 +85,11 @@ export function registerArchiveHandlers(): void {
         }
 
         rememberPathPreference(db, ARCHIVE_LAST_DIR_KEY, picked.directoryPath)
+        const createdAt = formatLocalDateTime()
 
-        const exportDir = path.join(
+        const exportDir = buildUniqueDirectoryPath(
           picked.directoryPath,
-          `ledger-${payload.ledgerId}-${payload.fiscalYear}-${buildTimestampToken()}`
+          buildArchivePackageDirectoryName(ledger.name, payload.fiscalYear)
         )
         const originalVoucherDir = path.join(exportDir, 'original-vouchers')
         ensureDirectory(exportDir)
@@ -162,7 +175,7 @@ export function registerArchiveHandlers(): void {
           ledgerId: payload.ledgerId,
           ledgerName: ledger.name,
           fiscalYear: payload.fiscalYear,
-          exportedAt: new Date().toISOString(),
+          exportedAt: createdAt,
           originalVoucherFileCount: copiedOriginalVoucherCount,
           voucherCount: vouchers.length,
           reportCount: 0,
@@ -193,8 +206,9 @@ export function registerArchiveHandlers(): void {
                checksum,
                status,
                item_count,
-               created_by
-             ) VALUES (?, ?, ?, ?, ?, 'generated', ?, ?)`
+               created_by,
+               created_at
+             ) VALUES (?, ?, ?, ?, ?, 'generated', ?, ?, ?)`
           )
           .run(
             payload.ledgerId,
@@ -203,7 +217,8 @@ export function registerArchiveHandlers(): void {
             manifestPath,
             checksum,
             vouchers.length + voucherEntries.length + electronicVoucherRows.length + operationLogs.length,
-            user.id
+            user.id,
+            createdAt
           )
 
         appendOperationLog(db, {
@@ -219,7 +234,8 @@ export function registerArchiveHandlers(): void {
             selectedDirectory: picked.directoryPath,
             exportPath: exportDir,
             manifestPath,
-            copiedOriginalVoucherCount
+            copiedOriginalVoucherCount,
+            createdAt
           }
         })
 
@@ -341,11 +357,19 @@ export function registerArchiveHandlers(): void {
     }
   })
 
-  ipcMain.handle('archive:delete', (event, exportId: number) => {
+  ipcMain.handle(
+    'archive:delete',
+    (
+      event,
+      payload: {
+        exportId: number
+        deleteRecordOnly?: boolean
+      }
+    ) => {
     try {
       const user = requirePermission(event, 'ledger_settings')
       const db = getDatabase()
-      const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(exportId) as
+      const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(payload.exportId) as
         | {
             id: number
             ledger_id: number
@@ -376,11 +400,34 @@ export function registerArchiveHandlers(): void {
         '归档'
       )
 
-      db.prepare('DELETE FROM archive_exports WHERE id = ?').run(exportId)
+      const physicalStatus = getArchivePhysicalPackageStatus(row.export_path)
 
-      if (fs.existsSync(row.export_path)) {
-        fs.rmSync(row.export_path, { recursive: true, force: true })
+      if (payload.deleteRecordOnly && physicalStatus.physicalExists) {
+        return {
+          success: false,
+          error: '路径下档案包仍存在，请执行正常删除以同时删除实体包。'
+        }
       }
+
+      const deletionResult = payload.deleteRecordOnly
+        ? {
+            physicalExists: false,
+            deletedPaths: [],
+            packagePath: physicalStatus.packagePath
+          }
+        : deleteArchivePhysicalPackage(row.export_path)
+
+      if (!payload.deleteRecordOnly && !deletionResult.physicalExists) {
+        return {
+          success: false,
+          missingPhysicalPackage: true,
+          requiresRecordDeletionConfirmation: true,
+          packagePath: deletionResult.packagePath,
+          error: '路径下档案包已不存在，是否删除本条记录？'
+        }
+      }
+
+      db.prepare('DELETE FROM archive_exports WHERE id = ?').run(payload.exportId)
 
       appendOperationLog(db, {
         ledgerId: row.ledger_id,
@@ -393,11 +440,18 @@ export function registerArchiveHandlers(): void {
         details: {
           fiscalYear: row.fiscal_year,
           exportPath: row.export_path,
-          manifestPath: row.manifest_path
+          manifestPath: row.manifest_path,
+          deletedPaths: deletionResult.deletedPaths,
+          deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package',
+          physicalPackageMissing: !deletionResult.physicalExists
         }
       })
 
-      return { success: true }
+      return {
+        success: true,
+        deletedPhysicalPackage: deletionResult.physicalExists,
+        deletedPaths: deletionResult.deletedPaths
+      }
     } catch (error) {
       return {
         success: false,

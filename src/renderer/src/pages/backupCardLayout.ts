@@ -31,3 +31,19 @@ export function getLatestRecordIdsByGroup<T extends { id: number }>(
 
   return new Set(latestByGroup.values())
 }
+
+export function getVisibleRecordItems<T>(
+  items: T[],
+  expanded: boolean,
+  defaultVisibleCount = 2
+): T[] {
+  if (expanded) {
+    return items
+  }
+
+  return items.slice(0, defaultVisibleCount)
+}
+
+export function shouldShowExpandButton(totalCount: number, defaultVisibleCount = 2): boolean {
+  return totalCount > defaultVisibleCount
+}

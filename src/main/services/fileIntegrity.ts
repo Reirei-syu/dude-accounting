@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
+import path from 'node:path'
 
 export function computeFileSha256(filePath: string): string {
   const hash = crypto.createHash('sha256')
@@ -9,6 +10,29 @@ export function computeFileSha256(filePath: string): string {
 
 export function ensureDirectory(dirPath: string): void {
   fs.mkdirSync(dirPath, { recursive: true })
+}
+
+export function sanitizePathSegment(value: string, fallback = '未命名'): string {
+  const normalized = value
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+
+  return normalized || fallback
+}
+
+export function buildUniqueDirectoryPath(rootDir: string, preferredName: string): string {
+  const baseName = sanitizePathSegment(preferredName)
+  let candidatePath = path.join(rootDir, baseName)
+  let sequence = 2
+
+  while (fs.existsSync(candidatePath)) {
+    candidatePath = path.join(rootDir, `${baseName}_${sequence}`)
+    sequence += 1
+  }
+
+  return candidatePath
 }
 
 export function buildTimestampToken(now: Date = new Date()): string {

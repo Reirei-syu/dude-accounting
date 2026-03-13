@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState, type JSX } from 'react'
 import { useLedgerStore } from '../stores/ledgerStore'
-import { formatArchiveCardTitle, formatBackupCardTitle, getLatestRecordIdsByGroup } from './backupCardLayout'
+import {
+  formatArchiveCardTitle,
+  formatBackupCardTitle,
+  getLatestRecordIdsByGroup,
+  getVisibleRecordItems,
+  shouldShowExpandButton
+} from './backupCardLayout'
 import { getArchivePackageName, getBackupPackageName } from './backupRecordDisplay'
 import {
   getArchiveYearOptions,
@@ -45,6 +51,10 @@ interface DetailModalState {
   }>
 }
 
+interface RecordBrowserState {
+  type: 'backup' | 'archive'
+}
+
 const formatFileSize = (bytes: number): string => {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -52,7 +62,7 @@ const formatFileSize = (bytes: number): string => {
 }
 
 const actionButtonClass =
-  'glass-btn-secondary text-sm disabled:cursor-not-allowed disabled:opacity-45'
+  'glass-btn-secondary min-w-0 whitespace-nowrap px-3 py-1 text-xs leading-none disabled:cursor-not-allowed disabled:opacity-45'
 
 const confirmRecordedRestore = (): boolean =>
   window.confirm(
@@ -74,6 +84,7 @@ export default function Backup(): JSX.Element {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
   const [detailModal, setDetailModal] = useState<DetailModalState | null>(null)
+  const [recordBrowser, setRecordBrowser] = useState<RecordBrowserState | null>(null)
 
   const canOperate = Boolean(window.electron && currentLedger)
   const backupPeriodOptions = useMemo(() => getBackupPeriodOptions(periods), [periods])
@@ -86,6 +97,8 @@ export default function Backup(): JSX.Element {
     () => getLatestRecordIdsByGroup(archives, () => 'all'),
     [archives]
   )
+  const visibleBackups = useMemo(() => getVisibleRecordItems(backups, false), [backups])
+  const visibleArchives = useMemo(() => getVisibleRecordItems(archives, false), [archives])
 
   useEffect(() => {
     if (!backupPeriodOptions.includes(backupPeriod)) {
@@ -143,6 +156,11 @@ export default function Backup(): JSX.Element {
     void loadData()
   }, [currentLedger?.id])
 
+  useEffect(() => {
+    setRecordBrowser(null)
+    setDetailModal(null)
+  }, [currentLedger?.id])
+
   const createBackup = async (): Promise<void> => {
     if (!currentLedger || !canOperate) return
     if (!backupPeriod) {
@@ -189,13 +207,28 @@ export default function Backup(): JSX.Element {
     }
 
     setMessage(null)
-    const result = await window.api.backup.delete(backup.id)
+    let result = await window.api.backup.delete({ backupId: backup.id })
+    if (!result.success && result.requiresRecordDeletionConfirmation) {
+      const packageLabel = result.packagePath || getBackupPackageName(backup.backup_path)
+      if (!window.confirm(`路径下备份包已不存在：${packageLabel}\n是否删除本条记录？`)) {
+        return
+      }
+
+      result = await window.api.backup.delete({
+        backupId: backup.id,
+        deleteRecordOnly: true
+      })
+    }
+
     if (!result.success) {
       setMessage({ type: 'error', text: result.error || '删除备份失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '旧版本备份已删除。' })
+    setMessage({
+      type: 'success',
+      text: result.deletedPhysicalPackage ? '旧版本备份及其实体包已删除。' : '路径下备份包已不存在，空壳记录已删除。'
+    })
     await loadData()
   }
 
@@ -273,13 +306,28 @@ export default function Backup(): JSX.Element {
     }
 
     setMessage(null)
-    const result = await window.api.archive.delete(archive.id)
+    let result = await window.api.archive.delete({ exportId: archive.id })
+    if (!result.success && result.requiresRecordDeletionConfirmation) {
+      const packageLabel = result.packagePath || getArchivePackageName(archive.export_path)
+      if (!window.confirm(`路径下档案包已不存在：${packageLabel}\n是否删除本条记录？`)) {
+        return
+      }
+
+      result = await window.api.archive.delete({
+        exportId: archive.id,
+        deleteRecordOnly: true
+      })
+    }
+
     if (!result.success) {
       setMessage({ type: 'error', text: result.error || '删除电子档案失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '旧版本电子档案已删除。' })
+    setMessage({
+      type: 'success',
+      text: result.deletedPhysicalPackage ? '旧版本电子档案及其实体包已删除。' : '路径下档案包已不存在，空壳记录已删除。'
+    })
     await loadData()
   }
 
@@ -316,6 +364,90 @@ export default function Backup(): JSX.Element {
         { label: 'Manifest', value: archive.manifest_path }
       ]
     })
+  }
+
+  const renderBackupCard = (backup: BackupRow): JSX.Element => {
+    const canDelete = !latestBackupIds.has(backup.id)
+    return (
+      <div
+        key={backup.id}
+        className="rounded-xl border p-4"
+        style={{ borderColor: 'var(--color-glass-border-light)' }}
+      >
+        <div
+          className="text-base font-medium text-center"
+          style={{ color: 'var(--color-text-primary)' }}
+        >
+          {formatBackupCardTitle(backup.backup_period)}
+        </div>
+        <div
+          className="mt-2 text-sm text-center"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          {backup.created_at}
+        </div>
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          <button className={actionButtonClass} onClick={() => openBackupDetail(backup)}>
+            详细信息
+          </button>
+          <button className={actionButtonClass} onClick={() => void validateBackup(backup.id)}>
+            校验
+          </button>
+          <button className={actionButtonClass} onClick={() => void restoreBackup(backup.id)}>
+            整库恢复
+          </button>
+          <button
+            className={actionButtonClass}
+            onClick={() => void deleteBackup(backup)}
+            disabled={!canDelete}
+          >
+            删除旧版
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const renderArchiveCard = (archive: ArchiveRow): JSX.Element => {
+    const canDelete = !latestArchiveIds.has(archive.id)
+    return (
+      <div
+        key={archive.id}
+        className="rounded-xl border p-4"
+        style={{ borderColor: 'var(--color-glass-border-light)' }}
+      >
+        <div
+          className="text-base font-medium text-center"
+          style={{ color: 'var(--color-text-primary)' }}
+        >
+          {formatArchiveCardTitle(archive.fiscal_year)}
+        </div>
+        <div
+          className="mt-2 text-sm text-center"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          {archive.created_at}
+        </div>
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          <button className={actionButtonClass} onClick={() => openArchiveDetail(archive)}>
+            详细信息
+          </button>
+          <button className={actionButtonClass} onClick={() => void validateArchive(archive.id)}>
+            校验
+          </button>
+          <button className={actionButtonClass} disabled>
+            整库恢复
+          </button>
+          <button
+            className={actionButtonClass}
+            onClick={() => void deleteArchive(archive)}
+            disabled={!canDelete}
+          >
+            删除旧版
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -393,9 +525,20 @@ export default function Backup(): JSX.Element {
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="glass-panel-light p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              系统备份包（整库快照）
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                系统备份包（整库快照）
+              </h3>
+              {shouldShowExpandButton(backups.length) && (
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-3 py-1 text-xs"
+                  onClick={() => setRecordBrowser({ type: 'backup' })}
+                >
+                  查看更多
+                </button>
+              )}
+            </div>
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               {backups.length} 条记录
             </span>
@@ -405,47 +548,7 @@ export default function Backup(): JSX.Element {
           </p>
 
           <div className="space-y-2 max-h-[56vh] overflow-auto">
-            {backups.map((backup) => {
-              const canDelete = !latestBackupIds.has(backup.id)
-              return (
-                <div
-                  key={backup.id}
-                  className="rounded-xl border p-4"
-                  style={{ borderColor: 'var(--color-glass-border-light)' }}
-                >
-                  <div
-                    className="text-base font-medium text-center"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
-                    {formatBackupCardTitle(backup.backup_period)}
-                  </div>
-                  <div
-                    className="mt-2 text-sm text-center"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    {backup.created_at}
-                  </div>
-                  <div className="mt-3 grid grid-cols-4 gap-2">
-                    <button className={actionButtonClass} onClick={() => openBackupDetail(backup)}>
-                      详细信息
-                    </button>
-                    <button className={actionButtonClass} onClick={() => void validateBackup(backup.id)}>
-                      校验
-                    </button>
-                    <button className={actionButtonClass} onClick={() => void restoreBackup(backup.id)}>
-                      整库恢复
-                    </button>
-                    <button
-                      className={actionButtonClass}
-                      onClick={() => void deleteBackup(backup)}
-                      disabled={!canDelete}
-                    >
-                      删除旧版
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+            {visibleBackups.map(renderBackupCard)}
 
             {backups.length === 0 && (
               <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -457,56 +560,27 @@ export default function Backup(): JSX.Element {
 
         <section className="glass-panel-light p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-              电子档案导出
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                电子档案导出
+              </h3>
+              {shouldShowExpandButton(archives.length) && (
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-3 py-1 text-xs"
+                  onClick={() => setRecordBrowser({ type: 'archive' })}
+                >
+                  查看更多
+                </button>
+              )}
+            </div>
             <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               {archives.length} 条记录
             </span>
           </div>
 
           <div className="space-y-2 max-h-[56vh] overflow-auto">
-            {archives.map((archive) => {
-              const canDelete = !latestArchiveIds.has(archive.id)
-              return (
-                <div
-                  key={archive.id}
-                  className="rounded-xl border p-4"
-                  style={{ borderColor: 'var(--color-glass-border-light)' }}
-                >
-                  <div
-                    className="text-base font-medium text-center"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
-                    {formatArchiveCardTitle(archive.fiscal_year)}
-                  </div>
-                  <div
-                    className="mt-2 text-sm text-center"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    {archive.created_at}
-                  </div>
-                  <div className="mt-3 grid grid-cols-4 gap-2">
-                    <button className={actionButtonClass} onClick={() => openArchiveDetail(archive)}>
-                      详细信息
-                    </button>
-                    <button className={actionButtonClass} onClick={() => void validateArchive(archive.id)}>
-                      校验
-                    </button>
-                    <button className={actionButtonClass} disabled>
-                      整库恢复
-                    </button>
-                    <button
-                      className={actionButtonClass}
-                      onClick={() => void deleteArchive(archive)}
-                      disabled={!canDelete}
-                    >
-                      删除旧版
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
+            {visibleArchives.map(renderArchiveCard)}
 
             {archives.length === 0 && (
               <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -525,6 +599,57 @@ export default function Backup(): JSX.Element {
           }}
         >
           {message.text}
+        </div>
+      )}
+
+      {recordBrowser && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center px-4"
+          style={{ background: 'rgba(15, 23, 42, 0.28)' }}
+        >
+          <div className="glass-panel w-full max-w-5xl max-h-[86vh] p-5 flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                  {recordBrowser.type === 'backup' ? '系统备份包全部记录' : '电子档案导出全部记录'}
+                </h3>
+                <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  {recordBrowser.type === 'backup'
+                    ? '在独立交互框中查看并操作全部系统备份包。'
+                    : '在独立交互框中查看并操作全部电子档案导出记录。'}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="glass-btn-secondary px-3 py-1 text-xs"
+                onClick={() => setRecordBrowser(null)}
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              {recordBrowser.type === 'backup' ? `${backups.length} 条记录` : `${archives.length} 条记录`}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 overflow-auto pr-1">
+              {recordBrowser.type === 'backup'
+                ? backups.map(renderBackupCard)
+                : archives.map(renderArchiveCard)}
+            </div>
+
+            {recordBrowser.type === 'backup' && backups.length === 0 && (
+              <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+                当前账套暂无备份记录
+              </div>
+            )}
+
+            {recordBrowser.type === 'archive' && archives.length === 0 && (
+              <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+                当前账套暂无电子档案导出记录
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { formatArchiveCardTitle, formatBackupCardTitle, getLatestRecordIdsByGroup } from './backupCardLayout'
+import {
+  formatArchiveCardTitle,
+  formatBackupCardTitle,
+  getLatestRecordIdsByGroup,
+  getVisibleRecordItems,
+  shouldShowExpandButton
+} from './backupCardLayout'
 
 describe('backup card layout helpers', () => {
   it('formats backup period as centered year-month title content', () => {
@@ -36,5 +42,22 @@ describe('backup card layout helpers', () => {
         () => 'all'
       )
     ).toEqual(new Set([8]))
+  })
+
+  it('shows only the latest two records by default before expand', () => {
+    expect(getVisibleRecordItems([{ id: 5 }, { id: 4 }, { id: 3 }], false)).toEqual([
+      { id: 5 },
+      { id: 4 }
+    ])
+  })
+
+  it('shows all records after expand and hides the button when record count is small', () => {
+    expect(getVisibleRecordItems([{ id: 5 }, { id: 4 }, { id: 3 }], true)).toEqual([
+      { id: 5 },
+      { id: 4 },
+      { id: 3 }
+    ])
+    expect(shouldShowExpandButton(3)).toBe(true)
+    expect(shouldShowExpandButton(2)).toBe(false)
   })
 })

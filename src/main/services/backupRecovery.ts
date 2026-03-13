@@ -1,6 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildTimestampToken, computeFileSha256, ensureDirectory } from './fileIntegrity'
+import {
+  buildUniqueDirectoryPath,
+  computeFileSha256,
+  ensureDirectory,
+  sanitizePathSegment
+} from './fileIntegrity'
+import { formatLocalDateTime } from './localTime'
 
 export interface BackupManifest {
   schemaVersion: '1.0'
@@ -41,9 +47,14 @@ export interface ResolvedBackupArtifactPaths {
   manifestPath: string
 }
 
-function buildBackupPackageName(ledgerId: number, fiscalYear?: string | null, now?: Date): string {
-  const suffix = fiscalYear ? `-${fiscalYear}` : ''
-  return `ledger-${ledgerId}${suffix}-${buildTimestampToken(now)}`
+function buildBackupPackageName(
+  ledgerName?: string | null,
+  period?: string | null,
+  fiscalYear?: string | null
+): string {
+  const ledgerLabel = sanitizePathSegment(ledgerName?.trim() || '未命名账套', '未命名账套')
+  const periodLabel = sanitizePathSegment(period?.trim() || fiscalYear?.trim() || '未设置期间', '未设置期间')
+  return `${ledgerLabel}_${periodLabel}_备份包`
 }
 
 function writeBackupManifest(packageDir: string, manifest: BackupManifest): string {
@@ -88,11 +99,12 @@ export function createBackupArtifact(input: {
 }): BackupArtifactResult {
   ensureDirectory(input.backupDir)
 
-  const packageName = buildBackupPackageName(input.ledgerId, input.fiscalYear, input.now)
-  const packageDir = path.join(input.backupDir, packageName)
+  const preferredPackageName = buildBackupPackageName(input.ledgerName, input.period, input.fiscalYear)
+  const packageDir = buildUniqueDirectoryPath(input.backupDir, preferredPackageName)
+  const packageName = path.basename(packageDir)
   const filename = `${packageName}.db`
   const backupPath = path.join(packageDir, filename)
-  const createdAt = (input.now ?? new Date()).toISOString()
+  const createdAt = formatLocalDateTime(input.now ?? new Date())
 
   ensureDirectory(packageDir)
   fs.copyFileSync(input.sourcePath, backupPath)

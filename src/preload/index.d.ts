@@ -807,8 +807,13 @@ interface BackupAPI {
     actualChecksum?: string | null
     error?: string
   }>
-  delete: (backupId: number) => Promise<{
+  delete: (payload: { backupId: number; deleteRecordOnly?: boolean }) => Promise<{
     success: boolean
+    deletedPhysicalPackage?: boolean
+    deletedPaths?: string[]
+    missingPhysicalPackage?: boolean
+    requiresRecordDeletionConfirmation?: boolean
+    packagePath?: string
     error?: string
   }>
   restore: (payload?: { backupId?: number; packagePath?: string }) => Promise<{
@@ -854,8 +859,13 @@ interface ArchiveAPI {
     actualChecksum?: string | null
     error?: string
   }>
-  delete: (exportId: number) => Promise<{
+  delete: (payload: { exportId: number; deleteRecordOnly?: boolean }) => Promise<{
     success: boolean
+    deletedPhysicalPackage?: boolean
+    deletedPaths?: string[]
+    missingPhysicalPackage?: boolean
+    requiresRecordDeletionConfirmation?: boolean
+    packagePath?: string
     error?: string
   }>
   getManifest: (exportId: number) => Promise<{

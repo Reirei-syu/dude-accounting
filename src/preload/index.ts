@@ -261,7 +261,8 @@ const api = {
       ipcRenderer.invoke('backup:create', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('backup:list', ledgerId),
     validate: (backupId: number) => ipcRenderer.invoke('backup:validate', backupId),
-    delete: (backupId: number) => ipcRenderer.invoke('backup:delete', backupId),
+    delete: (payload: { backupId: number; deleteRecordOnly?: boolean }) =>
+      ipcRenderer.invoke('backup:delete', payload),
     restore: (payload?: { backupId?: number; packagePath?: string }) =>
       ipcRenderer.invoke('backup:restore', payload)
   },
@@ -270,7 +271,8 @@ const api = {
       ipcRenderer.invoke('archive:export', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('archive:list', ledgerId),
     validate: (exportId: number) => ipcRenderer.invoke('archive:validate', exportId),
-    delete: (exportId: number) => ipcRenderer.invoke('archive:delete', exportId),
+    delete: (payload: { exportId: number; deleteRecordOnly?: boolean }) =>
+      ipcRenderer.invoke('archive:delete', payload),
     getManifest: (exportId: number) => ipcRenderer.invoke('archive:getManifest', exportId)
   },
   eVoucher: {

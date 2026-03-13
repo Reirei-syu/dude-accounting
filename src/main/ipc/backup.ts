@@ -11,6 +11,7 @@ import {
   validateBackupArtifact
 } from '../services/backupRecovery'
 import { formatLocalDateTime } from '../services/localTime'
+import { deleteBackupPhysicalPackage, getBackupPhysicalPackageStatus } from '../services/packageDeletion'
 import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
 import {
   clearPendingRestoreLog,
@@ -100,6 +101,7 @@ export function registerBackupHandlers(): void {
 
         rememberPathPreference(db, BACKUP_LAST_DIR_KEY, picked.directoryPath)
         db.pragma('wal_checkpoint(TRUNCATE)')
+        const createdAtDate = new Date()
 
         const artifact = createBackupArtifact({
           sourcePath: getDatabasePath(),
@@ -107,8 +109,10 @@ export function registerBackupHandlers(): void {
           ledgerId: payload.ledgerId,
           ledgerName: ledger.name,
           period: backupPeriod,
-          fiscalYear
+          fiscalYear,
+          now: createdAtDate
         })
+        const createdAt = formatLocalDateTime(createdAtDate)
 
         const result = db
           .prepare(
@@ -117,12 +121,13 @@ export function registerBackupHandlers(): void {
                backup_period,
                fiscal_year,
                backup_path,
-             manifest_path,
-             checksum,
-             file_size,
-             status,
-             created_by
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?)`
+               manifest_path,
+               checksum,
+               file_size,
+               status,
+               created_by,
+               created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)`
           )
           .run(
             payload.ledgerId,
@@ -132,7 +137,8 @@ export function registerBackupHandlers(): void {
             artifact.manifestPath,
             artifact.checksum,
             artifact.fileSize,
-            user.id
+            user.id,
+            createdAt
           )
 
         appendOperationLog(db, {
@@ -151,7 +157,7 @@ export function registerBackupHandlers(): void {
             backupPath: artifact.backupPath,
             manifestPath: artifact.manifestPath,
             fileSize: artifact.fileSize,
-            createdAt: artifact.createdAt,
+            createdAt,
             backupMode: 'system_db_snapshot'
           }
         })
@@ -265,11 +271,19 @@ export function registerBackupHandlers(): void {
     }
   })
 
-  ipcMain.handle('backup:delete', (event, backupId: number) => {
+  ipcMain.handle(
+    'backup:delete',
+    (
+      event,
+      payload: {
+        backupId: number
+        deleteRecordOnly?: boolean
+      }
+    ) => {
     try {
       const user = requirePermission(event, 'ledger_settings')
       const db = getDatabase()
-      const row = db.prepare('SELECT * FROM backup_packages WHERE id = ?').get(backupId) as
+      const row = db.prepare('SELECT * FROM backup_packages WHERE id = ?').get(payload.backupId) as
         | {
             id: number
             ledger_id: number
@@ -300,19 +314,42 @@ export function registerBackupHandlers(): void {
         '备份'
       )
 
-      db.prepare('DELETE FROM backup_packages WHERE id = ?').run(backupId)
+        const physicalStatus = getBackupPhysicalPackageStatus({
+          backupPath: row.backup_path,
+          manifestPath: row.manifest_path,
+          protectedDir: path.dirname(getDatabasePath())
+        })
 
-      const packageDir = path.dirname(row.backup_path)
-      if (packageDir && packageDir !== '.' && packageDir !== path.dirname(getDatabasePath()) && fs.existsSync(packageDir)) {
-        fs.rmSync(packageDir, { recursive: true, force: true })
-      } else {
-        if (fs.existsSync(row.backup_path)) {
-          fs.rmSync(row.backup_path, { force: true })
+        if (payload.deleteRecordOnly && physicalStatus.physicalExists) {
+          return {
+            success: false,
+            error: '路径下备份包仍存在，请执行正常删除以同时删除实体包。'
+          }
         }
-        if (row.manifest_path && fs.existsSync(row.manifest_path)) {
-          fs.rmSync(row.manifest_path, { force: true })
+
+        const deletionResult = payload.deleteRecordOnly
+          ? {
+              physicalExists: false,
+              deletedPaths: [],
+              packagePath: physicalStatus.packagePath
+            }
+          : deleteBackupPhysicalPackage({
+              backupPath: row.backup_path,
+              manifestPath: row.manifest_path,
+              protectedDir: path.dirname(getDatabasePath())
+            })
+
+      if (!payload.deleteRecordOnly && !deletionResult.physicalExists) {
+        return {
+          success: false,
+          missingPhysicalPackage: true,
+          requiresRecordDeletionConfirmation: true,
+          packagePath: deletionResult.packagePath,
+          error: '路径下备份包已不存在，是否删除本条记录？'
         }
       }
+
+      db.prepare('DELETE FROM backup_packages WHERE id = ?').run(payload.backupId)
 
       appendOperationLog(db, {
         ledgerId: row.ledger_id,
@@ -325,11 +362,18 @@ export function registerBackupHandlers(): void {
         details: {
           period: row.backup_period,
           backupPath: row.backup_path,
-          manifestPath: row.manifest_path
+          manifestPath: row.manifest_path,
+          deletedPaths: deletionResult.deletedPaths,
+          deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package',
+          physicalPackageMissing: !deletionResult.physicalExists
         }
       })
 
-      return { success: true }
+      return {
+        success: true,
+        deletedPhysicalPackage: deletionResult.physicalExists,
+        deletedPaths: deletionResult.deletedPaths
+      }
     } catch (error) {
       return {
         success: false,
