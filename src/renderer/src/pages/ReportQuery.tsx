@@ -17,6 +17,7 @@ import {
   type ReportSnapshotSummary,
   type ReportType
 } from './reportingShared'
+import { prepareAndOpenPrintPreview } from './printUtils'
 
 function toggleValue<T extends string | number>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
@@ -165,6 +166,14 @@ export default function ReportQuery(): JSX.Element {
           : deleteTargetIds.length > 1
             ? '批量删除'
             : '删除报表'}
+      </button>
+      <button
+        type="button"
+        className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+        onClick={() => void handleBatchPrint()}
+        disabled={exportTargetIds.length === 0}
+      >
+        {exportTargetIds.length > 1 ? '批量打印预览' : '打印预览'}
       </button>
       <button
         type="button"
@@ -388,6 +397,61 @@ export default function ReportQuery(): JSX.Element {
     } finally {
       setExportingFormat(null)
     }
+  }
+
+  const handleSinglePrint = async (snapshotId: number): Promise<void> => {
+    setError('')
+    setSuccessMessage('')
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview({
+      type: 'report',
+      snapshotId,
+      ledgerId: currentLedger.id
+    })
+    if (!result.success) {
+      setError(result.error || '打开打印预览失败')
+      return
+    }
+    setSuccessMessage('已打开报表打印预览')
+  }
+
+  const handleBatchPrint = async (): Promise<void> => {
+    setError('')
+    setSuccessMessage('')
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+    if (exportTargetIds.length === 0) {
+      setError('请先勾选至少一张报表，或先单击选中一张报表')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview(
+      exportTargetIds.length === 1
+        ? {
+            type: 'report',
+            snapshotId: exportTargetIds[0],
+            ledgerId: currentLedger.id
+          }
+        : {
+            type: 'batch',
+            batchType: 'report',
+            snapshotIds: exportTargetIds,
+            ledgerId: currentLedger.id
+          }
+    )
+    if (!result.success) {
+      setError(result.error || '打开打印预览失败')
+      return
+    }
+    setSuccessMessage(
+      exportTargetIds.length > 1 ? `已打开 ${exportTargetIds.length} 份报表的批量打印预览` : '已打开报表打印预览'
+    )
   }
 
   useEffect(() => {
@@ -727,6 +791,13 @@ export default function ReportQuery(): JSX.Element {
                 </p>
               </div>
               <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                  onClick={() => void handleSinglePrint(detail.id)}
+                >
+                  打印预览
+                </button>
                 <button
                   type="button"
                   className="glass-btn-secondary px-4 py-2 text-sm font-semibold"

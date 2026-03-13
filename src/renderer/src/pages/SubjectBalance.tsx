@@ -18,6 +18,7 @@ import {
   type SubjectWithAuxiliary
 } from './bookQueryUtils'
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
+import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -345,8 +346,8 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
       rows: rows.map((row) => ({
         key: row.subject_code,
         cells: [
-          { value: row.subject_code },
-          { value: row.subject_name },
+          { value: row.subject_code, indentLevel: row.level },
+          { value: row.subject_name, indentLevel: row.level },
           { value: toExportAmount(row.opening_debit_amount), isAmount: true },
           { value: toExportAmount(row.opening_credit_amount), isAmount: true },
           { value: toExportAmount(row.period_debit_amount), isAmount: true },
@@ -359,6 +360,56 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
 
     if (!result.success && !result.cancelled) {
       setError(result.error ?? '导出账簿失败')
+    }
+  }
+
+  const handlePrintPreview = async (): Promise<void> => {
+    setError('')
+
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+    if (rows.length === 0) {
+      setError('当前没有可打印的账簿数据')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview({
+      type: 'book',
+      ledgerId: currentLedger.id,
+      bookType: 'subject_balance',
+      title: '科目余额表',
+      subtitle: `${dateFrom}至${dateTo}`,
+      ledgerName: currentLedger.name,
+      periodLabel: `${dateFrom} 至 ${dateTo}`,
+      columns: [
+        { key: 'subject_code', label: '科目编码', align: 'left' },
+        { key: 'subject_name', label: '科目名称', align: 'left' },
+        { key: 'opening_debit', label: '期初借方', align: 'right' },
+        { key: 'opening_credit', label: '期初贷方', align: 'right' },
+        { key: 'period_debit', label: '本期借方', align: 'right' },
+        { key: 'period_credit', label: '本期贷方', align: 'right' },
+        { key: 'ending_debit', label: '期末借方', align: 'right' },
+        { key: 'ending_credit', label: '期末贷方', align: 'right' }
+      ],
+      rows: rows.map((row) => ({
+        key: row.subject_code,
+        cells: [
+          { value: row.subject_code },
+          { value: row.subject_name },
+          { value: toExportAmount(row.opening_debit_amount), isAmount: true },
+          { value: toExportAmount(row.opening_credit_amount), isAmount: true },
+          { value: toExportAmount(row.period_debit_amount), isAmount: true },
+          { value: toExportAmount(row.period_credit_amount), isAmount: true },
+          { value: toExportAmount(row.ending_debit_amount), isAmount: true },
+          { value: toExportAmount(row.ending_credit_amount), isAmount: true }
+        ]
+      }))
+    })
+
+    if (!result.success) {
+      setError(result.error ?? '打开打印预览失败')
     }
   }
 
@@ -631,6 +682,14 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
             className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
             disabled={loading || rows.length === 0}
+            onClick={() => void handlePrintPreview()}
+          >
+            打印预览
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
             onClick={() => void handleExport('xlsx')}
           >
             导出 Excel
@@ -748,6 +807,14 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
               onClick={handleOpenPreview}
             >
               {loading ? '查询中...' : '全屏查看'}
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              disabled={loading || rows.length === 0}
+              onClick={() => void handlePrintPreview()}
+            >
+              打印预览
             </button>
             <button
               className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"

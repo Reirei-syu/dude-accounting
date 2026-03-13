@@ -17,6 +17,7 @@ import {
   type SubjectWithAuxiliary
 } from './bookQueryUtils'
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
+import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -361,6 +362,14 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
         selectedAuxiliary?.code ?? auxiliaryItemId ?? ''
       } ${auxiliaryName || selectedAuxiliary?.name || ''} / ${dateFrom}至${dateTo}`,
       ledgerName: currentLedger.name,
+      /* auxiliary detail export does not use titleMetaLines
+        `科目：${subjectCode || ''} ${subjectName || selectedSubject?.name || ''}`.trim(),
+        `辅助科目：${selectedAuxiliary?.code ?? auxiliaryItemId ?? ''} ${auxiliaryName || selectedAuxiliary?.name || ''}`.trim()
+      */
+      titleMetaLines: [
+        `科目：${subjectCode || ''} ${subjectName || selectedSubject?.name || ''}`.trim(),
+        `辅助科目：${selectedAuxiliary?.code ?? auxiliaryItemId ?? ''} ${auxiliaryName || selectedAuxiliary?.name || ''}`.trim()
+      ],
       subjectLabel: `科目：${subjectCode || ''} ${subjectName || selectedSubject?.name || ''}`,
       periodLabel: `${dateFrom} 至 ${dateTo}`,
       format,
@@ -397,6 +406,69 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
 
     if (!result.success && !result.cancelled) {
       setError(result.error ?? '导出账簿失败')
+    }
+  }
+
+  const handlePrintPreview = async (): Promise<void> => {
+    setError('')
+
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+    if (rows.length === 0) {
+      setError('当前没有可打印的账簿数据')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview({
+      type: 'book',
+      ledgerId: currentLedger.id,
+      bookType: 'auxiliary_detail',
+      titleMetaLines: [
+        `科目：${subjectCode || ''} ${subjectName || selectedSubject?.name || ''}`.trim(),
+        `辅助科目：${selectedAuxiliary?.code ?? auxiliaryItemId ?? ''} ${auxiliaryName || selectedAuxiliary?.name || ''}`.trim()
+      ],
+      title: '辅助明细账',
+      subtitle: `${subjectCode || ''} ${subjectName || selectedSubject?.name || ''} / ${
+        selectedAuxiliary?.code ?? auxiliaryItemId ?? ''
+      } ${auxiliaryName || selectedAuxiliary?.name || ''} / ${dateFrom}至${dateTo}`,
+      ledgerName: currentLedger.name,
+      subjectLabel: `科目：${subjectCode || ''} ${subjectName || selectedSubject?.name || ''}`,
+      periodLabel: `${dateFrom} 至 ${dateTo}`,
+      columns: [
+        { key: 'voucher_date', label: '日期', align: 'left' },
+        { key: 'voucher_number', label: '凭证号', align: 'left' },
+        { key: 'summary', label: '摘要', align: 'left' },
+        { key: 'debit', label: '借方', align: 'right' },
+        { key: 'credit', label: '贷方', align: 'right' },
+        { key: 'balance_side', label: '方向', align: 'center' },
+        { key: 'balance', label: '余额', align: 'right' }
+      ],
+      rows: rows.map((row, index) => ({
+        key:
+          row.row_type === 'opening'
+            ? 'opening'
+            : `${row.voucher_id ?? 'voucher'}-${row.voucher_date}-${index}`,
+        cells: [
+          { value: row.voucher_date || '' },
+          {
+            value:
+              row.voucher_word && row.voucher_number !== null
+                ? `${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`
+                : ''
+          },
+          { value: row.summary },
+          { value: toExportAmount(row.debit_amount), isAmount: true },
+          { value: toExportAmount(row.credit_amount), isAmount: true },
+          { value: getBalanceSideLabel(row.balance_side) },
+          { value: toExportAmount(row.balance_amount), isAmount: true }
+        ]
+      }))
+    })
+
+    if (!result.success) {
+      setError(result.error ?? '打开打印预览失败')
     }
   }
 
@@ -600,6 +672,14 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
             onClick={handleOpenPreview}
           >
             {loading ? '查询中...' : '全屏查看'}
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
+            onClick={() => void handlePrintPreview()}
+          >
+            打印预览
           </button>
           <button
             className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"

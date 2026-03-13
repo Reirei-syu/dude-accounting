@@ -1167,11 +1167,12 @@ interface BookQueryAPI {
   export: (payload: {
     ledgerId: number
     bookType: string
-    title: string
-    subtitle?: string
-    ledgerName?: string
-    subjectLabel?: string
-    periodLabel?: string
+      title: string
+      subtitle?: string
+      ledgerName?: string
+      titleMetaLines?: string[]
+      subjectLabel?: string
+      periodLabel?: string
     format: 'xlsx' | 'pdf'
     columns: Array<{
       key: string
@@ -1194,6 +1195,29 @@ interface BookQueryAPI {
   }>
 }
 
+interface PrintAPI {
+  prepare: (payload: Record<string, unknown>) => Promise<{
+    success: boolean
+    jobId?: string
+    error?: string
+  }>
+  getJobStatus: (jobId: string) => Promise<{
+    success: boolean
+    status?: 'preparing' | 'ready' | 'failed'
+    title?: string
+    error?: string
+  }>
+  openPreview: (jobId: string) => Promise<{ success: boolean; error?: string }>
+  print: (jobId: string) => Promise<{ success: boolean; error?: string }>
+  exportPdf: (jobId: string) => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    filePath?: string
+  }>
+  dispose: (jobId: string) => Promise<{ success: boolean; error?: string }>
+}
+
 interface DudeAPI {
   auth: AuthAPI
   ledger: LedgerAPI
@@ -1210,6 +1234,7 @@ interface DudeAPI {
   archive: ArchiveAPI
   eVoucher: ElectronicVoucherAPI
   reporting: ReportingAPI
+  print: PrintAPI
   bookQuery: BookQueryAPI
 }
 

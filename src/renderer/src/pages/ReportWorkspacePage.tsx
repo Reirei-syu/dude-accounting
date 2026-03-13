@@ -5,6 +5,7 @@ import {
   getReportTypeByComponent,
   type ReportSnapshotDetail
 } from './reportingShared'
+import { prepareAndOpenPrintPreview } from './printUtils'
 
 interface Props {
   title: string
@@ -129,6 +130,27 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
     }
   }
 
+  const handlePrintPreview = async (): Promise<void> => {
+    setError('')
+    setSuccessMessage('')
+    if (!detail) {
+      setError('请先生成报表')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview({
+      type: 'report',
+      snapshotId: detail.id,
+      ledgerId: detail.ledger_id
+    })
+    if (!result.success) {
+      setError(result.error || '打开打印预览失败')
+      return
+    }
+
+    setSuccessMessage('已打开报表打印预览')
+  }
+
   return (
     <div className="h-full flex flex-col gap-4 p-4">
       <div className="glass-panel-light p-4 flex flex-wrap items-start justify-between gap-4">
@@ -196,6 +218,14 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
             {loading ? '生成中...' : '生成并保存'}
           </button>
           <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              className="glass-btn-secondary px-5 py-2 font-semibold col-span-2"
+              onClick={() => void handlePrintPreview()}
+              disabled={!detail || exportingFormat !== null}
+            >
+              打印预览
+            </button>
             <button
               type="button"
               className="glass-btn-secondary px-5 py-2 font-semibold"

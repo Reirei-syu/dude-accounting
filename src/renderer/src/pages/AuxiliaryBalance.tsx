@@ -11,6 +11,7 @@ import Decimal from 'decimal.js'
 import { createPortal } from 'react-dom'
 import { getCurrentYearDateRange, resolveAuxiliaryItemsForSubject } from './bookQueryUtils'
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
+import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -37,6 +38,7 @@ interface AuxiliaryBalanceProps {
 interface AuxiliaryBalanceRow {
   subject_code: string
   subject_name: string
+  level: number
   auxiliary_item_id: number
   auxiliary_category: string
   auxiliary_code: string
@@ -340,8 +342,8 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
       rows: rows.map((row) => ({
         key: `${row.subject_code}-${row.auxiliary_item_id}`,
         cells: [
-          { value: row.subject_code },
-          { value: row.subject_name },
+          { value: row.subject_code, indentLevel: row.level },
+          { value: row.subject_name, indentLevel: row.level },
           { value: row.auxiliary_category },
           { value: row.auxiliary_code },
           { value: row.auxiliary_name },
@@ -357,6 +359,62 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
 
     if (!result.success && !result.cancelled) {
       setError(result.error ?? '导出账簿失败')
+    }
+  }
+
+  const handlePrintPreview = async (): Promise<void> => {
+    setError('')
+
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+    if (rows.length === 0) {
+      setError('当前没有可打印的账簿数据')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview({
+      type: 'book',
+      ledgerId: currentLedger.id,
+      bookType: 'auxiliary_balance',
+      title: '辅助余额表',
+      subtitle: `${dateFrom}至${dateTo}`,
+      ledgerName: currentLedger.name,
+      periodLabel: `${dateFrom} 至 ${dateTo}`,
+      columns: [
+        { key: 'subject_code', label: '科目编码', align: 'left' },
+        { key: 'subject_name', label: '科目名称', align: 'left' },
+        { key: 'auxiliary_category', label: '辅助类别', align: 'left' },
+        { key: 'auxiliary_code', label: '辅助编码', align: 'left' },
+        { key: 'auxiliary_name', label: '辅助名称', align: 'left' },
+        { key: 'opening_debit', label: '期初借方', align: 'right' },
+        { key: 'opening_credit', label: '期初贷方', align: 'right' },
+        { key: 'period_debit', label: '本期借方', align: 'right' },
+        { key: 'period_credit', label: '本期贷方', align: 'right' },
+        { key: 'ending_debit', label: '期末借方', align: 'right' },
+        { key: 'ending_credit', label: '期末贷方', align: 'right' }
+      ],
+      rows: rows.map((row) => ({
+        key: `${row.subject_code}-${row.auxiliary_item_id}`,
+        cells: [
+          { value: row.subject_code },
+          { value: row.subject_name },
+          { value: row.auxiliary_category },
+          { value: row.auxiliary_code },
+          { value: row.auxiliary_name },
+          { value: toExportAmount(row.opening_debit_amount), isAmount: true },
+          { value: toExportAmount(row.opening_credit_amount), isAmount: true },
+          { value: toExportAmount(row.period_debit_amount), isAmount: true },
+          { value: toExportAmount(row.period_credit_amount), isAmount: true },
+          { value: toExportAmount(row.ending_debit_amount), isAmount: true },
+          { value: toExportAmount(row.ending_credit_amount), isAmount: true }
+        ]
+      }))
+    })
+
+    if (!result.success) {
+      setError(result.error ?? '打开打印预览失败')
     }
   }
 
@@ -569,6 +627,14 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
             className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
             disabled={loading || rows.length === 0}
+            onClick={() => void handlePrintPreview()}
+          >
+            打印预览
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
             onClick={() => void handleExport('xlsx')}
           >
             导出 Excel
@@ -675,6 +741,14 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
               onClick={handleOpenPreview}
             >
               {loading ? '查询中...' : '全屏查看'}
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              disabled={loading || rows.length === 0}
+              onClick={() => void handlePrintPreview()}
+            >
+              打印预览
             </button>
             <button
               className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"

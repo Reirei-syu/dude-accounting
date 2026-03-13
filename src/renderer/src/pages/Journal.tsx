@@ -11,6 +11,7 @@ import Decimal from 'decimal.js'
 import { createPortal } from 'react-dom'
 import { getCurrentYearDateRange, type SubjectOption } from './bookQueryUtils'
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
+import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -311,6 +312,59 @@ export default function Journal(props: JournalProps): JSX.Element {
     }
   }
 
+  const handlePrintPreview = async (): Promise<void> => {
+    setError('')
+
+    if (!currentLedger) {
+      setError('请先选择账套')
+      return
+    }
+    if (rows.length === 0) {
+      setError('当前没有可打印的账簿数据')
+      return
+    }
+
+    const result = await prepareAndOpenPrintPreview({
+      type: 'book',
+      ledgerId: currentLedger.id,
+      bookType: 'journal',
+      title: '序时账',
+      subtitle: `${dateFrom}至${dateTo}`,
+      ledgerName: currentLedger.name,
+      periodLabel: `${dateFrom} 至 ${dateTo}`,
+      columns: [
+        { key: 'voucher_date', label: '日期', align: 'left' },
+        { key: 'voucher_number', label: '凭证号', align: 'left' },
+        { key: 'subject_code', label: '科目编码', align: 'left' },
+        { key: 'subject_name', label: '科目名称', align: 'left' },
+        { key: 'summary', label: '摘要', align: 'left' },
+        { key: 'debit', label: '借方', align: 'right' },
+        { key: 'credit', label: '贷方', align: 'right' }
+      ],
+      rows: rows.map((row, index) => ({
+        key: `${row.voucher_id}-${row.subject_code}-${index}`,
+        cells: [
+          { value: row.voucher_date },
+          {
+            value:
+              row.voucher_word && row.voucher_number !== null
+                ? `${row.voucher_word}-${String(row.voucher_number).padStart(4, '0')}`
+                : ''
+          },
+          { value: row.subject_code },
+          { value: row.subject_name },
+          { value: row.summary },
+          { value: toExportAmount(row.debit_amount), isAmount: true },
+          { value: toExportAmount(row.credit_amount), isAmount: true }
+        ]
+      }))
+    })
+
+    if (!result.success) {
+      setError(result.error ?? '打开打印预览失败')
+    }
+  }
+
   const openVoucherEntry = (row: JournalRow): void => {
     setIsPreviewOpen(false)
     setContextMenu(null)
@@ -481,6 +535,14 @@ export default function Journal(props: JournalProps): JSX.Element {
             className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
             disabled={loading || rows.length === 0}
+            onClick={() => void handlePrintPreview()}
+          >
+            打印预览
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+            type="button"
+            disabled={loading || rows.length === 0}
             onClick={() => void handleExport('xlsx')}
           >
             导出 Excel
@@ -587,6 +649,14 @@ export default function Journal(props: JournalProps): JSX.Element {
               onClick={handleOpenPreview}
             >
               {loading ? '查询中...' : '全屏查看'}
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"
+              type="button"
+              disabled={loading || rows.length === 0}
+              onClick={() => void handlePrintPreview()}
+            >
+              打印预览
             </button>
             <button
               className="glass-btn-secondary px-5 py-2 disabled:cursor-not-allowed disabled:opacity-40"

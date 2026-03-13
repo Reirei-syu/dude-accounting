@@ -52,6 +52,13 @@ interface VoucherSubjectMeta {
   has_children: number
 }
 
+interface VoucherCashFlowRule {
+  subjectCode: string
+  counterpartSubjectCode: string
+  entryDirection: 'inflow' | 'outflow'
+  cashFlowItemId: number
+}
+
 function isVoucherNumberConflictError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   return error.message.includes('UNIQUE constraint failed') && error.message.includes('vouchers')
@@ -95,6 +102,80 @@ function normalizeEntries(entries: VoucherEntryInput[]): NormalizedVoucherEntry[
   }
 
   return normalized
+}
+
+function listVoucherCashFlowRules(
+  db: ReturnType<typeof getDatabase>,
+  ledgerId: number
+): VoucherCashFlowRule[] {
+  return (
+    db
+      .prepare(
+        `SELECT
+           subject_code,
+           counterpart_subject_code,
+           entry_direction,
+           cash_flow_item_id
+         FROM cash_flow_mappings
+         WHERE ledger_id = ?
+           AND counterpart_subject_code <> ''`
+      )
+      .all(ledgerId) as Array<{
+      subject_code: string
+      counterpart_subject_code: string
+      entry_direction: 'inflow' | 'outflow'
+      cash_flow_item_id: number
+    }>
+  ).map((rule) => ({
+    subjectCode: rule.subject_code,
+    counterpartSubjectCode: rule.counterpart_subject_code,
+    entryDirection: rule.entry_direction,
+    cashFlowItemId: rule.cash_flow_item_id
+  }))
+}
+
+export function resolveVoucherCashFlowEntries(
+  entries: NormalizedVoucherEntry[],
+  subjectByCode: Map<string, Pick<VoucherSubjectMeta, 'is_cash_flow'>>,
+  rules: VoucherCashFlowRule[]
+): { entries: NormalizedVoucherEntry[]; error?: string } {
+  const autoMatched = applyCashFlowMappings(
+    entries.map((entry) => ({
+      subjectCode: entry.subjectCode,
+      debitCents: entry.debitCents,
+      creditCents: entry.creditCents,
+      cashFlowItemId: entry.cashFlowItemId,
+      isCashFlow: (subjectByCode.get(entry.subjectCode)?.is_cash_flow ?? 0) === 1
+    })),
+    rules
+  )
+
+  if (autoMatched.errors.length > 0) {
+    return { entries, error: autoMatched.errors[0] }
+  }
+
+  const resolvedEntries = entries.map((entry, index) => ({
+    ...entry,
+    cashFlowItemId: autoMatched.entries[index].cashFlowItemId
+  }))
+
+  for (const [index, entry] of resolvedEntries.entries()) {
+    const subject = subjectByCode.get(entry.subjectCode)
+    if (!subject) {
+      return {
+        entries: resolvedEntries,
+        error: `第${index + 1}行科目不存在：${entry.subjectCode}`
+      }
+    }
+    if (subject.is_cash_flow !== 1 && entry.cashFlowItemId !== null) {
+      return {
+        entries: resolvedEntries,
+        error: `第${index + 1}行非现金流科目，不应指定现金流量项目`
+      }
+    }
+  }
+
+  return { entries: resolvedEntries }
 }
 
 export function registerVoucherHandlers(): void {
@@ -222,48 +303,17 @@ export function registerVoucherHandlers(): void {
         totalCredit += entry.creditCents
       }
 
-      const autoMatched = applyCashFlowMappings(
-        entries.map((entry) => ({
-          subjectCode: entry.subjectCode,
-          debitCents: entry.debitCents,
-          creditCents: entry.creditCents,
-          cashFlowItemId: entry.cashFlowItemId,
-          isCashFlow: (subjectByCode.get(entry.subjectCode)?.is_cash_flow ?? 0) === 1
-        })),
-        (
-          db
-            .prepare(
-              `SELECT
-                 subject_code,
-                 counterpart_subject_code,
-                 entry_direction,
-                 cash_flow_item_id
-               FROM cash_flow_mappings
-               WHERE ledger_id = ?
-                 AND counterpart_subject_code <> ''`
-            )
-            .all(payload.ledgerId) as Array<{
-            subject_code: string
-            counterpart_subject_code: string
-            entry_direction: 'inflow' | 'outflow'
-            cash_flow_item_id: number
-          }>
-        ).map((rule) => ({
-          subjectCode: rule.subject_code,
-          counterpartSubjectCode: rule.counterpart_subject_code,
-          entryDirection: rule.entry_direction,
-          cashFlowItemId: rule.cash_flow_item_id
-        }))
+      const resolvedCashFlowSave = resolveVoucherCashFlowEntries(
+        entries,
+        subjectByCode,
+        listVoucherCashFlowRules(db, payload.ledgerId)
       )
 
-      if (autoMatched.errors.length > 0) {
-        return { success: false, error: autoMatched.errors[0] }
+      if (resolvedCashFlowSave.error) {
+        return { success: false, error: resolvedCashFlowSave.error }
       }
 
-      entries = entries.map((entry, index) => ({
-        ...entry,
-        cashFlowItemId: autoMatched.entries[index].cashFlowItemId
-      }))
+      entries = resolvedCashFlowSave.entries
 
       for (const [index, entry] of entries.entries()) {
         const subject = subjectByCode.get(entry.subjectCode)
@@ -275,6 +325,27 @@ export function registerVoucherHandlers(): void {
           return { success: false, error: `第${index + 1}行非现金流科目，不应指定现金流量项目` }
         }
 
+        if (entry.cashFlowItemId !== null) {
+          const cashFlowItem = selectCashFlowStmt.get(payload.ledgerId, entry.cashFlowItemId) as
+            | { id: number }
+            | undefined
+          if (!cashFlowItem) {
+            return { success: false, error: `第${index + 1}行现金流量项目无效` }
+          }
+        }
+      }
+
+      const resolvedCashFlow = resolveVoucherCashFlowEntries(
+        entries,
+        subjectByCode,
+        listVoucherCashFlowRules(db, payload.ledgerId)
+      )
+      if (resolvedCashFlow.error) {
+        return { success: false, error: resolvedCashFlow.error }
+      }
+      entries = resolvedCashFlow.entries
+
+      for (const [index, entry] of entries.entries()) {
         if (entry.cashFlowItemId !== null) {
           const cashFlowItem = selectCashFlowStmt.get(payload.ledgerId, entry.cashFlowItemId) as
             | { id: number }
@@ -423,7 +494,7 @@ export function registerVoucherHandlers(): void {
         return { success: false, error: periodCheck.error }
       }
       const period = periodCheck.period
-      const entries = normalizeEntries(payload.entries)
+      let entries = normalizeEntries(payload.entries)
       if (entries.length < 2) {
         return { success: false, error: '至少需要两条有效分录' }
       }
@@ -463,7 +534,7 @@ export function registerVoucherHandlers(): void {
           }
         }
 
-        if (subject.is_cash_flow === 1) {
+        if (subject.is_cash_flow === 1 && false) {
           if (entry.cashFlowItemId === null) {
             return { success: false, error: `第${index + 1}行为现金流科目，必须指定现金流量项目` }
           }
@@ -482,6 +553,27 @@ export function registerVoucherHandlers(): void {
 
       if (totalDebit <= 0 || totalCredit <= 0 || totalDebit !== totalCredit) {
         return { success: false, error: '借贷不平衡，无法保存' }
+      }
+
+      const resolvedCashFlowUpdate = resolveVoucherCashFlowEntries(
+        entries,
+        subjectByCode,
+        listVoucherCashFlowRules(db, payload.ledgerId)
+      )
+      if (resolvedCashFlowUpdate.error) {
+        return { success: false, error: resolvedCashFlowUpdate.error }
+      }
+      entries = resolvedCashFlowUpdate.entries
+
+      for (const [index, entry] of entries.entries()) {
+        if (entry.cashFlowItemId !== null) {
+          const cashFlowItem = selectCashFlowStmt.get(payload.ledgerId, entry.cashFlowItemId) as
+            | { id: number }
+            | undefined
+          if (!cashFlowItem) {
+            return { success: false, error: `第${index + 1}行现金流量项目无效` }
+          }
+        }
       }
 
       const updateVoucherTx = db.transaction(() => {

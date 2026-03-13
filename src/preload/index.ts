@@ -332,6 +332,14 @@ const api = {
     delete: (payload: { snapshotId: number; ledgerId: number }) =>
       ipcRenderer.invoke('reporting:delete', payload)
   },
+  print: {
+    prepare: (payload: Record<string, unknown>) => ipcRenderer.invoke('print:prepare', payload),
+    getJobStatus: (jobId: string) => ipcRenderer.invoke('print:getJobStatus', jobId),
+    openPreview: (jobId: string) => ipcRenderer.invoke('print:openPreview', jobId),
+    print: (jobId: string) => ipcRenderer.invoke('print:print', jobId),
+    exportPdf: (jobId: string) => ipcRenderer.invoke('print:exportPdf', jobId),
+    dispose: (jobId: string) => ipcRenderer.invoke('print:dispose', jobId)
+  },
   bookQuery: {
     listSubjectBalances: (query: {
       ledgerId: number
@@ -378,6 +386,7 @@ const api = {
       title: string
       subtitle?: string
       ledgerName?: string
+      titleMetaLines?: string[]
       subjectLabel?: string
       periodLabel?: string
       format: 'xlsx' | 'pdf'

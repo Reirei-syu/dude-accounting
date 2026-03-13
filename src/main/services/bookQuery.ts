@@ -158,6 +158,7 @@ export interface AuxiliaryBalanceQuery {
 export interface AuxiliaryBalanceRow {
   subject_code: string
   subject_name: string
+  level: number
   auxiliary_item_id: number
   auxiliary_category: string
   auxiliary_code: string
@@ -945,6 +946,7 @@ export function getAuxiliaryBalances(
       return {
         subject_code: item.subject.code,
         subject_name: item.subject.name,
+        level: item.subject.level,
         auxiliary_item_id: item.auxiliary.id,
         auxiliary_category: item.auxiliary.category,
         auxiliary_code: item.auxiliary.code,

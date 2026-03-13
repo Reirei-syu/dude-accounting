@@ -21,6 +21,8 @@ import {
   getDefaultVoucherDateForNewVoucher,
   sortVouchersForDisplay
 } from './voucherOrdering'
+import { prepareAndOpenPrintPreview } from './printUtils'
+import VoucherPrintDialog from '../components/VoucherPrintDialog'
 
 interface VoucherRow {
   id: string
@@ -516,6 +518,10 @@ export default function VoucherEntry({
   const [newVoucherDateStrategy, setNewVoucherDateStrategy] = useState<
     'last_voucher_date' | 'period_start'
   >('last_voucher_date')
+  const [voucherPrintLayout, setVoucherPrintLayout] = useState<'single' | 'double'>('single')
+  const [voucherPrintDoubleGapPx, setVoucherPrintDoubleGapPx] = useState('24')
+  const [printDialogOpen, setPrintDialogOpen] = useState(false)
+  const [printSubmitting, setPrintSubmitting] = useState(false)
   const [loadingVoucher, setLoadingVoucher] = useState(false)
   const [dismissedEditRequestToken, setDismissedEditRequestToken] = useState<string | null>(null)
   const [baselineSignature, setBaselineSignature] = useState<string>('')
@@ -524,6 +530,7 @@ export default function VoucherEntry({
   // Matrix of refs for keyboard navigation: row x col
   // col 0: summary, 1: subject, 2: debit, 3: credit
   const inputRefs = useRef<(HTMLInputElement | null)[][]>([])
+  const lastFocusedCellRef = useRef<{ rowIdx: number; colIdx: number } | null>(null)
   const subjectHierarchy = useMemo(() => buildSubjectHierarchy(allSubjects), [allSubjects])
   const manualTreeRows = useMemo(
     () => buildSubjectTreeRows(allSubjects, subjectHierarchy, currentLedger?.standard_type),
@@ -619,17 +626,30 @@ export default function VoucherEntry({
   }, [currentLedger])
 
   useEffect(() => {
+    if (typeof document === 'undefined') return
+    if (manualSubjectRowId === null && !cashFlowDialogOpen && !printDialogOpen) {
+      document.body.style.pointerEvents = ''
+    }
+    return () => {
+      document.body.style.pointerEvents = ''
+    }
+  }, [cashFlowDialogOpen, manualSubjectRowId, printDialogOpen])
+
+  useEffect(() => {
     if (!window.electron) return
 
-    window.api.settings
-      .getAll()
-      .then((settings) => {
+    Promise.all([window.api.settings.getAll(), window.api.settings.getUserPreferences()])
+      .then(([settings, preferences]) => {
         setDefaultVoucherWord(settings.default_voucher_word || '记')
         setNewVoucherDateStrategy(
           settings.new_voucher_date_strategy === 'period_start'
             ? 'period_start'
             : 'last_voucher_date'
         )
+        setVoucherPrintLayout(
+          preferences.voucher_print_layout === 'double' ? 'double' : 'single'
+        )
+        setVoucherPrintDoubleGapPx(preferences.voucher_print_double_gap || '24')
       })
       .catch((error) => {
         console.error('load voucher entry settings failed', error)
@@ -739,6 +759,24 @@ export default function VoucherEntry({
   const focusCell = (rowIdx: number, colIdx: number): void => {
     if (inputRefs.current[rowIdx] && inputRefs.current[rowIdx][colIdx]) {
       inputRefs.current[rowIdx][colIdx]?.focus()
+    }
+  }
+
+  const restoreEditorInteraction = (fallback?: { rowIdx: number; colIdx: number }): void => {
+    window.requestAnimationFrame(() => {
+      if (typeof document !== 'undefined') {
+        document.body.style.pointerEvents = ''
+      }
+      window.focus()
+      const target = fallback ?? lastFocusedCellRef.current ?? { rowIdx: 0, colIdx: 0 }
+      focusCell(target.rowIdx, target.colIdx)
+    })
+  }
+
+  const closeCashFlowDialog = (restoreFocus = true): void => {
+    setCashFlowDialogOpen(false)
+    if (restoreFocus) {
+      restoreEditorInteraction()
     }
   }
 
@@ -1002,7 +1040,7 @@ export default function VoucherEntry({
         }
       })
     )
-    setCashFlowDialogOpen(false)
+    closeCashFlowDialog()
     setMessage({ type: 'success', text: '现金流量分配已更新' })
   }
 
@@ -1415,6 +1453,7 @@ export default function VoucherEntry({
     }
     setIsEditMode(true)
     setMessage(null)
+    restoreEditorInteraction()
   }
 
   const handleDateChange = (nextDate: string): void => {
@@ -1430,6 +1469,54 @@ export default function VoucherEntry({
     }
     setMessage(null)
     setDate(nextDate)
+  }
+
+  const handleOpenPrintDialog = (): void => {
+    setMessage(null)
+    if (editingVoucherId === null) {
+      setMessage({ type: 'error', text: '请先保存当前凭证后再打印' })
+      return
+    }
+    setPrintDialogOpen(true)
+  }
+
+  const handleConfirmPrint = async (): Promise<void> => {
+    if (!currentLedger || editingVoucherId === null) {
+      setMessage({ type: 'error', text: '请先保存当前凭证后再打印' })
+      return
+    }
+
+    const gapValue = Number(voucherPrintDoubleGapPx)
+    if (
+      voucherPrintLayout === 'double' &&
+      (!Number.isFinite(gapValue) || gapValue < 0 || gapValue > 500)
+    ) {
+      setMessage({ type: 'error', text: '两联上下间距需为 0 到 500 之间的数字' })
+      return
+    }
+
+    setPrintSubmitting(true)
+    try {
+      await window.api.settings.setUserPreferences({
+        voucher_print_layout: voucherPrintLayout,
+        voucher_print_double_gap: String(voucherPrintLayout === 'double' ? gapValue : 24)
+      })
+      const result = await prepareAndOpenPrintPreview({
+        type: 'voucher',
+        ledgerId: currentLedger.id,
+        voucherIds: [editingVoucherId],
+        layout: voucherPrintLayout,
+        doubleGapPx: voucherPrintLayout === 'double' ? gapValue : 24
+      })
+      if (!result.success) {
+        setMessage({ type: 'error', text: result.error || '打开打印预览失败' })
+        return
+      }
+      setPrintDialogOpen(false)
+      setMessage({ type: 'success', text: '已打开凭证打印预览' })
+    } finally {
+      setPrintSubmitting(false)
+    }
   }
 
   const handleSave = async (): Promise<void> => {
@@ -1545,6 +1632,14 @@ export default function VoucherEntry({
           >
             {saving ? '保存中...' : '保存'}
           </button>
+          <button
+            className="glass-btn-secondary"
+            onClick={handleOpenPrintDialog}
+            disabled={editingVoucherId === null || loadingVoucher || printSubmitting}
+            title={editingVoucherId === null ? '请先保存当前凭证后再打印' : '打印当前凭证'}
+          >
+            打印
+          </button>
         </div>
       </div>
 
@@ -1639,7 +1734,10 @@ export default function VoucherEntry({
                     value={row.summary}
                     onChange={(e) => updateRow(rIdx, 'summary', e.target.value)}
                     onKeyDown={(e) => handleKeyDown(e, rIdx, 0)}
-                    onFocus={() => carrySummaryToRow(rIdx)}
+                    onFocus={() => {
+                      lastFocusedCellRef.current = { rowIdx: rIdx, colIdx: 0 }
+                      carrySummaryToRow(rIdx)
+                    }}
                     placeholder="摘要"
                     disabled={!canEditFields}
                     aria-label="voucher-row-summary"
@@ -1656,6 +1754,7 @@ export default function VoucherEntry({
                     onChange={(e) => handleSubjectInput(rIdx, e.target.value)}
                     onKeyDown={(e) => handleSubjectInputKeyDown(e, rIdx)}
                     onFocus={() => {
+                      lastFocusedCellRef.current = { rowIdx: rIdx, colIdx: 1 }
                       carrySummaryToRow(rIdx)
                       setActiveSubjectRowId(row.id)
                       if (row.subjectInput.trim()) {
@@ -1755,7 +1854,10 @@ export default function VoucherEntry({
                       setRows(newRows)
                     }}
                     onKeyDown={(e) => handleKeyDown(e, rIdx, 2)}
-                    onFocus={() => carrySummaryToRow(rIdx)}
+                    onFocus={() => {
+                      lastFocusedCellRef.current = { rowIdx: rIdx, colIdx: 2 }
+                      carrySummaryToRow(rIdx)
+                    }}
                     disabled={!canEditFields}
                     aria-label="voucher-row-debit"
                   />
@@ -1778,7 +1880,10 @@ export default function VoucherEntry({
                       setRows(newRows)
                     }}
                     onKeyDown={(e) => handleKeyDown(e, rIdx, 3)}
-                    onFocus={() => carrySummaryToRow(rIdx)}
+                    onFocus={() => {
+                      lastFocusedCellRef.current = { rowIdx: rIdx, colIdx: 3 }
+                      carrySummaryToRow(rIdx)
+                    }}
                     disabled={!canEditFields}
                     aria-label="voucher-row-credit"
                   />
@@ -1818,7 +1923,12 @@ export default function VoucherEntry({
 
       <Dialog.Root
         open={manualSubjectRowId !== null}
-        onOpenChange={(open) => !open && closeManualSubjectDialog()}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeManualSubjectDialog()
+            restoreEditorInteraction()
+          }
+        }}
       >
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40" />
@@ -1841,7 +1951,10 @@ export default function VoucherEntry({
               <button
                 type="button"
                 className="glass-btn-secondary text-sm px-3 py-1.5"
-                onClick={closeManualSubjectDialog}
+                onClick={() => {
+                  closeManualSubjectDialog()
+                  restoreEditorInteraction()
+                }}
               >
                 关闭
               </button>
@@ -1953,7 +2066,7 @@ export default function VoucherEntry({
       {cashFlowDialogOpen && (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/45 px-4"
-          onClick={() => setCashFlowDialogOpen(false)}
+          onClick={() => closeCashFlowDialog()}
         >
           <div
             className="glass-panel w-full max-w-5xl max-h-[80vh] flex flex-col p-4 gap-3"
@@ -1969,7 +2082,7 @@ export default function VoucherEntry({
               <button
                 type="button"
                 className="glass-btn-secondary text-sm px-3 py-1.5"
-                onClick={() => setCashFlowDialogOpen(false)}
+                onClick={() => closeCashFlowDialog()}
               >
                 关闭
               </button>
@@ -2075,7 +2188,7 @@ export default function VoucherEntry({
               <button
                 type="button"
                 className="glass-btn-secondary"
-                onClick={() => setCashFlowDialogOpen(false)}
+                onClick={() => closeCashFlowDialog()}
               >
                 {canEditFields ? '取消' : '关闭'}
               </button>
@@ -2092,6 +2205,22 @@ export default function VoucherEntry({
           </div>
         </div>
       )}
+
+      <VoucherPrintDialog
+        open={printDialogOpen}
+        voucherCount={editingVoucherId === null ? 0 : 1}
+        layout={voucherPrintLayout}
+        doubleGapPx={voucherPrintDoubleGapPx}
+        submitting={printSubmitting}
+        onClose={() => {
+          if (!printSubmitting) {
+            setPrintDialogOpen(false)
+          }
+        }}
+        onConfirm={() => void handleConfirmPrint()}
+        onLayoutChange={setVoucherPrintLayout}
+        onGapChange={setVoucherPrintDoubleGapPx}
+      />
 
       {message && (
         <div

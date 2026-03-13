@@ -24,6 +24,7 @@ Current Stage:
 - 正在从“桌面记账应用雏形”改造为“具备合规基础能力的代理记账单机软件”。
 - 已识别的重点改造方向为：已记账不可逆、关键操作日志、电子凭证处理底座、备份与电子档案导出、账簿报表输出。
 - 已落地基础财务报表快照生成、报表查询与删除能力，支持按月份/跨月区间生成并可选纳入未记账凭证，但账簿查询、打印、版式输出与标准数据导出仍未完成。
+- 打印能力进入统一改造阶段：采用统一 HTML 打印文档管线，预览、系统打印与打印版 PDF 导出同版同源；第一阶段覆盖财务报表与现有全部账簿，第二阶段覆盖记账凭证打印。
 - 企业账套报表输出正在从临时科目直列版升级为严格对齐系统级 Skill 的企业会计准则四表制式，范围包括资产负债表、利润表、现金流量表和所有者权益变动表。
 
 ---
@@ -250,6 +251,20 @@ Current Channels:
 - `reporting:delete`
 - `reporting:export`
 
+### PrintOutputModule
+
+Responsibility:
+统一打印任务生成、打印预览、系统打印、打印版 PDF 导出，要求三者同版同源。
+
+Planned Channels:
+
+- `print:prepare`
+- `print:getJobStatus`
+- `print:openPreview`
+- `print:print`
+- `print:exportPdf`
+- `print:dispose`
+
 ---
 
 ## 6. Data Models
@@ -278,6 +293,7 @@ System Setting Keys:
 
 - `subject_template.enterprise`
 - `subject_template.npo`
+- `print_show_page_number`
 
 Subject Category Rules:
 
@@ -321,6 +337,7 @@ Current:
 - `settings:*`
 - `bookQuery:listSubjectBalances/getDetailLedger/getJournal/getAuxiliaryBalances/getAuxiliaryDetail`
 - `reporting:generate/list/getDetail/delete/export`
+- `print:*`
 
 Current Authorization Semantics:
 
@@ -341,6 +358,13 @@ Settings Extension:
 - `settings:getUserPreferences`
 - `settings:setUserPreferences`
 
+User Preference Keys:
+
+- `default_ledger_id`
+- `default_home_tab`
+- `voucher_print_layout`
+- `voucher_print_double_gap`
+
 In-flight:
 
 - `auditLog:list/export`
@@ -359,6 +383,10 @@ In-flight:
 - 新增或调整账套级授权时，需同时检查登录会话、账套列表、业务 IPC 与账号管理界面是否保持一致，不允许仅前端隐藏而后端放行。
 - 系统参数仅承载系统级规则；个人偏好必须与系统规则分层，且个人偏好只能在系统允许范围内生效。
 - 个人偏好中的默认账套必须限制在当前用户被授权的账套集合内；若偏好中的账套失效，应自动回退到首个可访问账套或空状态。
+- 打印预览、系统打印与打印版 PDF 导出必须使用同一份 HTML 打印文档，不允许按输出方式分别维护多套模板。
+- 大体量打印任务允许先进入“生成中”状态，再打开预览窗口；稳定性优先于即时秒开预览。
+- 第一阶段账簿打印按当前页面筛选结果生成单个打印文档，不支持跨账簿类型混合批量。
+- 第二阶段记账凭证打印必须支持单张整页与 A4 一页两张（上下结构）两种版式；两联版式的上下间距按当前用户记住上次设置。
 - 普通用户不得对已记账凭证执行反记账。
 - 管理员紧急逆转必须强制记录原因并写入操作日志。
 - 末级损益科目必须维护完整结转规则；若存在未配置或失效规则，不得执行期末损益结转。

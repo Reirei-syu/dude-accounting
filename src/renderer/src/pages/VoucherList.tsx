@@ -4,6 +4,8 @@ import { useAuthStore } from '../stores/authStore'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 import { sortVouchersForDisplay } from './voucherOrdering'
+import { prepareAndOpenPrintPreview } from './printUtils'
+import VoucherPrintDialog from '../components/VoucherPrintDialog'
 
 type VoucherStatus = 0 | 1 | 2 | 3
 type VoucherStatusTab = 'all' | 'pending' | 'audited' | 'posted' | 'deleted'
@@ -237,6 +239,10 @@ export default function VoucherList(): JSX.Element {
     approvalTag: '',
     submitting: false
   })
+  const [printDialogOpen, setPrintDialogOpen] = useState(false)
+  const [printLayout, setPrintLayout] = useState<'single' | 'double'>('single')
+  const [printDoubleGapPx, setPrintDoubleGapPx] = useState('24')
+  const [printSubmitting, setPrintSubmitting] = useState(false)
   const [periodStatus, setPeriodStatus] = useState<PeriodStatusSummary | null>(null)
   const [refreshSummary, setRefreshSummary] = useState('')
   const [lastRefreshAt, setLastRefreshAt] = useState('')
@@ -247,9 +253,8 @@ export default function VoucherList(): JSX.Element {
   useEffect(() => {
     if (!window.electron) return
 
-    window.api.settings
-      .getAll()
-      .then((settings) => {
+    Promise.all([window.api.settings.getAll(), window.api.settings.getUserPreferences()])
+      .then(([settings, preferences]) => {
         if (
           settings.voucher_list_default_status === 'pending' ||
           settings.voucher_list_default_status === 'audited' ||
@@ -259,6 +264,10 @@ export default function VoucherList(): JSX.Element {
         } else {
           setActiveStatusTab('all')
         }
+        setPrintLayout(
+          preferences.voucher_print_layout === 'double' ? 'double' : 'single'
+        )
+        setPrintDoubleGapPx(preferences.voucher_print_double_gap || '24')
       })
       .catch((error) => {
         console.error('load voucher list settings failed', error)
@@ -633,24 +642,94 @@ export default function VoucherList(): JSX.Element {
     await loadPeriodStatus()
   }
 
+  const handleOpenPrintDialog = (): void => {
+    setMessage(null)
+    if (!canOperate) {
+      setMessage({ type: 'error', text: '当前环境不支持打印预览' })
+      return
+    }
+    if (selected.length === 0) {
+      setMessage({ type: 'error', text: '请先勾选至少一张凭证' })
+      return
+    }
+    if (selectedRows.some((row) => row.status === 3)) {
+      setMessage({ type: 'error', text: '已删除凭证不支持打印，请先取消勾选。' })
+      return
+    }
+    setPrintDialogOpen(true)
+  }
+
+  const handleConfirmPrint = async (): Promise<void> => {
+    if (!currentLedger) {
+      setMessage({ type: 'error', text: '请先选择账套' })
+      return
+    }
+
+    const gapValue = Number(printDoubleGapPx)
+    if (false && printLayout === 'double' && (!Number.isFinite(gapValue) || gapValue < 0 || gapValue > 500)) {
+      setMessage({ type: 'error', text: '两联上下间距需为 0 到 120 之间的数字' })
+      return
+    }
+
+    if (printLayout === 'double' && (!Number.isFinite(gapValue) || gapValue < 0 || gapValue > 500)) {
+      setMessage({ type: 'error', text: '两联上下间距需为 0 到 500 之间的数字' })
+      return
+    }
+
+    setPrintSubmitting(true)
+    try {
+      await window.api.settings.setUserPreferences({
+        voucher_print_layout: printLayout,
+        voucher_print_double_gap: String(printLayout === 'double' ? gapValue : 24)
+      })
+
+      const result = await prepareAndOpenPrintPreview({
+        type: 'voucher',
+        ledgerId: currentLedger.id,
+        voucherIds: selected,
+        layout: printLayout,
+        doubleGapPx: printLayout === 'double' ? gapValue : 24
+      })
+      if (!result.success) {
+        setMessage({ type: 'error', text: result.error || '打开打印预览失败' })
+        return
+      }
+
+      setPrintDialogOpen(false)
+      setMessage({
+        type: 'success',
+        text: selected.length > 1 ? `已打开 ${selected.length} 张凭证的打印预览` : '已打开凭证打印预览'
+      })
+    } finally {
+      setPrintSubmitting(false)
+    }
+  }
+
   const actionButtons: ActionButtonConfig[] = (() => {
     if (activeStatusTab === 'pending') {
-      return [{ key: 'audit', label: '审核', onClick: () => void runBatchAction('audit') }]
+      return [
+        { key: 'print', label: '打印预览', onClick: handleOpenPrintDialog },
+        { key: 'audit', label: '审核', onClick: () => void runBatchAction('audit') }
+      ]
     }
 
     if (activeStatusTab === 'audited') {
       return [
+        { key: 'print', label: '打印预览', onClick: handleOpenPrintDialog },
         { key: 'bookkeep', label: '记账', onClick: () => void runBatchAction('bookkeep') },
         { key: 'unaudit', label: '反审核', onClick: () => void runBatchAction('unaudit') }
       ]
     }
 
     if (activeStatusTab === 'posted' && !canReverseBookkeep) {
-      return []
+      return [{ key: 'print', label: '打印预览', onClick: handleOpenPrintDialog }]
     }
 
     if (activeStatusTab === 'posted') {
-      return [{ key: 'unbookkeep', label: '反记账', onClick: () => void runBatchAction('unbookkeep') }]
+      return [
+        { key: 'print', label: '打印预览', onClick: handleOpenPrintDialog },
+        { key: 'unbookkeep', label: '反记账', onClick: () => void runBatchAction('unbookkeep') }
+      ]
     }
 
     if (activeStatusTab === 'deleted') {
@@ -684,6 +763,7 @@ export default function VoucherList(): JSX.Element {
         onClick: () => void handleSwapPositions(),
         disabled: !canSwapSelected || !canOperate
       },
+      { key: 'print', label: '打印预览', onClick: handleOpenPrintDialog },
       { key: 'audit', label: '审核', onClick: () => void runBatchAction('audit') },
       { key: 'bookkeep', label: '记账', onClick: () => void runBatchAction('bookkeep') },
       { key: 'unaudit', label: '反审核', onClick: () => void runBatchAction('unaudit') },
@@ -966,6 +1046,22 @@ export default function VoucherList(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <VoucherPrintDialog
+        open={printDialogOpen}
+        voucherCount={selected.length}
+        layout={printLayout}
+        doubleGapPx={printDoubleGapPx}
+        submitting={printSubmitting}
+        onClose={() => {
+          if (!printSubmitting) {
+            setPrintDialogOpen(false)
+          }
+        }}
+        onConfirm={() => void handleConfirmPrint()}
+        onLayoutChange={setPrintLayout}
+        onGapChange={setPrintDoubleGapPx}
+      />
 
       {reverseBookkeepForm.open && (
         <div
