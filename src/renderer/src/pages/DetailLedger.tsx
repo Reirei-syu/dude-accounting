@@ -777,30 +777,6 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       <div className="glass-panel flex-1 overflow-hidden">{renderTable(rows)}</div>
 
       {contextMenu && !isPreviewOpen && createPortal(renderInteractiveContextMenu(), document.body)}
-      {false &&
-        contextMenu &&
-        createPortal(
-          <div
-            className="fixed z-[260] min-w-[180px] rounded-xl border bg-white/95 p-1 shadow-xl backdrop-blur-md"
-            style={{
-              left: `${contextMenu!.x}px`,
-              top: `${contextMenu!.y}px`,
-              borderColor: 'var(--color-glass-border-light)',
-              color: 'var(--color-text-primary)'
-            }}
-          >
-            <button
-              type="button"
-              className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-black/5 disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={contextMenu!.row.row_type !== 'entry' || !contextMenu!.row.voucher_id}
-              onClick={() => openVoucherEntry(contextMenu!.row)}
-            >
-              查询凭证
-            </button>
-          </div>,
-          document.body
-        )}
-
       {error && (
         <div style={{ color: 'var(--color-danger)' }} aria-live="polite">
           {error}

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
 import PDFDocument from 'pdfkit'
-import { ensureDirectory } from './fileIntegrity'
+import { ensureDirectory, sanitizePathSegment } from './fileIntegrity'
 
 export type BookExportFormat = 'xlsx' | 'pdf'
 
@@ -35,12 +35,7 @@ export interface BookExportPayload {
 }
 
 function sanitizeFileName(value: string): string {
-  return (
-    value
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
-      .replace(/\s+/g, ' ')
-      .trim() || '账簿导出'
-  )
+  return sanitizePathSegment(value, '账簿导出')
 }
 
 function formatAmount(value: number): string {

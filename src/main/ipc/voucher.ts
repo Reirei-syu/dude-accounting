@@ -4,7 +4,10 @@ import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { applyCashFlowMappings } from '../services/cashFlowMapping'
 import { assertPeriodWritable } from '../services/periodState'
-import { assertVoucherSwapAllowed, normalizeEmergencyReversalPayload } from '../services/voucherControl'
+import {
+  assertVoucherSwapAllowed,
+  normalizeEmergencyReversalPayload
+} from '../services/voucherControl'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
 import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
@@ -534,19 +537,6 @@ export function registerVoucherHandlers(): void {
           }
         }
 
-        if (subject.is_cash_flow === 1 && false) {
-          if (entry.cashFlowItemId === null) {
-            return { success: false, error: `第${index + 1}行为现金流科目，必须指定现金流量项目` }
-          }
-
-          const cashFlowItem = selectCashFlowStmt.get(payload.ledgerId, entry.cashFlowItemId) as
-            | { id: number }
-            | undefined
-          if (!cashFlowItem) {
-            return { success: false, error: `第${index + 1}行现金流量项目无效` }
-          }
-        }
-
         totalDebit += entry.debitCents
         totalCredit += entry.creditCents
       }
@@ -1028,7 +1018,7 @@ export function registerVoucherHandlers(): void {
               ? requirePermission(event, 'bookkeeping')
               : action === 'unbookkeep'
                 ? requirePermission(event, 'unbookkeep')
-              : requirePermission(event, 'voucher_entry')
+                : requirePermission(event, 'voucher_entry')
         const emergencyReversal =
           action === 'unbookkeep'
             ? normalizeEmergencyReversalPayload({

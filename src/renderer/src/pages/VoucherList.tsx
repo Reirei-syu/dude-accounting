@@ -106,8 +106,16 @@ const TAB_CONFIG: Array<{
   count: (rows: VoucherRow[]) => number
 }> = [
   { id: 'all', label: '全部', count: (rows) => rows.length },
-  { id: 'pending', label: '未审核', count: (rows) => rows.filter((row) => row.status === 0).length },
-  { id: 'audited', label: '已审核', count: (rows) => rows.filter((row) => row.status === 1).length },
+  {
+    id: 'pending',
+    label: '未审核',
+    count: (rows) => rows.filter((row) => row.status === 0).length
+  },
+  {
+    id: 'audited',
+    label: '已审核',
+    count: (rows) => rows.filter((row) => row.status === 1).length
+  },
   { id: 'posted', label: '已记账', count: (rows) => rows.filter((row) => row.status === 2).length },
   { id: 'deleted', label: '已删除', count: (rows) => rows.filter((row) => row.status === 3).length }
 ]
@@ -264,9 +272,7 @@ export default function VoucherList(): JSX.Element {
         } else {
           setActiveStatusTab('all')
         }
-        setPrintLayout(
-          preferences.voucher_print_layout === 'double' ? 'double' : 'single'
-        )
+        setPrintLayout(preferences.voucher_print_layout === 'double' ? 'double' : 'single')
         setPrintDoubleGapPx(preferences.voucher_print_double_gap || '24')
       })
       .catch((error) => {
@@ -666,12 +672,10 @@ export default function VoucherList(): JSX.Element {
     }
 
     const gapValue = Number(printDoubleGapPx)
-    if (false && printLayout === 'double' && (!Number.isFinite(gapValue) || gapValue < 0 || gapValue > 500)) {
-      setMessage({ type: 'error', text: '两联上下间距需为 0 到 120 之间的数字' })
-      return
-    }
-
-    if (printLayout === 'double' && (!Number.isFinite(gapValue) || gapValue < 0 || gapValue > 500)) {
+    if (
+      printLayout === 'double' &&
+      (!Number.isFinite(gapValue) || gapValue < 0 || gapValue > 500)
+    ) {
       setMessage({ type: 'error', text: '两联上下间距需为 0 到 500 之间的数字' })
       return
     }
@@ -698,7 +702,8 @@ export default function VoucherList(): JSX.Element {
       setPrintDialogOpen(false)
       setMessage({
         type: 'success',
-        text: selected.length > 1 ? `已打开 ${selected.length} 张凭证的打印预览` : '已打开凭证打印预览'
+        text:
+          selected.length > 1 ? `已打开 ${selected.length} 张凭证的打印预览` : '已打开凭证打印预览'
       })
     } finally {
       setPrintSubmitting(false)
@@ -924,7 +929,9 @@ export default function VoucherList(): JSX.Element {
                       borderColor: isActive
                         ? 'var(--color-primary)'
                         : 'var(--color-glass-border-light)',
-                      background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255, 255, 255, 0.45)',
+                      background: isActive
+                        ? 'rgba(59, 130, 246, 0.12)'
+                        : 'rgba(255, 255, 255, 0.45)',
                       color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)'
                     }}
                     onClick={() => {
@@ -983,8 +990,7 @@ export default function VoucherList(): JSX.Element {
                         row.status === 3
                           ? 'var(--color-text-muted)'
                           : 'var(--color-text-secondary)',
-                      background:
-                        row.status === 3 ? 'rgba(220, 38, 38, 0.035)' : 'transparent'
+                      background: row.status === 3 ? 'rgba(220, 38, 38, 0.035)' : 'transparent'
                     }}
                     onDoubleClick={() => openVoucherForEdit(row.id)}
                   >
@@ -1078,7 +1084,8 @@ export default function VoucherList(): JSX.Element {
                   反记账
                 </h3>
                 <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                  已选 {selected.length} 张已记账凭证。请填写反记账原因和审批标记，系统将写入操作日志。
+                  已选 {selected.length}{' '}
+                  张已记账凭证。请填写反记账原因和审批标记，系统将写入操作日志。
                 </p>
               </div>
               <button

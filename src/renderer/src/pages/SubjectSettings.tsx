@@ -202,9 +202,12 @@ export default function SubjectSettings(): JSX.Element {
     setCustomAuxiliaryItems(customItems as AuxiliaryItem[])
   }
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
+    // Switching ledgers should reopen the tree from a collapsed baseline.
     setExpandedCodes(new Set())
   }, [currentLedger?.id])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     let cancelled = false
@@ -274,11 +277,13 @@ export default function SubjectSettings(): JSX.Element {
     return true
   })
 
-  const groupedParentSubjects = getCategoryOrder(currentLedger?.standard_type).map((category) => ({
-    category,
-    label: getCategoryLabel(category, currentLedger?.standard_type),
-    subjects: rows.filter((row) => row.category === category)
-  })).filter((group) => group.subjects.length > 0)
+  const groupedParentSubjects = getCategoryOrder(currentLedger?.standard_type)
+    .map((category) => ({
+      category,
+      label: getCategoryLabel(category, currentLedger?.standard_type),
+      subjects: rows.filter((row) => row.category === category)
+    }))
+    .filter((group) => group.subjects.length > 0)
 
   const currentParent = form.parentCode ? (subjectByCode.get(form.parentCode) ?? null) : null
   const customAuxiliaryAvailable = customAuxiliaryItems.length > 0
@@ -623,7 +628,6 @@ export default function SubjectSettings(): JSX.Element {
             )}
           </div>
         </div>
-
       </div>
 
       {message && (
@@ -955,9 +959,7 @@ export default function SubjectSettings(): JSX.Element {
                       自定义明细
                     </div>
                     {customAuxiliaryItems.length === 0 ? (
-                      <div style={{ color: 'var(--color-text-muted)' }}>
-                        暂无自定义明细
-                      </div>
+                      <div style={{ color: 'var(--color-text-muted)' }}>暂无自定义明细</div>
                     ) : (
                       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                         {customAuxiliaryItems.map((item) => {

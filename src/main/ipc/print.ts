@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
 import { getDatabase } from '../database/init'
+import { sanitizePathSegment } from '../services/fileIntegrity'
 import { getReportSnapshotDetail, type ReportSnapshotDetail } from '../services/reporting'
 import {
   buildPrintDocumentHtml,
@@ -10,6 +11,7 @@ import {
   resolveBookPrintOrientation,
   type PrintDocument,
   type PrintJobType,
+  type PrintTableSegment,
   type PrintTableColumn,
   type PrintTableRow,
   type PrintVoucherRecord
@@ -67,19 +69,14 @@ interface PrintJobRecord {
 const printJobs = new Map<string, PrintJobRecord>()
 
 function sanitizeFileName(value: string): string {
-  return (
-    value
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
-      .replace(/\s+/g, ' ')
-      .trim() || '打印预览'
-  )
+  return sanitizePathSegment(value, '打印预览')
 }
 
 function getPrintExportDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '打印导出')
 }
 
-function getReportSegment(detail: ReportSnapshotDetail) {
+function getReportSegment(detail: ReportSnapshotDetail): PrintTableSegment {
   const headers =
     detail.content.tables?.[0]?.columns?.map((column) => ({
       key: column.key,
@@ -106,9 +103,7 @@ function getReportSegment(detail: ReportSnapshotDetail) {
         key: `${table.key}-${row.key}`,
         cells: row.cells.map((cell, index) => ({
           value: cell.value,
-          isAmount:
-            cell.isAmount ??
-            (typeof cell.value === 'number' && index > 0)
+          isAmount: cell.isAmount ?? (typeof cell.value === 'number' && index > 0)
         }))
       }))
     ) ??
@@ -170,7 +165,10 @@ function sortVoucherRecords(records: PrintVoucherRecord[]): PrintVoucherRecord[]
   })
 }
 
-function buildVoucherRecords(db: ReturnType<typeof getDatabase>, voucherIds: number[]): {
+function buildVoucherRecords(
+  db: ReturnType<typeof getDatabase>,
+  voucherIds: number[]
+): {
   ledgerId: number
   ledgerName: string
   records: PrintVoucherRecord[]
@@ -405,10 +403,7 @@ function getPreviewWindow(jobId: string): BrowserWindow | null {
   )
 }
 
-function getAccessiblePrintJob(
-  event: IpcMainInvokeEvent,
-  jobId: string
-): PrintJobRecord | null {
+function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJobRecord | null {
   const job = printJobs.get(jobId)
   if (!job) {
     return null
@@ -499,8 +494,8 @@ export function registerPrintHandlers(): void {
         payload.type === 'book'
           ? payload.ledgerId
           : payload.type === 'voucher'
-            ? payload.ledgerId ?? null
-            : payload.ledgerId ?? null,
+            ? (payload.ledgerId ?? null)
+            : (payload.ledgerId ?? null),
       createdBy: user.id,
       status: 'preparing',
       orientation: 'portrait',
@@ -530,7 +525,6 @@ export function registerPrintHandlers(): void {
   })
 
   ipcMain.handle('print:getJobStatus', (event, jobId: string) => {
-    const user = { id: -1, isAdmin: false }
     const job = (() => {
       try {
         return getAccessiblePrintJob(event, jobId)
@@ -540,9 +534,6 @@ export function registerPrintHandlers(): void {
     })()
     if (!job) {
       return { success: false, error: '打印任务不存在' }
-    }
-    if (false && job!.createdBy !== user.id && !user.isAdmin) {
-      return { success: false, error: '无权访问该打印任务' }
     }
     return {
       success: true,
@@ -553,7 +544,6 @@ export function registerPrintHandlers(): void {
   })
 
   ipcMain.handle('print:openPreview', async (event, jobId: string) => {
-    const user = { id: -1, isAdmin: false }
     const job = (() => {
       try {
         return getAccessiblePrintJob(event, jobId)
@@ -564,19 +554,15 @@ export function registerPrintHandlers(): void {
     if (!job) {
       return { success: false, error: '打印任务不存在' }
     }
-    if (false && job!.createdBy !== user.id && !user.isAdmin) {
-      return { success: false, error: '无权访问该打印任务' }
-    }
-    if (job!.status !== 'ready' || !job!.html) {
+    if (job.status !== 'ready' || !job.html) {
       return { success: false, error: job.error ?? '打印任务尚未完成' }
     }
 
-    await openPreviewWindow(jobId, job!.title, job!.html, job!.orientation)
+    await openPreviewWindow(jobId, job.title, job.html, job.orientation)
     return { success: true }
   })
 
   ipcMain.handle('print:print', async (event, jobId: string) => {
-    const user = { id: -1, isAdmin: false }
     const job = (() => {
       try {
         return getAccessiblePrintJob(event, jobId)
@@ -586,9 +572,6 @@ export function registerPrintHandlers(): void {
     })()
     if (!job) {
       return { success: false, error: '打印任务不存在' }
-    }
-    if (false && job!.createdBy !== user.id && !user.isAdmin) {
-      return { success: false, error: '无权访问该打印任务' }
     }
 
     const previewWindow = getPreviewWindow(jobId)
@@ -600,7 +583,7 @@ export function registerPrintHandlers(): void {
       previewWindow.webContents.print(
         {
           printBackground: true,
-          landscape: job!.orientation === 'landscape'
+          landscape: job.orientation === 'landscape'
         },
         (success, failureReason) => {
           resolve(success ? { success: true } : { success: false, error: failureReason })
@@ -610,7 +593,6 @@ export function registerPrintHandlers(): void {
   })
 
   ipcMain.handle('print:exportPdf', async (event, jobId: string) => {
-    const user = { id: -1, isAdmin: false }
     const job = (() => {
       try {
         return getAccessiblePrintJob(event, jobId)
@@ -621,9 +603,6 @@ export function registerPrintHandlers(): void {
     if (!job) {
       return { success: false, error: '打印任务不存在' }
     }
-    if (false && job!.createdBy !== user.id && !user.isAdmin) {
-      return { success: false, error: '无权访问该打印任务' }
-    }
 
     const previewWindow = getPreviewWindow(jobId)
     if (!previewWindow) {
@@ -631,7 +610,7 @@ export function registerPrintHandlers(): void {
     }
 
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
-    const defaultPath = path.join(getPrintExportDir(), `${sanitizeFileName(job!.title)}.pdf`)
+    const defaultPath = path.join(getPrintExportDir(), `${sanitizeFileName(job.title)}.pdf`)
     const saveResult = browserWindow
       ? await dialog.showSaveDialog(browserWindow, {
           defaultPath,
@@ -649,7 +628,7 @@ export function registerPrintHandlers(): void {
     const pdfBuffer = await previewWindow.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
-      landscape: job!.orientation === 'landscape',
+      landscape: job.orientation === 'landscape',
       margins: {
         top: 0,
         bottom: 0,
@@ -669,7 +648,6 @@ export function registerPrintHandlers(): void {
   })
 
   ipcMain.handle('print:dispose', (event, jobId: string) => {
-    const user = { id: -1, isAdmin: false }
     const job = (() => {
       try {
         return getAccessiblePrintJob(event, jobId)
@@ -679,9 +657,6 @@ export function registerPrintHandlers(): void {
     })()
     if (!job) {
       return { success: true }
-    }
-    if (false && job!.createdBy !== user.id && !user.isAdmin) {
-      return { success: false, error: '无权访问该打印任务' }
     }
 
     const previewWindow = getPreviewWindow(jobId)

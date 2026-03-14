@@ -25,7 +25,25 @@ export default defineConfig(
     },
     rules: {
       ...eslintPluginReactHooks.configs.recommended.rules,
-      ...eslintPluginReactRefresh.configs.vite.rules
+      ...eslintPluginReactRefresh.configs.vite.rules,
+      'react-refresh/only-export-components': [
+        'error',
+        {
+          allowConstantExport: true,
+          allowExportNames: [
+            'getReportTypeLabel',
+            'getReportTypeByComponent',
+            'formatAmountCents',
+            'formatGeneratedAt'
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['scripts/**/*.{js,mjs,cjs}'],
+    rules: {
+      '@typescript-eslint/explicit-function-return-type': 'off'
     }
   },
   eslintConfigPrettier

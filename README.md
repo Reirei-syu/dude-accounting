@@ -117,7 +117,7 @@ npm run build:mac
 
 实际会执行：
 
-1. `electron-vite build`
+1. `npm run build`
 2. `electron-builder --mac`
 
 注意：
@@ -138,6 +138,8 @@ npm run build:unpack
 # Linux
 npm run build:linux
 ```
+
+其中 `npm run build:linux` 也会先执行 `npm run build`，确保打包前完成 typecheck 与前端/主进程构建。
 
 ## 打包输出位置
 

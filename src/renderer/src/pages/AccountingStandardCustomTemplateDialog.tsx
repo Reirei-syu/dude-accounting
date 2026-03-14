@@ -153,19 +153,32 @@ export default function AccountingStandardCustomTemplateDialog(
 
   const currentStandardType = template?.baseStandardType ?? defaultBaseStandardType
   const categoryOptions = CATEGORY_OPTIONS[currentStandardType]
+  const templateEntries = useMemo(() => template?.entries ?? [], [template?.entries])
   const [templateName, setTemplateName] = useState(template?.templateName ?? '')
-  const [templateDescription, setTemplateDescription] = useState(template?.templateDescription ?? '')
+  const [templateDescription, setTemplateDescription] = useState(
+    template?.templateDescription ?? ''
+  )
   const [rows, setRows] = useState<EditableRow[]>([])
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
+    // Reset the local draft whenever the selected template snapshot changes.
     setTemplateName(template?.templateName ?? '')
     setTemplateDescription(template?.templateDescription ?? '')
     setRows(
-      (template?.entries ?? [])
+      templateEntries
         .map((entry) => createEditableRow(currentStandardType, entry))
         .sort(compareByCode)
     )
-  }, [currentStandardType, template?.id, template?.templateDescription, template?.templateName, template?.updatedAt])
+  }, [
+    currentStandardType,
+    template?.id,
+    template?.templateDescription,
+    template?.templateName,
+    template?.updatedAt,
+    templateEntries
+  ])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const carryForwardOptions = useMemo(() => {
     const allowedCategories =
@@ -236,7 +249,10 @@ export default function AccountingStandardCustomTemplateDialog(
         >
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <Dialog.Title className="text-lg font-bold" style={{ color: 'var(--color-text-primary)' }}>
+              <Dialog.Title
+                className="text-lg font-bold"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
                 {template ? `维护自定义模板：${template.templateName}` : '新增自定义模板'}
               </Dialog.Title>
               <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
@@ -304,7 +320,11 @@ export default function AccountingStandardCustomTemplateDialog(
                   {busyAction === 'delete' ? '删除中...' : '删除模板'}
                 </button>
               ) : null}
-              <button type="button" className="glass-btn-secondary" onClick={() => onOpenChange(false)}>
+              <button
+                type="button"
+                className="glass-btn-secondary"
+                onClick={() => onOpenChange(false)}
+              >
                 关闭
               </button>
             </div>
@@ -313,7 +333,10 @@ export default function AccountingStandardCustomTemplateDialog(
           <div className="glass-panel-light p-4 mt-5">
             <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] gap-4">
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                <label
+                  className="text-sm font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
                   模板名称
                 </label>
                 <input
@@ -329,7 +352,10 @@ export default function AccountingStandardCustomTemplateDialog(
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                <label
+                  className="text-sm font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
                   模板说明
                 </label>
                 <textarea
@@ -349,7 +375,10 @@ export default function AccountingStandardCustomTemplateDialog(
               style={{ borderColor: 'var(--color-glass-border-light)' }}
             >
               <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                <div
+                  className="text-sm font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
                   当前自定义模板科目
                 </div>
                 <div className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
@@ -360,7 +389,10 @@ export default function AccountingStandardCustomTemplateDialog(
 
             <div className="flex-1 overflow-x-auto max-h-[520px]">
               {sortedRows.length === 0 ? (
-                <div className="py-14 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                <div
+                  className="py-14 text-center text-sm"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
                   当前还没有自定义新增科目，可先模板下载、批量导入，或直接手动新增科目。
                 </div>
               ) : (
@@ -386,7 +418,10 @@ export default function AccountingStandardCustomTemplateDialog(
                   </thead>
                   <tbody>
                     {sortedRows.map((row) => {
-                      const needTarget = requiresCarryForwardTarget(currentStandardType, row.category)
+                      const needTarget = requiresCarryForwardTarget(
+                        currentStandardType,
+                        row.category
+                      )
                       return (
                         <tr
                           key={row.localId}
@@ -421,7 +456,8 @@ export default function AccountingStandardCustomTemplateDialog(
                             <select
                               className="glass-input"
                               style={getSelectAutoFitWidth(
-                                categoryOptions.find((option) => option.value === row.category)?.label ?? '',
+                                categoryOptions.find((option) => option.value === row.category)
+                                  ?.label ?? '',
                                 categoryOptions.map((option) => option.label),
                                 12,
                                 18
@@ -500,45 +536,48 @@ export default function AccountingStandardCustomTemplateDialog(
                           </td>
                           <td className="py-2 px-3">
                             {(() => {
-                              const selectedCarryForwardLabel =
-                                carryForwardOptions.find(
-                                  (option) => option.code === row.carryForwardTargetCode
-                                )
-                                  ? `${row.carryForwardTargetCode} ${
-                                      carryForwardOptions.find(
-                                        (option) => option.code === row.carryForwardTargetCode
-                                      )?.name ?? ''
-                                    }`
-                                  : row.carryForwardTargetCode ?? ''
+                              const selectedCarryForwardLabel = carryForwardOptions.find(
+                                (option) => option.code === row.carryForwardTargetCode
+                              )
+                                ? `${row.carryForwardTargetCode} ${
+                                    carryForwardOptions.find(
+                                      (option) => option.code === row.carryForwardTargetCode
+                                    )?.name ?? ''
+                                  }`
+                                : (row.carryForwardTargetCode ?? '')
                               const carryForwardOptionLabels = [
                                 needTarget ? '请选择结转目标' : '不适用',
-                                ...carryForwardOptions.map((option) => `${option.code} ${option.name}`)
+                                ...carryForwardOptions.map(
+                                  (option) => `${option.code} ${option.name}`
+                                )
                               ]
 
                               return (
-                            <select
-                              className="glass-input"
-                              style={getSelectAutoFitWidth(
-                                selectedCarryForwardLabel,
-                                carryForwardOptionLabels,
-                                16,
-                                44
-                              )}
-                              value={row.carryForwardTargetCode ?? ''}
-                              disabled={!isAdmin || !needTarget}
-                              onChange={(event) =>
-                                updateRow(row.localId, {
-                                  carryForwardTargetCode: event.target.value || null
-                                })
-                              }
-                            >
-                              <option value="">{needTarget ? '请选择结转目标' : '不适用'}</option>
-                              {carryForwardOptions.map((option) => (
-                                <option key={option.code} value={option.code}>
-                                  {option.code} {option.name}
-                                </option>
-                              ))}
-                            </select>
+                                <select
+                                  className="glass-input"
+                                  style={getSelectAutoFitWidth(
+                                    selectedCarryForwardLabel,
+                                    carryForwardOptionLabels,
+                                    16,
+                                    44
+                                  )}
+                                  value={row.carryForwardTargetCode ?? ''}
+                                  disabled={!isAdmin || !needTarget}
+                                  onChange={(event) =>
+                                    updateRow(row.localId, {
+                                      carryForwardTargetCode: event.target.value || null
+                                    })
+                                  }
+                                >
+                                  <option value="">
+                                    {needTarget ? '请选择结转目标' : '不适用'}
+                                  </option>
+                                  {carryForwardOptions.map((option) => (
+                                    <option key={option.code} value={option.code}>
+                                      {option.code} {option.name}
+                                    </option>
+                                  ))}
+                                </select>
                               )
                             })()}
                           </td>
@@ -565,7 +604,10 @@ export default function AccountingStandardCustomTemplateDialog(
                                 删除
                               </button>
                             ) : (
-                              <span className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                              <span
+                                className="text-sm"
+                                style={{ color: 'var(--color-text-muted)' }}
+                              >
                                 {getBalanceDirectionLabel(row.balanceDirection)}
                               </span>
                             )}
@@ -591,7 +633,11 @@ export default function AccountingStandardCustomTemplateDialog(
           )}
 
           <div className="flex justify-end pt-5">
-            <button type="button" className="glass-btn-secondary" onClick={() => onOpenChange(false)}>
+            <button
+              type="button"
+              className="glass-btn-secondary"
+              onClick={() => onOpenChange(false)}
+            >
               关闭
             </button>
           </div>

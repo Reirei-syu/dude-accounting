@@ -427,8 +427,8 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore
+  // @ts-expect-error: fallback mode writes the bridged Electron API onto window directly.
   window.electron = electronAPI
-  // @ts-ignore
+  // @ts-expect-error: fallback mode writes the bridged renderer API onto window directly.
   window.api = api
 }

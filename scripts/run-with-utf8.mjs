@@ -1,6 +1,7 @@
-const { spawn } = require('node:child_process')
+import { spawn } from 'node:child_process'
 
-function quoteCmdArg(arg) {
+/** @type {(arg: string | undefined) => string} */
+const quoteCmdArg = (arg) => {
   if (!arg) {
     return '""'
   }

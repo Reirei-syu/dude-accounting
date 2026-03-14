@@ -2,6 +2,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 
+const INVALID_PATH_CHARACTERS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+
 export function computeFileSha256(filePath: string): string {
   const hash = crypto.createHash('sha256')
   hash.update(fs.readFileSync(filePath))
@@ -14,7 +16,12 @@ export function ensureDirectory(dirPath: string): void {
 
 export function sanitizePathSegment(value: string, fallback = '未命名'): string {
   const normalized = value
-    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
+    .split('')
+    .map((char) => {
+      const codePoint = char.codePointAt(0) ?? 0
+      return codePoint <= 0x1f || INVALID_PATH_CHARACTERS.has(char) ? '_' : char
+    })
+    .join('')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/[. ]+$/g, '')

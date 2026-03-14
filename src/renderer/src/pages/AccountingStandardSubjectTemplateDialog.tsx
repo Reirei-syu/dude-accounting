@@ -215,22 +215,28 @@ export default function AccountingStandardSubjectTemplateDialog(
 
   const [draftRows, setDraftRows] = useState<EditableTemplateRow[]>([])
   const currentStandardType = standardType ?? 'enterprise'
-  const entries = template?.entries ?? []
+  const entries = useMemo(() => template?.entries ?? [], [template?.entries])
   const categoryOptions = CATEGORY_OPTIONS[currentStandardType]
   const initialTemplateRows = useMemo(
     () => buildInitialTemplateRows(currentStandardType, referenceSubjects, entries),
     [currentStandardType, entries, referenceSubjects]
   )
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!standardType) return
+    // When the base standard or saved template changes, rebuild the editable draft from that snapshot.
     setDraftRows(initialTemplateRows)
-  }, [currentStandardType, initialTemplateRows, standardType, template?.entryCount, template?.updatedAt])
+  }, [
+    currentStandardType,
+    initialTemplateRows,
+    standardType,
+    template?.entryCount,
+    template?.updatedAt
+  ])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  const sortedDraftRows = useMemo(
-    () => draftRows.slice().sort(compareByCode),
-    [draftRows]
-  )
+  const sortedDraftRows = useMemo(() => draftRows.slice().sort(compareByCode), [draftRows])
 
   const sortedReferenceSubjects = useMemo(
     () => referenceSubjects.slice().sort(compareByCode),
@@ -419,9 +425,7 @@ export default function AccountingStandardSubjectTemplateDialog(
                     style={getAutoFitWidth(row.code || '0000', 8, 12)}
                     value={row.code}
                     disabled={!isAdmin}
-                    onChange={(event) =>
-                      updateDraftRow(row.localId, { code: event.target.value })
-                    }
+                    onChange={(event) => updateDraftRow(row.localId, { code: event.target.value })}
                     placeholder="4位编码"
                   />
                 </td>
@@ -431,9 +435,7 @@ export default function AccountingStandardSubjectTemplateDialog(
                     style={getAutoFitWidth(row.name || '一级科目名称', 14, 24)}
                     value={row.name}
                     disabled={!isAdmin}
-                    onChange={(event) =>
-                      updateDraftRow(row.localId, { name: event.target.value })
-                    }
+                    onChange={(event) => updateDraftRow(row.localId, { name: event.target.value })}
                     placeholder="一级科目名称"
                   />
                 </td>
@@ -502,12 +504,7 @@ export default function AccountingStandardSubjectTemplateDialog(
                 <td className="py-2 px-3">
                   <select
                     className="glass-input"
-                    style={getSelectAutoFitWidth(
-                      row.enabled ? '是' : '否',
-                      ['是', '否'],
-                      10,
-                      12
-                    )}
+                    style={getSelectAutoFitWidth(row.enabled ? '是' : '否', ['是', '否'], 10, 12)}
                     value={row.enabled ? '1' : '0'}
                     disabled={!isAdmin}
                     onChange={(event) =>
@@ -520,45 +517,44 @@ export default function AccountingStandardSubjectTemplateDialog(
                 </td>
                 <td className="py-2 px-3">
                   {(() => {
-                    const selectedCarryForwardLabel =
-                      carryForwardOptions.find(
-                        (option) => option.code === row.carryForwardTargetCode
-                      )
-                        ? `${row.carryForwardTargetCode} ${
-                            carryForwardOptions.find(
-                              (option) => option.code === row.carryForwardTargetCode
-                            )?.name ?? ''
-                          }`
-                        : row.carryForwardTargetCode ?? ''
+                    const selectedCarryForwardLabel = carryForwardOptions.find(
+                      (option) => option.code === row.carryForwardTargetCode
+                    )
+                      ? `${row.carryForwardTargetCode} ${
+                          carryForwardOptions.find(
+                            (option) => option.code === row.carryForwardTargetCode
+                          )?.name ?? ''
+                        }`
+                      : (row.carryForwardTargetCode ?? '')
                     const carryForwardOptionLabels = [
                       needTarget ? '请选择结转目标' : '不适用',
                       ...carryForwardOptions.map((option) => `${option.code} ${option.name}`)
                     ]
 
                     return (
-                  <select
-                    className="glass-input"
-                    style={getSelectAutoFitWidth(
-                      selectedCarryForwardLabel,
-                      carryForwardOptionLabels,
-                      16,
-                      44
-                    )}
-                    value={row.carryForwardTargetCode ?? ''}
-                    disabled={!isAdmin || !needTarget}
-                    onChange={(event) =>
-                      updateDraftRow(row.localId, {
-                        carryForwardTargetCode: event.target.value || null
-                      })
-                    }
-                  >
-                    <option value="">{needTarget ? '请选择结转目标' : '不适用'}</option>
-                    {carryForwardOptions.map((option) => (
-                      <option key={option.code} value={option.code}>
-                        {option.code} {option.name}
-                      </option>
-                    ))}
-                  </select>
+                      <select
+                        className="glass-input"
+                        style={getSelectAutoFitWidth(
+                          selectedCarryForwardLabel,
+                          carryForwardOptionLabels,
+                          16,
+                          44
+                        )}
+                        value={row.carryForwardTargetCode ?? ''}
+                        disabled={!isAdmin || !needTarget}
+                        onChange={(event) =>
+                          updateDraftRow(row.localId, {
+                            carryForwardTargetCode: event.target.value || null
+                          })
+                        }
+                      >
+                        <option value="">{needTarget ? '请选择结转目标' : '不适用'}</option>
+                        {carryForwardOptions.map((option) => (
+                          <option key={option.code} value={option.code}>
+                            {option.code} {option.name}
+                          </option>
+                        ))}
+                      </select>
                     )
                   })()}
                 </td>
@@ -568,9 +564,7 @@ export default function AccountingStandardSubjectTemplateDialog(
                     style={getAutoFitWidth(row.note || '备注说明', 12, 28)}
                     value={row.note ?? ''}
                     disabled={!isAdmin}
-                    onChange={(event) =>
-                      updateDraftRow(row.localId, { note: event.target.value })
-                    }
+                    onChange={(event) => updateDraftRow(row.localId, { note: event.target.value })}
                     placeholder="备注说明"
                   />
                 </td>
@@ -608,7 +602,10 @@ export default function AccountingStandardSubjectTemplateDialog(
         >
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <Dialog.Title className="text-lg font-bold" style={{ color: 'var(--color-text-primary)' }}>
+              <Dialog.Title
+                className="text-lg font-bold"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
                 {standardLabel}自定义一级科目模板
               </Dialog.Title>
               <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
@@ -698,10 +695,16 @@ export default function AccountingStandardSubjectTemplateDialog(
                 </div>
 
                 <div className="max-w-[560px]">
-                  <div className="text-sm font-semibold mb-2" style={{ color: 'var(--color-text-primary)' }}>
+                  <div
+                    className="text-sm font-semibold mb-2"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
                     维护要点
                   </div>
-                  <ul className="flex flex-col gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  <ul
+                    className="flex flex-col gap-2 text-sm"
+                    style={{ color: 'var(--color-text-secondary)' }}
+                  >
                     {RECOMMENDED_COLUMNS.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
@@ -728,7 +731,10 @@ export default function AccountingStandardSubjectTemplateDialog(
                 style={{ borderColor: 'var(--color-glass-border-light)' }}
               >
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                  <div
+                    className="text-sm font-semibold"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
                     手动维护记录
                   </div>
                   <div className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
@@ -739,7 +745,10 @@ export default function AccountingStandardSubjectTemplateDialog(
 
               <div className="px-4 py-4">
                 {changeRecords.length === 0 ? (
-                  <div className="py-8 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                  <div
+                    className="py-8 text-center text-sm"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
                     当前没有待保存的维护记录。
                   </div>
                 ) : (
@@ -750,7 +759,10 @@ export default function AccountingStandardSubjectTemplateDialog(
                         className="rounded-xl px-3 py-3 text-sm"
                         style={{ backgroundColor: 'rgba(15, 23, 42, 0.05)' }}
                       >
-                        <div className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                        <div
+                          className="font-semibold"
+                          style={{ color: 'var(--color-text-primary)' }}
+                        >
                           {record.code} {record.name}
                         </div>
                         <div className="mt-1" style={{ color: 'var(--color-text-secondary)' }}>
@@ -785,7 +797,10 @@ export default function AccountingStandardSubjectTemplateDialog(
                 style={{ borderColor: 'var(--color-glass-border-light)' }}
               >
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                  <div
+                    className="text-sm font-semibold"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
                     当前模板科目
                   </div>
                   <div className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
@@ -796,7 +811,10 @@ export default function AccountingStandardSubjectTemplateDialog(
 
               <div className="flex-1 overflow-x-auto">
                 {existingTemplateRows.length === 0 ? (
-                  <div className="py-14 text-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+                  <div
+                    className="py-14 text-center text-sm"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
                     当前模板还没有已保存科目，可先新增科目并保存，或执行批量导入。
                   </div>
                 ) : (
@@ -818,7 +836,11 @@ export default function AccountingStandardSubjectTemplateDialog(
           )}
 
           <div className="flex justify-end pt-5">
-            <button type="button" className="glass-btn-secondary" onClick={() => onOpenChange(false)}>
+            <button
+              type="button"
+              className="glass-btn-secondary"
+              onClick={() => onOpenChange(false)}
+            >
               关闭
             </button>
           </div>
