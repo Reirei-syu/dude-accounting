@@ -1,4 +1,4 @@
-import { useState, useCallback, type JSX, type FormEvent, type SVGProps } from 'react'
+import { useState, useCallback, useEffect, type JSX, type FormEvent, type SVGProps } from 'react'
 import { useAuthStore } from '../stores/authStore'
 import wallpaper from '../assets/wallpaper.png'
 
@@ -77,12 +77,29 @@ const EyeOffIcon = (props: SVGProps<SVGSVGElement>): JSX.Element => (
 )
 
 export default function Login(): JSX.Element {
+  const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const login = useAuthStore((s) => s.login)
+
+  useEffect(() => {
+    if (!window.electron) {
+      setWallpaperUrl(null)
+      return
+    }
+
+    window.api.settings
+      .getLoginWallpaperState()
+      .then((state) => {
+        setWallpaperUrl(state.wallpaperUrl)
+      })
+      .catch(() => {
+        setWallpaperUrl(null)
+      })
+  }, [])
 
   const handleLogin = useCallback(async () => {
     setError('')
@@ -114,7 +131,7 @@ export default function Login(): JSX.Element {
     <div
       className="login-page"
       style={{
-        backgroundImage: `url(${wallpaper})`,
+        backgroundImage: `url(${wallpaperUrl ?? wallpaper})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center'
       }}

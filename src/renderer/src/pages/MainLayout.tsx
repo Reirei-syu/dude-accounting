@@ -5,6 +5,7 @@ import SuspendedOverlay from '../components/SuspendedOverlay'
 import { getHomeTabPreset, hasPermissionAccess, useUIStore } from '../stores/uiStore'
 import { pickInitialLedger, useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
+import { useWallpaperStore } from '../stores/wallpaperStore'
 import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
 import wallpaper from '../assets/wallpaper.png'
 
@@ -30,6 +31,9 @@ export default function MainLayout(): JSX.Element {
   } = useLedgerStore()
   const user = useAuthStore((s) => s.user)
   const logout = useAuthStore((s) => s.logout)
+  const wallpaperState = useWallpaperStore((state) => state.wallpaper)
+  const setWallpaper = useWallpaperStore((state) => state.setWallpaper)
+  const resetWallpaper = useWallpaperStore((state) => state.resetWallpaper)
   const userDisplayName = user?.realName || user?.username || '当前用户'
   const canManageLedgers = hasPermissionAccess(user, 'ledger_settings')
   const startupAppliedRef = useRef(false)
@@ -61,6 +65,22 @@ export default function MainLayout(): JSX.Element {
   useEffect(() => {
     startupAppliedRef.current = false
   }, [user?.id])
+
+  useEffect(() => {
+    if (!window.electron || !user) {
+      resetWallpaper()
+      return
+    }
+
+    window.api.settings
+      .getWallpaperState()
+      .then((state) => {
+        setWallpaper(state)
+      })
+      .catch(() => {
+        resetWallpaper()
+      })
+  }, [resetWallpaper, setWallpaper, user?.id])
 
   useLayoutEffect(() => {
     if (!isCreatingLedger) {
@@ -260,7 +280,7 @@ export default function MainLayout(): JSX.Element {
     <div
       className="main-shell"
       style={{
-        backgroundImage: `url(${wallpaper})`,
+        backgroundImage: `url(${wallpaperState.wallpaperUrl ?? wallpaper})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center'
       }}

@@ -178,9 +178,15 @@ const api = {
     get: (key: string) => ipcRenderer.invoke('settings:get', key),
     getAll: () => ipcRenderer.invoke('settings:getAll'),
     getUserPreferences: () => ipcRenderer.invoke('settings:getUserPreferences'),
+    getWallpaperState: () => ipcRenderer.invoke('settings:getWallpaperState'),
+    getLoginWallpaperState: () => ipcRenderer.invoke('settings:getLoginWallpaperState'),
     set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
     setUserPreferences: (preferences: Record<string, string>) =>
       ipcRenderer.invoke('settings:setUserPreferences', preferences),
+    chooseWallpaper: () => ipcRenderer.invoke('settings:chooseWallpaper'),
+    applyWallpaperCrop: (payload: { extension: string; bytes: number[]; sourcePath?: string }) =>
+      ipcRenderer.invoke('settings:applyWallpaperCrop', payload),
+    restoreDefaultWallpaper: () => ipcRenderer.invoke('settings:restoreDefaultWallpaper'),
     getSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
       ipcRenderer.invoke('settings:getSubjectTemplate', standardType),
     getSubjectTemplateReference: (standardType: 'enterprise' | 'npo') =>

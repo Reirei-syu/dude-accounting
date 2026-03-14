@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import path from 'node:path'
 import { getDatabase } from '../database/init'
@@ -16,9 +17,28 @@ import {
   saveCustomTopLevelSubjectTemplate,
   writeCustomTopLevelSubjectImportTemplate
 } from '../services/subjectTemplate'
+import {
+  getLoginWallpaperState,
+  getUserWallpaperState,
+  replaceUserWallpaperFromBuffer,
+  restoreDefaultWallpaper,
+  validateWallpaperSourceFile,
+  WALLPAPER_SUPPORTED_FORMATS
+} from '../services/wallpaperPreference'
 import { requireAdmin, requireAuth, requirePermission } from './session'
 
 type StandardType = 'enterprise' | 'npo'
+
+function getWallpaperMimeType(extension: string): string {
+  const normalizedExtension = extension.toLowerCase()
+  if (normalizedExtension === 'jpg' || normalizedExtension === 'jpeg') {
+    return 'image/jpeg'
+  }
+  if (normalizedExtension === 'webp') {
+    return 'image/webp'
+  }
+  return 'image/png'
+}
 
 function getTemplateDefaultPath(standardType: StandardType): string {
   const fileName =
@@ -65,6 +85,15 @@ export function registerSettingsHandlers(): void {
     return settings
   })
 
+  ipcMain.handle('settings:getWallpaperState', (event) => {
+    const user = requireAuth(event)
+    return getUserWallpaperState(db, app.getPath('userData'), user.id)
+  })
+
+  ipcMain.handle('settings:getLoginWallpaperState', () => {
+    return getLoginWallpaperState(db, app.getPath('userData'))
+  })
+
   ipcMain.handle('settings:setUserPreferences', (event, preferences: Record<string, string>) => {
     const user = requireAuth(event)
     const entries = Object.entries(preferences || {})
@@ -81,6 +110,126 @@ export function registerSettingsHandlers(): void {
     })
     saveTx()
     return { success: true }
+  })
+
+  ipcMain.handle('settings:chooseWallpaper', async (event) => {
+    try {
+      requireAuth(event)
+      const browserWindow = BrowserWindow.fromWebContents(event.sender)
+      const openResult = browserWindow
+        ? await dialog.showOpenDialog(browserWindow, {
+            title: '选择自定义壁纸',
+            filters: [
+              {
+                name: '图片文件',
+                extensions: [...WALLPAPER_SUPPORTED_FORMATS]
+              }
+            ],
+            properties: ['openFile']
+          })
+        : await dialog.showOpenDialog({
+            title: '选择自定义壁纸',
+            filters: [
+              {
+                name: '图片文件',
+                extensions: [...WALLPAPER_SUPPORTED_FORMATS]
+              }
+            ],
+            properties: ['openFile']
+          })
+
+      if (openResult.canceled || openResult.filePaths.length === 0) {
+        return { success: false, cancelled: true }
+      }
+
+      const sourcePath = openResult.filePaths[0]
+      const extension = validateWallpaperSourceFile(sourcePath)
+      const sourceDataUrl = `data:${getWallpaperMimeType(extension)};base64,${fs.readFileSync(sourcePath).toString('base64')}`
+
+      return {
+        success: true,
+        sourcePath,
+        sourceDataUrl,
+        extension
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '设置自定义壁纸失败'
+      }
+    }
+  })
+
+  ipcMain.handle(
+    'settings:applyWallpaperCrop',
+    (
+      event,
+      payload: {
+        extension: string
+        bytes: number[]
+        sourcePath?: string
+      }
+    ) => {
+      try {
+        const user = requireAuth(event)
+        const state = replaceUserWallpaperFromBuffer(
+          db,
+          app.getPath('userData'),
+          user.id,
+          Buffer.from(payload.bytes),
+          payload.extension
+        )
+
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: 'set_wallpaper',
+          targetType: 'user_preference',
+          targetId: user.id,
+          details: {
+            sourcePath: payload.sourcePath ?? null,
+            wallpaperPath: state.wallpaperPath
+          }
+        })
+
+        return {
+          success: true,
+          state
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '应用裁切壁纸失败'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle('settings:restoreDefaultWallpaper', (event) => {
+    try {
+      const user = requireAuth(event)
+      const state = restoreDefaultWallpaper(db, app.getPath('userData'), user.id)
+
+      appendOperationLog(db, {
+        userId: user.id,
+        username: user.username,
+        module: 'settings',
+        action: 'restore_default_wallpaper',
+        targetType: 'user_preference',
+        targetId: user.id
+      })
+
+      return {
+        success: true,
+        state
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '恢复默认壁纸失败'
+      }
+    }
   })
 
   // 更新系统设置

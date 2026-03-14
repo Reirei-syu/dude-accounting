@@ -20,6 +20,7 @@ Current Stage:
 - 已具备登录、账套、凭证、科目、辅助、期初余额、损益结转、结账等基础流程。
 - 账号权限模型已从“仅功能权限”扩展为“功能权限 + 账套访问权限”；普通用户后续将按被分配账套范围获取账套列表与业务操作权限，`admin` 默认可访问全部账套。
 - “系统参数设置”正从单一参数页扩展为“双层配置”：管理员维护系统级规则，普通用户维护个人偏好；第一阶段重点覆盖默认账套、默认首页、凭证默认值与高频列表默认行为。
+- “我的偏好”正在扩展界面个性化能力：新增当前登录用户级壁纸替换功能，支持上传自定义背景图、上传后裁切、恢复内置默认壁纸，并要求登录页与主界面同步生效。
 - 账套设置中的“期末损益结转设置”已从只读预览升级为正式维护页，可按末级损益科目保存结转目标规则。
 - 正在从“桌面记账应用雏形”改造为“具备合规基础能力的代理记账单机软件”。
 - 已识别的重点改造方向为：已记账不可逆、关键操作日志、电子凭证处理底座、备份与电子档案导出、账簿报表输出。
@@ -118,11 +119,17 @@ Key Channels:
 
 Responsibility:
 维护当前登录用户的个人偏好，仅影响当前用户的默认行为，不得突破系统级规则边界。
+当前还承载用户级界面个性化偏好，包括默认账套、默认首页和自定义壁纸。
 
 Planned Channels:
 
 - `settings:getUserPreferences`
 - `settings:setUserPreferences`
+- `settings:getWallpaperState`
+- `settings:getLoginWallpaperState`
+- `settings:chooseWallpaper`
+- `settings:applyWallpaperCrop`
+- `settings:restoreDefaultWallpaper`
 
 ### AccountSetupModule
 
@@ -381,6 +388,7 @@ User Preference Keys:
 
 - `default_ledger_id`
 - `default_home_tab`
+- `custom_wallpaper_relative_path`
 - `voucher_print_layout`
 - `voucher_print_double_gap`
 

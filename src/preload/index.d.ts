@@ -195,11 +195,67 @@ interface AuxiliaryAPI {
 }
 
 interface SettingsAPI {
+  getWallpaperState: () => Promise<{
+    mode: 'default' | 'custom'
+    wallpaperPath: string | null
+    wallpaperUrl: string | null
+    recommendedResolution: string
+    recommendedRatio: string
+    maxFileSizeMb: number
+    supportedFormats: string[]
+  }>
+  getLoginWallpaperState: () => Promise<{
+    mode: 'default' | 'custom'
+    wallpaperPath: string | null
+    wallpaperUrl: string | null
+    recommendedResolution: string
+    recommendedRatio: string
+    maxFileSizeMb: number
+    supportedFormats: string[]
+  }>
   get: (key: string) => Promise<string | null>
   getAll: () => Promise<Record<string, string>>
   getUserPreferences: () => Promise<Record<string, string>>
   set: (key: string, value: string) => Promise<{ success: boolean }>
   setUserPreferences: (preferences: Record<string, string>) => Promise<{ success: boolean }>
+  chooseWallpaper: () => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    sourcePath?: string
+    sourceDataUrl?: string
+    extension?: string
+  }>
+  applyWallpaperCrop: (payload: {
+    extension: string
+    bytes: number[]
+    sourcePath?: string
+  }) => Promise<{
+    success: boolean
+    error?: string
+    state?: {
+      mode: 'default' | 'custom'
+      wallpaperPath: string | null
+      wallpaperUrl: string | null
+      recommendedResolution: string
+      recommendedRatio: string
+      maxFileSizeMb: number
+      supportedFormats: string[]
+    }
+  }>
+  restoreDefaultWallpaper: () => Promise<{
+    success: boolean
+    error?: string
+    state?: {
+      mode: 'default' | 'custom'
+      wallpaperPath: string | null
+      wallpaperUrl: string | null
+      recommendedResolution: string
+      recommendedRatio: string
+      maxFileSizeMb: number
+      supportedFormats: string[]
+    }
+  }>
   getSubjectTemplate: (standardType: 'enterprise' | 'npo') => Promise<{
     standardType: 'enterprise' | 'npo'
     templateName: string

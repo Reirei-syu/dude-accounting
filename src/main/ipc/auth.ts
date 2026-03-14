@@ -3,6 +3,7 @@ import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { hashPassword, verifyPassword } from '../security/password'
 import { listUserLedgerIds, replaceUserLedgerIds } from '../services/userLedgerAccess'
+import { setLastLoginUserId } from '../services/wallpaperPreference'
 import {
   clearSessionByEvent,
   getSessionByEvent,
@@ -57,6 +58,7 @@ export function registerAuthHandlers(): void {
       isAdmin: user.is_admin === 1
     }
     setSessionByEvent(event, sessionUser)
+    setLastLoginUserId(db, sessionUser.id)
 
     appendOperationLog(db, {
       userId: sessionUser.id,
