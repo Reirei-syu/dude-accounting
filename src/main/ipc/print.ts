@@ -59,6 +59,8 @@ interface PrintJobRecord {
   title: string
   ledgerId: number | null
   createdBy: number
+  createdAt: number
+  lastAccessAt: number
   status: PrintJobStatus
   orientation: 'portrait' | 'landscape'
   html: string | null
@@ -67,6 +69,24 @@ interface PrintJobRecord {
 }
 
 const printJobs = new Map<string, PrintJobRecord>()
+const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
+
+function pruneExpiredPrintJobs(now: number = Date.now()): void {
+  for (const [jobId, job] of printJobs) {
+    if (now - job.lastAccessAt <= PRINT_JOB_TTL_MS) {
+      continue
+    }
+
+    const previewWindow =
+      job.previewWebContentsId === null
+        ? null
+        : BrowserWindow.getAllWindows().find(
+            (window) => window.webContents.id === job.previewWebContentsId
+          ) ?? null
+    previewWindow?.close()
+    printJobs.delete(jobId)
+  }
+}
 
 function sanitizeFileName(value: string): string {
   return sanitizePathSegment(value, '打印预览')
@@ -392,10 +412,12 @@ function createPrintDocument(
 }
 
 function getPreviewWindow(jobId: string): BrowserWindow | null {
+  pruneExpiredPrintJobs()
   const job = printJobs.get(jobId)
   if (!job?.previewWebContentsId) {
     return null
   }
+  job.lastAccessAt = Date.now()
   return (
     BrowserWindow.getAllWindows().find(
       (window) => window.webContents.id === job.previewWebContentsId
@@ -404,10 +426,12 @@ function getPreviewWindow(jobId: string): BrowserWindow | null {
 }
 
 function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJobRecord | null {
+  pruneExpiredPrintJobs()
   const job = printJobs.get(jobId)
   if (!job) {
     return null
   }
+  job.lastAccessAt = Date.now()
 
   if (job.previewWebContentsId === event.sender.id) {
     return job
@@ -461,6 +485,7 @@ export function registerPrintHandlers(): void {
   ipcMain.handle('print:prepare', (event, payload: PrintPreparePayload) => {
     const user = requireAuth(event)
     const db = getDatabase()
+    pruneExpiredPrintJobs()
 
     if (payload.type === 'report') {
       const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
@@ -497,6 +522,8 @@ export function registerPrintHandlers(): void {
             ? (payload.ledgerId ?? null)
             : (payload.ledgerId ?? null),
       createdBy: user.id,
+      createdAt: Date.now(),
+      lastAccessAt: Date.now(),
       status: 'preparing',
       orientation: 'portrait',
       html: null,

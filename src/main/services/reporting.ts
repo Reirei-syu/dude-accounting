@@ -3109,35 +3109,46 @@ export function generateReportSnapshot(
     throw new Error('已存在同会计期间同类型的报表，请先删除原报表后再生成')
   }
 
-  const result = db
-    .prepare(
-      `INSERT INTO report_snapshots (
-         ledger_id,
-         report_type,
-         report_name,
-         period,
-         start_period,
-         end_period,
-         as_of_date,
-         include_unposted_vouchers,
-         generated_by,
-         generated_at,
-         content_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      params.ledgerId,
-      params.reportType,
-      reportName,
-      scope.periodLabel,
-      scope.startPeriod,
-      scope.endPeriod,
-      scope.asOfDate,
-      includeUnpostedVouchers ? 1 : 0,
-      params.generatedBy ?? null,
-      generatedAt,
-      JSON.stringify(content)
-    )
+  let result: { lastInsertRowid: number }
+  try {
+    result = db
+      .prepare(
+        `INSERT INTO report_snapshots (
+           ledger_id,
+           report_type,
+           report_name,
+           period,
+           start_period,
+           end_period,
+           as_of_date,
+           include_unposted_vouchers,
+           generated_by,
+           generated_at,
+           content_json
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        params.ledgerId,
+        params.reportType,
+        reportName,
+        scope.periodLabel,
+        scope.startPeriod,
+        scope.endPeriod,
+        scope.asOfDate,
+        includeUnpostedVouchers ? 1 : 0,
+        params.generatedBy ?? null,
+        generatedAt,
+        JSON.stringify(content)
+      ) as { lastInsertRowid: number }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes('idx_report_snapshots_unique_scope')
+    ) {
+      throw new Error('已存在同会计期间同类型的报表，请先删除原报表后再生成')
+    }
+    throw error
+  }
 
   return {
     id: Number(result.lastInsertRowid),

@@ -313,6 +313,10 @@ Existing Tables:
 - `system_settings`
 - `report_snapshots`
 
+Report Snapshot Persistence Constraint:
+
+- `report_snapshots` 通过 `(ledger_id, report_type, period)` 的唯一约束兜底同一账套、同一报表类型、同一会计期间范围的重复生成拦截；旧库迁移时应先清理重复快照再补唯一索引。
+
 System Setting Keys:
 
 - `subject_template.enterprise`

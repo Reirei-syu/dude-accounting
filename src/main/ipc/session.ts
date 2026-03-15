@@ -17,13 +17,31 @@ type PermissionKey =
   | 'ledger_settings'
 
 const senderSessionMap = new Map<number, SessionUser>()
+const senderCleanupBoundSet = new Set<number>()
+
+function clearSessionBySenderId(senderId: number): void {
+  senderSessionMap.delete(senderId)
+}
+
+function cleanupSessionBySenderId(senderId: number): void {
+  clearSessionBySenderId(senderId)
+  senderCleanupBoundSet.delete(senderId)
+}
 
 export function setSessionByEvent(event: IpcMainInvokeEvent, user: SessionUser): void {
-  senderSessionMap.set(event.sender.id, user)
+  const senderId = event.sender.id
+  senderSessionMap.set(senderId, user)
+
+  if (!senderCleanupBoundSet.has(senderId)) {
+    senderCleanupBoundSet.add(senderId)
+    event.sender.once('destroyed', () => {
+      cleanupSessionBySenderId(senderId)
+    })
+  }
 }
 
 export function clearSessionByEvent(event: IpcMainInvokeEvent): void {
-  senderSessionMap.delete(event.sender.id)
+  clearSessionBySenderId(event.sender.id)
 }
 
 export function getSessionByEvent(event: IpcMainInvokeEvent): SessionUser | null {

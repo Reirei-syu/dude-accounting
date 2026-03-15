@@ -367,6 +367,8 @@ export function initializeDatabase(): void {
       ON report_snapshots(ledger_id, period);
     CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_type
       ON report_snapshots(ledger_id, report_type);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_report_snapshots_unique_scope
+      ON report_snapshots(ledger_id, report_type, period);
   `)
 
   ensureSubjectSchema(db)
@@ -908,11 +910,23 @@ export function ensureReportingSchema(db: Database.Database): void {
        AND start_period GLOB '????-??';
   `)
 
+  db.exec(`
+    DELETE FROM report_snapshots
+     WHERE id NOT IN (
+       SELECT MAX(id)
+       FROM report_snapshots
+       GROUP BY ledger_id, report_type, period
+     );
+  `)
+
   db.prepare(
     'CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_period ON report_snapshots(ledger_id, period)'
   ).run()
   db.prepare(
     'CREATE INDEX IF NOT EXISTS idx_report_snapshots_ledger_type ON report_snapshots(ledger_id, report_type)'
+  ).run()
+  db.prepare(
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_report_snapshots_unique_scope ON report_snapshots(ledger_id, report_type, period)'
   ).run()
 }
 

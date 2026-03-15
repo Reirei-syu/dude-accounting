@@ -10,8 +10,27 @@ import {
   type SessionUser
 } from './session'
 
-function createMockEvent(senderId: number): { sender: { id: number } } {
-  return { sender: { id: senderId } }
+function createMockEvent(senderId: number): {
+  sender: {
+    id: number
+    once: (eventName: string, listener: () => void) => void
+  }
+  destroy: () => void
+} {
+  let destroyedListener: (() => void) | null = null
+
+  return {
+    sender: {
+      id: senderId,
+      once: (eventName, listener) => {
+        expect(eventName).toBe('destroyed')
+        destroyedListener = listener
+      }
+    },
+    destroy: () => {
+      destroyedListener?.()
+    }
+  }
 }
 
 function createLedgerAccessDb(allowedPairs: Array<{ userId: number; ledgerId: number }>): {
@@ -45,6 +64,22 @@ describe('ipc session', () => {
     expect(getSessionByEvent(event as never)?.username).toBe('tester')
 
     clearSessionByEvent(event as never)
+    expect(getSessionByEvent(event as never)).toBeNull()
+  })
+
+  it('cleans up session automatically when the sender is destroyed', () => {
+    const event = createMockEvent(9)
+    const user: SessionUser = {
+      id: 9,
+      username: 'destroy-me',
+      permissions: { voucher_entry: true },
+      isAdmin: false
+    }
+
+    setSessionByEvent(event as never, user)
+    expect(getSessionByEvent(event as never)?.username).toBe('destroy-me')
+
+    event.destroy()
     expect(getSessionByEvent(event as never)).toBeNull()
   })
 
