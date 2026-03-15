@@ -4,11 +4,9 @@ import { app, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import {
-  assertNoDuplicateElectronicVoucher,
   buildElectronicVoucherFingerprint,
-  buildImportedVoucherMetadata
+  importElectronicVoucher
 } from '../services/electronicVoucher'
-import { buildTimestampToken, ensureDirectory } from '../services/fileIntegrity'
 import { requireLedgerAccess, requirePermission } from './session'
 
 function getElectronicVoucherRootDir(): string {
@@ -44,80 +42,16 @@ export function registerElectronicVoucherHandlers(): void {
           return { success: false, error: '账套不存在' }
         }
 
-        const metadata = buildImportedVoucherMetadata(payload.sourcePath)
-        const fingerprint = buildElectronicVoucherFingerprint({
-          sha256: metadata.sha256,
-          type: metadata.voucherType,
+        const ledgerDir = path.join(getElectronicVoucherRootDir(), `ledger-${payload.ledgerId}`)
+        const imported = importElectronicVoucher(db, {
+          ledgerId: payload.ledgerId,
+          sourcePath: payload.sourcePath,
+          storageDir: ledgerDir,
+          importedBy: user.id,
           sourceNumber: payload.sourceNumber ?? null,
           sourceDate: payload.sourceDate ?? null,
           amountCents: payload.amountCents ?? null
         })
-
-        assertNoDuplicateElectronicVoucher(db, payload.ledgerId, fingerprint)
-
-        const ledgerDir = path.join(getElectronicVoucherRootDir(), `ledger-${payload.ledgerId}`)
-        ensureDirectory(ledgerDir)
-        const storedName = `${buildTimestampToken()}-${metadata.originalName}`
-        const storedPath = path.join(ledgerDir, storedName)
-        fs.copyFileSync(payload.sourcePath, storedPath)
-
-        const fileResult = db
-          .prepare(
-            `INSERT INTO electronic_voucher_files (
-               ledger_id,
-               original_name,
-               stored_name,
-               stored_path,
-               file_ext,
-               sha256,
-               file_size,
-               imported_by
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            payload.ledgerId,
-            metadata.originalName,
-            storedName,
-            storedPath,
-            metadata.fileExt,
-            metadata.sha256,
-            fs.statSync(storedPath).size,
-            user.id
-          )
-
-        const fileId = Number(fileResult.lastInsertRowid)
-        const recordResult = db
-          .prepare(
-            `INSERT INTO electronic_voucher_records (
-               ledger_id,
-               file_id,
-               voucher_type,
-               source_number,
-               source_date,
-               amount_cents,
-               fingerprint,
-               status
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'imported')`
-          )
-          .run(
-            payload.ledgerId,
-            fileId,
-            metadata.voucherType,
-            payload.sourceNumber ?? null,
-            payload.sourceDate ?? null,
-            payload.amountCents ?? null,
-            fingerprint
-          )
-
-        const recordId = Number(recordResult.lastInsertRowid)
-        db.prepare(
-          `INSERT INTO electronic_voucher_verifications (
-             record_id,
-             verification_status,
-             verification_method,
-             verification_message
-           ) VALUES (?, 'pending', ?, ?)`
-        ).run(recordId, 'initial-import', '待验签/验真')
 
         appendOperationLog(db, {
           ledgerId: payload.ledgerId,
@@ -126,20 +60,20 @@ export function registerElectronicVoucherHandlers(): void {
           module: 'electronic_voucher',
           action: 'import',
           targetType: 'electronic_voucher_record',
-          targetId: recordId,
+          targetId: imported.recordId,
           details: {
             sourcePath: payload.sourcePath,
-            storedPath,
-            voucherType: metadata.voucherType
+            storedPath: imported.storedPath,
+            voucherType: imported.voucherType
           }
         })
 
         return {
           success: true,
-          fileId,
-          recordId,
-          voucherType: metadata.voucherType,
-          fingerprint
+          fileId: imported.fileId,
+          recordId: imported.recordId,
+          voucherType: imported.voucherType,
+          fingerprint: imported.fingerprint
         }
       } catch (error) {
         return {

@@ -2,9 +2,13 @@
 
 ## 0. 使用约定（跨对话记忆）
 
+- 所有项目交流统一使用简体中文；如无特殊说明，项目内新增或修改的文案默认使用简体中文。
+- 每次完成一次重要修改后，必须先做 review，再执行验证；验证通过后再向用户交付成果。
 - 每次新对话开始时，先阅读本文件，再开始分析或开发。
 - 当出现重大变化时必须更新本文件：架构调整、数据库结构变化、权限模型变化、核心流程变化、关键模块新增/下线。
 - 本文件是项目“当前真实状态”的基线，若与其他文档冲突，以代码和本文件为准，并同步修正文档差异。
+- 当前打开的 folder 视为项目级最底部目录；除非用户明确要求，过程中新增文件默认放在当前项目目录内。
+- 如用户要求打包为单独文件、安装包或其他可交付安装产物，输出目录统一为 `D:\coding\completed\项目名称`，本条优先于“文件放在当前项目目录内”的默认规则。
 
 ---
 
@@ -216,6 +220,10 @@ Planned Channels:
 - `eVoucher:verify`
 - `eVoucher:parse`
 - `eVoucher:convert`
+
+Current Import Constraint:
+
+- 电子凭证导入在文件落盘后必须以单事务写入 `electronic_voucher_files`、`electronic_voucher_records`、`electronic_voucher_verifications`；若数据库写入失败，必须回滚并清理已复制的孤儿文件。
 
 ### BackupRecoveryModule
 
