@@ -145,7 +145,7 @@ npm run build:linux
 
 ## 打包输出位置
 
-默认情况下，`electron-builder` 的输出目录为项目根目录下的 `dist/`。
+默认情况下，本项目当前配置会把安装产物输出到 `D:\coding\completed\dude-app\`。
 
 ### Windows 安装包
 
@@ -155,10 +155,10 @@ npm run build:linux
 dude-app-<version>-setup.exe
 ```
 
-例如当前版本为 `1.0.0` 时，通常输出为：
+例如当前版本为 `1.0.3` 时，通常输出为：
 
 ```text
-dist/dude-app-1.0.0-setup.exe
+D:\coding\completed\dude-app\dude-app-1.0.3-setup.exe
 ```
 
 ### macOS 安装包
@@ -169,10 +169,10 @@ dist/dude-app-1.0.0-setup.exe
 dude-app-<version>.dmg
 ```
 
-例如当前版本为 `1.0.0` 时，通常输出为：
+例如当前版本为 `1.0.3` 时，通常输出为：
 
 ```text
-dist/dude-app-1.0.0.dmg
+D:\coding\completed\dude-app\dude-app-1.0.3.dmg
 ```
 
 ## 常见问题
