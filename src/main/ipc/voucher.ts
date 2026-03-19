@@ -3,6 +3,11 @@ import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { assertPeriodWritable } from '../services/periodState'
 import {
+  applyVoucherBatchAction,
+  listVoucherBatchTargets,
+  type VoucherBatchAction
+} from '../services/voucherBatchLifecycle'
+import {
   getNextVoucherNumber,
   getVoucherLedgerId,
   listVoucherEntries,
@@ -19,10 +24,10 @@ import {
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import {
   assertVoucherSwapAllowed,
+  type EmergencyReversalPayload,
   normalizeEmergencyReversalPayload
 } from '../services/voucherControl'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
-import { splitVouchersByBatchAction, type VoucherBatchAction } from './voucherBatchAction'
 import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
 
 interface SaveVoucherInput {
@@ -527,193 +532,90 @@ export function registerVoucherHandlers(): void {
         reason?: string
         approvalTag?: string
       }
-    ) => {
-      try {
-        if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length === 0) {
-          return { success: false, error: '请选择凭证' }
-        }
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'voucher:batchAction',
+          baseDir: app.getPath('userData'),
+          context: {
+            action: payload.action,
+            requestedCount: payload.voucherIds.length
+          }
+        },
+        () => {
+          try {
+            if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length === 0) {
+              return { success: false, error: '请选择凭证' }
+            }
 
-        const action = payload.action
-        const user =
-          action === 'audit' || action === 'unaudit'
-            ? requirePermission(event, 'audit')
-            : action === 'bookkeep'
-              ? requirePermission(event, 'bookkeeping')
-              : action === 'unbookkeep'
-                ? requirePermission(event, 'unbookkeep')
-                : requirePermission(event, 'voucher_entry')
-        const emergencyReversal =
-          action === 'unbookkeep'
-            ? normalizeEmergencyReversalPayload({
-                reason: payload.reason,
-                approvalTag: payload.approvalTag
-              })
-            : null
+            const action = payload.action
+            const user =
+              action === 'audit' || action === 'unaudit'
+                ? requirePermission(event, 'audit')
+                : action === 'bookkeep'
+                  ? requirePermission(event, 'bookkeeping')
+                  : action === 'unbookkeep'
+                    ? requirePermission(event, 'unbookkeep')
+                    : requirePermission(event, 'voucher_entry')
+            const emergencyReversal: EmergencyReversalPayload | null =
+              action === 'unbookkeep'
+                ? normalizeEmergencyReversalPayload({
+                    reason: payload.reason,
+                    approvalTag: payload.approvalTag
+                  })
+                : null
 
-        const placeholders = payload.voucherIds.map(() => '?').join(',')
-        const vouchers = db
-          .prepare(
-            `SELECT
-               id,
-               status,
-               deleted_from_status,
-               ledger_id,
-               period,
-               voucher_word,
-               auditor_id,
-               bookkeeper_id
-             FROM vouchers
-             WHERE id IN (${placeholders})`
-          )
-          .all(...payload.voucherIds) as Array<{
-          id: number
-          status: number
-          deleted_from_status: number | null
-          ledger_id: number
-          period: string
-          voucher_word: string
-          auditor_id: number | null
-          bookkeeper_id: number | null
-        }>
+            const vouchers = listVoucherBatchTargets(db, payload.voucherIds)
 
-        if (vouchers.length !== payload.voucherIds.length) {
-          return { success: false, error: '存在无效凭证，操作中止' }
-        }
-        for (const voucher of vouchers) {
-          requireLedgerAccess(event, db, voucher.ledger_id)
-        }
+            if (vouchers.length !== payload.voucherIds.length) {
+              return { success: false, error: '存在无效凭证，操作中止' }
+            }
+            for (const voucher of vouchers) {
+              requireLedgerAccess(event, db, voucher.ledger_id)
+            }
 
-        const { applicable: applicableVouchers, skipped: skippedVouchers } =
-          splitVouchersByBatchAction(action, vouchers)
+            const { applicable, skipped } = applyVoucherBatchAction(
+              db,
+              action,
+              vouchers,
+              user.id,
+              emergencyReversal
+            )
 
-        const runTx = db.transaction(() => {
-          for (const voucher of applicableVouchers) {
-            if (action === 'audit') {
-              if (voucher.status !== 0) continue
-              if (voucher.status !== 0) throw new Error('仅未审核凭证可审核')
-              db.prepare(
-                `UPDATE vouchers
-                                 SET status = 1, auditor_id = ?, updated_at = datetime('now')
-                                 WHERE id = ?`
-              ).run(user.id, voucher.id)
-            } else if (action === 'bookkeep') {
-              if (voucher.status !== 1) continue
-              if (voucher.status !== 1) throw new Error('仅已审核凭证可记账')
-              db.prepare(
-                `UPDATE vouchers
-                                 SET status = 2,
-                                     bookkeeper_id = ?,
-                                     posted_at = datetime('now'),
-                                     updated_at = datetime('now')
-                                 WHERE id = ?`
-              ).run(user.id, voucher.id)
-            } else if (action === 'unbookkeep') {
-              if (voucher.status !== 2) continue
-              if (voucher.status !== 2) throw new Error('仅已记账凭证可反记账')
-              db.prepare(
-                `UPDATE vouchers
-                                 SET status = 1,
-                                     bookkeeper_id = NULL,
-                                     emergency_reversal_reason = ?,
-                                     emergency_reversal_by = ?,
-                                     emergency_reversal_at = datetime('now'),
-                                     reversal_approval_tag = ?,
-                                     updated_at = datetime('now')
-                                 WHERE id = ?`
-              ).run(
-                emergencyReversal?.reason ?? null,
-                user.id,
-                emergencyReversal?.approvalTag ?? null,
-                voucher.id
-              )
-            } else if (action === 'unaudit') {
-              if (voucher.status !== 1) continue
-              if (voucher.status !== 1) throw new Error('仅已审核凭证可反审核')
-              db.prepare(
-                `UPDATE vouchers
-                                 SET status = 0, auditor_id = NULL, updated_at = datetime('now')
-                                 WHERE id = ?`
-              ).run(voucher.id)
-            } else if (action === 'delete') {
-              if (voucher.status !== 0 && voucher.status !== 1) continue
-              db.prepare(
-                `UPDATE vouchers
-                 SET status = 3, deleted_from_status = status, updated_at = datetime('now')
-                 WHERE id = ?`
-              ).run(voucher.id)
-            } else if (action === 'restoreDelete') {
-              if (voucher.status !== 3) continue
-
-              const restoredStatus = voucher.deleted_from_status ?? 0
-              if (restoredStatus === 0) {
-                db.prepare(
-                  `UPDATE vouchers
-                   SET status = 0,
-                       deleted_from_status = NULL,
-                       auditor_id = NULL,
-                       bookkeeper_id = NULL,
-                       updated_at = datetime('now')
-                   WHERE id = ?`
-                ).run(voucher.id)
-              } else if (restoredStatus === 1) {
-                db.prepare(
-                  `UPDATE vouchers
-                   SET status = 1,
-                       deleted_from_status = NULL,
-                       bookkeeper_id = NULL,
-                       updated_at = datetime('now')
-                   WHERE id = ?`
-                ).run(voucher.id)
-              } else {
-                db.prepare(
-                  `UPDATE vouchers
-                   SET status = ?,
-                       deleted_from_status = NULL,
-                       updated_at = datetime('now')
-                   WHERE id = ?`
-                ).run(restoredStatus, voucher.id)
+            appendOperationLog(db, {
+              ledgerId:
+                applicable.length > 0
+                  ? applicable[0].ledger_id
+                  : vouchers.length > 0
+                    ? vouchers[0].ledger_id
+                    : null,
+              userId: user.id,
+              username: user.username,
+              module: 'voucher',
+              action,
+              targetType: 'voucher_batch',
+              targetId: payload.voucherIds.join(','),
+              reason: emergencyReversal?.reason ?? null,
+              approvalTag: emergencyReversal?.approvalTag ?? null,
+              details: {
+                processedCount: applicable.length,
+                skippedCount: skipped.length,
+                requestedCount: vouchers.length
               }
-            } else if (action === 'purgeDelete') {
-              if (voucher.status !== 3) continue
-              db.prepare('DELETE FROM vouchers WHERE id = ?').run(voucher.id)
+            })
+            return {
+              success: true,
+              processedCount: applicable.length,
+              skippedCount: skipped.length,
+              requestedCount: vouchers.length
+            }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : '凭证批量操作失败'
             }
           }
-        })
-
-        runTx()
-        appendOperationLog(db, {
-          ledgerId:
-            applicableVouchers.length > 0
-              ? applicableVouchers[0].ledger_id
-              : vouchers.length > 0
-                ? vouchers[0].ledger_id
-                : null,
-          userId: user.id,
-          username: user.username,
-          module: 'voucher',
-          action,
-          targetType: 'voucher_batch',
-          targetId: payload.voucherIds.join(','),
-          reason: emergencyReversal?.reason ?? null,
-          approvalTag: emergencyReversal?.approvalTag ?? null,
-          details: {
-            processedCount: applicableVouchers.length,
-            skippedCount: skippedVouchers.length,
-            requestedCount: vouchers.length
-          }
-        })
-        return {
-          success: true,
-          processedCount: applicableVouchers.length,
-          skippedCount: skippedVouchers.length,
-          requestedCount: vouchers.length
         }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : '凭证批量操作失败'
-        }
-      }
-    }
+      )
   )
 }
