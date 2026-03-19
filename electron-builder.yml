@@ -3,6 +3,7 @@ productName: dude-app
 directories:
   output: D:/coding/completed/dude-app
   buildResources: build
+afterPack: scripts/after-pack-win-icon.cjs
 files:
   - '!**/.vscode/*'
   - '!src/*'

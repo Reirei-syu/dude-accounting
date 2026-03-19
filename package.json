@@ -1,6 +1,6 @@
 {
   "name": "dude-app",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -58,6 +58,7 @@
     "eslint-plugin-react-refresh": "^0.4.24",
     "png-to-ico": "^3.0.1",
     "prettier": "^3.7.4",
+    "rcedit": "^5.0.2",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "tailwindcss": "^4.2.1",
