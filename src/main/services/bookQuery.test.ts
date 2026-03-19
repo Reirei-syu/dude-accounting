@@ -799,6 +799,119 @@ function createLargeHierarchyDb(): {
   return { db, branchCount, leafCountPerBranch }
 }
 
+function createLargePeriodDetailDb(): FakeBookQueryDb {
+  const db = new FakeBookQueryDb()
+  let voucherId = 5_001
+  let entryId = 8_001
+
+  db.ledgers.push({
+    id: 4,
+    name: 'long-range-ledger',
+    standard_type: 'enterprise',
+    start_period: '2025-01',
+    current_period: '2026-12'
+  })
+
+  db.subjects.push(
+    {
+      ledger_id: 4,
+      code: '1001',
+      name: 'bank',
+      parent_code: null,
+      category: 'asset',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 4,
+      code: '6601',
+      name: 'admin-expense',
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 4,
+      code: '660101',
+      name: 'office-expense',
+      parent_code: '6601',
+      category: 'expense',
+      balance_direction: 1,
+      level: 2
+    },
+    {
+      ledger_id: 4,
+      code: '660102',
+      name: 'travel-expense',
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 2
+    }
+  )
+
+  db.initialBalances.push(
+    {
+      ledger_id: 4,
+      period: '2025-01',
+      subject_code: '1001',
+      debit_amount: 500_000,
+      credit_amount: 0
+    },
+    {
+      ledger_id: 4,
+      period: '2025-01',
+      subject_code: '660101',
+      debit_amount: 500,
+      credit_amount: 0
+    }
+  )
+
+  for (let index = 0; index < 24; index += 1) {
+    const year = 2025 + Math.floor(index / 12)
+    const month = (index % 12) + 1
+    const amount = (index + 1) * 100
+    const monthToken = String(month).padStart(2, '0')
+    const subjectCode = index % 2 === 0 ? '660101' : '660102'
+
+    db.vouchers.push({
+      id: voucherId,
+      ledger_id: 4,
+      period: `${year}-${monthToken}`,
+      voucher_date: `${year}-${monthToken}-15`,
+      voucher_number: index + 1,
+      voucher_word: 'J',
+      status: 2
+    })
+
+    db.voucherEntries.push(
+      {
+        id: entryId++,
+        voucher_id: voucherId,
+        row_order: 1,
+        summary: `monthly-expense-${year}-${monthToken}`,
+        subject_code: subjectCode,
+        debit_amount: amount,
+        credit_amount: 0
+      },
+      {
+        id: entryId++,
+        voucher_id: voucherId,
+        row_order: 2,
+        summary: `monthly-expense-${year}-${monthToken}`,
+        subject_code: '1001',
+        debit_amount: 0,
+        credit_amount: amount
+      }
+    )
+
+    voucherId += 1
+  }
+
+  return db
+}
+
 describe('bookQuery service', () => {
   it('lists subject balances for a custom date range', () => {
     const db = createDb()
@@ -1046,6 +1159,38 @@ describe('bookQuery service', () => {
       summary: 'mar-travel',
       debit_amount: 2_000,
       balance_amount: 5_000
+    })
+  })
+
+  it('keeps opening and running balance stable for long-range detail ledger queries', () => {
+    const db = createLargePeriodDetailDb()
+
+    const detail = getDetailLedger(db as never, {
+      ledgerId: 4,
+      subjectCode: '6601',
+      startDate: '2026-07-01',
+      endDate: '2026-12-31'
+    })
+
+    expect(detail.rows).toHaveLength(7)
+    expect(detail.rows[0]).toMatchObject({
+      row_type: 'opening',
+      balance_amount: 17_600,
+      balance_side: 'debit'
+    })
+    expect(detail.rows[1]).toMatchObject({
+      voucher_date: '2026-07-15',
+      summary: 'monthly-expense-2026-07',
+      debit_amount: 1_900,
+      balance_amount: 19_500,
+      balance_side: 'debit'
+    })
+    expect(detail.rows.at(-1)).toMatchObject({
+      voucher_date: '2026-12-15',
+      summary: 'monthly-expense-2026-12',
+      debit_amount: 2_400,
+      balance_amount: 30_500,
+      balance_side: 'debit'
     })
   })
 
