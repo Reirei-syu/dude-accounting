@@ -185,6 +185,8 @@ const api = {
     setUserPreferences: (preferences: Record<string, string>) =>
       ipcRenderer.invoke('settings:setUserPreferences', preferences),
     openErrorLogDirectory: () => ipcRenderer.invoke('settings:openErrorLogDirectory'),
+    exportDiagnosticsLogs: (payload?: { directoryPath?: string }) =>
+      ipcRenderer.invoke('settings:exportDiagnosticsLogs', payload),
     chooseWallpaper: () => ipcRenderer.invoke('settings:chooseWallpaper'),
     applyWallpaperCrop: (payload: { extension: string; bytes: number[]; sourcePath?: string }) =>
       ipcRenderer.invoke('settings:applyWallpaperCrop', payload),

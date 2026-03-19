@@ -230,6 +230,13 @@ interface SettingsAPI {
     error?: string
     logDirectory?: string
   }>
+  exportDiagnosticsLogs: (payload?: { directoryPath?: string }) => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    exportDirectory?: string
+    filePaths?: string[]
+  }>
   chooseWallpaper: () => Promise<{
     success: boolean
     cancelled?: boolean

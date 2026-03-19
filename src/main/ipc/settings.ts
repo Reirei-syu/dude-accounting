@@ -25,7 +25,7 @@ import {
   validateWallpaperSourceFile,
   WALLPAPER_SUPPORTED_FORMATS
 } from '../services/wallpaperPreference'
-import { getErrorLogStatus } from '../services/errorLog'
+import { exportDiagnosticLogs, getErrorLogStatus } from '../services/errorLog'
 import { requireAdmin, requireAuth, requirePermission } from './session'
 
 type StandardType = 'enterprise' | 'npo'
@@ -45,6 +45,10 @@ function getTemplateDefaultPath(standardType: StandardType): string {
   const fileName =
     standardType === 'enterprise' ? '企业一级科目导入模板.xlsx' : '民非一级科目导入模板.xlsx'
   return path.join(app.getPath('documents'), 'Dude Accounting', '导入模板', fileName)
+}
+
+function getDiagnosticsExportDefaultPath(): string {
+  return path.join(app.getPath('documents'), 'Dude Accounting', '日志导出')
 }
 
 export function registerSettingsHandlers(): void {
@@ -124,6 +128,43 @@ export function registerSettingsHandlers(): void {
       }
     }
   })
+
+  ipcMain.handle(
+    'settings:exportDiagnosticsLogs',
+    async (event, payload?: { directoryPath?: string }) => {
+      try {
+        requireAuth(event)
+        const browserWindow = BrowserWindow.fromWebContents(event.sender)
+        const openResult = payload?.directoryPath
+          ? { canceled: false, filePaths: [payload.directoryPath] }
+          : browserWindow
+            ? await dialog.showOpenDialog(browserWindow, {
+                defaultPath: getDiagnosticsExportDefaultPath(),
+                properties: ['openDirectory', 'createDirectory']
+              })
+            : await dialog.showOpenDialog({
+                defaultPath: getDiagnosticsExportDefaultPath(),
+                properties: ['openDirectory', 'createDirectory']
+              })
+
+        if (openResult.canceled || openResult.filePaths.length === 0) {
+          return { success: false, cancelled: true }
+        }
+
+        const result = exportDiagnosticLogs(app.getPath('userData'), openResult.filePaths[0])
+        return {
+          success: true,
+          exportDirectory: result.exportDirectory,
+          filePaths: result.filePaths
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '导出日志文件失败'
+        }
+      }
+    }
+  )
 
   ipcMain.handle('settings:setUserPreferences', (event, preferences: Record<string, string>) => {
     const user = requireAuth(event)

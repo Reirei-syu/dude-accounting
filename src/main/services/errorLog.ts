@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { app, type WebContents } from 'electron'
-import { ensureDirectory } from './fileIntegrity'
+import { buildTimestampToken, ensureDirectory } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
 import { getRuntimeLogFilePath } from './runtimeLogger'
 
@@ -26,6 +26,8 @@ export interface RendererErrorPayload {
   reason?: string | null
   href?: string | null
 }
+
+const DIAGNOSTIC_LOG_FILE_PATTERN = /^(runtime|error)-\d{4}-\d{2}-\d{2}\.jsonl$/i
 
 let installedGlobalErrorLogging = false
 
@@ -147,6 +149,47 @@ export function getErrorLogStatus(baseDir: string, now: Date = new Date()): {
     errorLogPath,
     runtimeLogExists: fs.existsSync(runtimeLogPath),
     errorLogExists: fs.existsSync(errorLogPath)
+  }
+}
+
+export function listDiagnosticLogFiles(baseDir: string): string[] {
+  const logDirectory = getErrorLogDirectory(baseDir)
+  if (!fs.existsSync(logDirectory)) {
+    return []
+  }
+
+  return fs
+    .readdirSync(logDirectory)
+    .filter((fileName) => DIAGNOSTIC_LOG_FILE_PATTERN.test(fileName))
+    .sort((left, right) => left.localeCompare(right))
+    .map((fileName) => path.join(logDirectory, fileName))
+}
+
+export function exportDiagnosticLogs(
+  baseDir: string,
+  targetDirectory: string,
+  now: Date = new Date()
+): {
+  exportDirectory: string
+  filePaths: string[]
+} {
+  const sourceFiles = listDiagnosticLogFiles(baseDir)
+  if (sourceFiles.length === 0) {
+    throw new Error('暂无可导出的日志文件')
+  }
+
+  const exportDirectory = path.join(targetDirectory, `DudeAccounting-logs-${buildTimestampToken(now)}`)
+  ensureDirectory(exportDirectory)
+
+  const filePaths = sourceFiles.map((sourcePath) => {
+    const targetPath = path.join(exportDirectory, path.basename(sourcePath))
+    fs.copyFileSync(sourcePath, targetPath)
+    return targetPath
+  })
+
+  return {
+    exportDirectory,
+    filePaths
   }
 }
 

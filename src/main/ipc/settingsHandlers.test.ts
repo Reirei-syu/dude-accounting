@@ -20,6 +20,7 @@ const settingsMocks = vi.hoisted(() => {
     getDatabase: vi.fn(() => ({ prepare: vi.fn(), transaction: vi.fn((cb) => cb) })),
     appendOperationLog: vi.fn(),
     getErrorLogStatus: vi.fn(),
+    exportDiagnosticLogs: vi.fn(),
     requireAuth: vi.fn(),
     requireAdmin: vi.fn(),
     requirePermission: vi.fn()
@@ -73,7 +74,8 @@ vi.mock('../services/wallpaperPreference', () => ({
 }))
 
 vi.mock('../services/errorLog', () => ({
-  getErrorLogStatus: settingsMocks.getErrorLogStatus
+  getErrorLogStatus: settingsMocks.getErrorLogStatus,
+  exportDiagnosticLogs: settingsMocks.exportDiagnosticLogs
 }))
 
 vi.mock('./session', () => ({
@@ -101,6 +103,13 @@ describe('settings IPC handlers', () => {
       errorLogPath: path.join(tempDir, 'logs', 'error-2026-03-19.jsonl'),
       runtimeLogExists: false,
       errorLogExists: false
+    })
+    settingsMocks.exportDiagnosticLogs.mockReturnValue({
+      exportDirectory: path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000'),
+      filePaths: [
+        path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'runtime-2026-03-19.jsonl'),
+        path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'error-2026-03-19.jsonl')
+      ]
     })
 
     registerSettingsHandlers()
@@ -154,6 +163,51 @@ describe('settings IPC handlers', () => {
     expect(result).toEqual({
       success: false,
       error: 'failed to open directory'
+    })
+  })
+
+  it('exports diagnostics logs into the selected directory', async () => {
+    settingsMocks.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ['D:/Logs']
+    })
+    const handler = settingsMocks.handlers.get('settings:exportDiagnosticsLogs')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event)
+
+    expect(settingsMocks.showOpenDialog).toHaveBeenCalledTimes(1)
+    expect(settingsMocks.showOpenDialog.mock.calls[0]?.[0]).toMatchObject({
+      defaultPath: path.join('D:/Documents', 'Dude Accounting', '日志导出'),
+      properties: ['openDirectory', 'createDirectory']
+    })
+    expect(settingsMocks.exportDiagnosticLogs).toHaveBeenCalledWith(tempDir, 'D:/Logs')
+    expect(result).toEqual({
+      success: true,
+      exportDirectory: path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000'),
+      filePaths: [
+        path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'runtime-2026-03-19.jsonl'),
+        path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'error-2026-03-19.jsonl')
+      ]
+    })
+  })
+
+  it('returns a stable error payload when diagnostics export has no files', async () => {
+    settingsMocks.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ['D:/Logs']
+    })
+    settingsMocks.exportDiagnosticLogs.mockImplementation(() => {
+      throw new Error('暂无可导出的日志文件')
+    })
+    const handler = settingsMocks.handlers.get('settings:exportDiagnosticsLogs')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event)
+
+    expect(result).toEqual({
+      success: false,
+      error: '暂无可导出的日志文件'
     })
   })
 })

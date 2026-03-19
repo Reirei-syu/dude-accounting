@@ -19,6 +19,7 @@ export default function SystemParams(): JSX.Element {
     useState<VoucherListStatus>('all')
   const [saving, setSaving] = useState(false)
   const [openingLogDir, setOpeningLogDir] = useState(false)
+  const [exportingLogs, setExportingLogs] = useState(false)
   const [errorLogStatus, setErrorLogStatus] = useState<ErrorLogStatus | null>(null)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
@@ -106,6 +107,41 @@ export default function SystemParams(): JSX.Element {
       })
     } finally {
       setOpeningLogDir(false)
+    }
+  }
+
+  const handleExportDiagnosticsLogs = async (): Promise<void> => {
+    setMessage(null)
+    if (!window.electron) {
+      setMessage({ type: 'error', text: '浏览器预览模式不支持导出日志文件' })
+      return
+    }
+
+    setExportingLogs(true)
+    try {
+      const result = await window.api.settings.exportDiagnosticsLogs()
+      if (result.cancelled) {
+        return
+      }
+      if (!result.success || !result.exportDirectory) {
+        setMessage({
+          type: 'error',
+          text: result.error || '导出日志文件失败'
+        })
+        return
+      }
+
+      setMessage({
+        type: 'success',
+        text: `日志文件已导出到：${result.exportDirectory}`
+      })
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '导出日志文件失败'
+      })
+    } finally {
+      setExportingLogs(false)
     }
   }
 
@@ -210,6 +246,14 @@ export default function SystemParams(): JSX.Element {
               系统会自动记录主进程未捕获异常、Promise 未处理拒绝、渲染进程脚本错误和进程异常退出，便于后续排查突然出现的 BUG。
             </div>
           </div>
+          <button
+            className="glass-btn-secondary px-4 py-2"
+            type="button"
+            onClick={() => void handleExportDiagnosticsLogs()}
+            disabled={exportingLogs}
+          >
+            {exportingLogs ? '导出中...' : '导出日志文件'}
+          </button>
           <button
             className="glass-btn-secondary px-4 py-2"
             type="button"
