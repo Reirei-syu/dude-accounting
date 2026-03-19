@@ -1,19 +1,15 @@
 import { app, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
-import {
-  getStandardTemplateSummaries,
-  seedCashFlowItemsForLedger,
-  seedCashFlowMappingsForLedger,
-  seedPLCarryForwardRulesForLedger,
-  seedSubjectsForLedger
-} from '../database/seed'
+import { getStandardTemplateSummaries } from '../database/seed'
 import { appendOperationLog } from '../services/auditLog'
 import { listAccessibleLedgers, listLedgerPeriods } from '../services/ledgerCatalog'
-import { assertLedgerNameAvailable, normalizeLedgerName } from '../services/ledgerNaming'
+import {
+  applyLedgerStandardTemplate,
+  createLedgerWithTemplate,
+  updateLedgerConfiguration
+} from '../services/ledgerLifecycle'
 import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
-import { applyCustomTopLevelSubjectTemplate } from '../services/subjectTemplate'
 import { withIpcTelemetry } from '../services/runtimeLogger'
-import { grantUserLedgerAccess } from '../services/userLedgerAccess'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 export function registerLedgerHandlers(): void {
@@ -44,135 +40,126 @@ export function registerLedgerHandlers(): void {
         standardType: 'enterprise' | 'npo'
         startPeriod: string
       }
-    ) => {
-      try {
-        const user = requirePermission(event, 'ledger_settings')
-        const normalizedName = normalizeLedgerName(data.name)
-        assertLedgerNameAvailable(db, normalizedName)
-        const result = db
-          .prepare(
-            `INSERT INTO ledgers (name, standard_type, start_period, current_period)
-             VALUES (?, ?, ?, ?)`
-          )
-          .run(normalizedName, data.standardType, data.startPeriod, data.startPeriod)
-
-        const ledgerId = Number(result.lastInsertRowid)
-        seedSubjectsForLedger(db, ledgerId, data.standardType)
-        const customSubjectCount = applyCustomTopLevelSubjectTemplate(
-          db,
-          ledgerId,
-          data.standardType
-        )
-        seedCashFlowItemsForLedger(db, ledgerId)
-        seedCashFlowMappingsForLedger(db, ledgerId, data.standardType)
-        seedPLCarryForwardRulesForLedger(db, ledgerId, data.standardType)
-        db.prepare('INSERT INTO periods (ledger_id, period) VALUES (?, ?)').run(
-          ledgerId,
-          data.startPeriod
-        )
-        if (!user.isAdmin) {
-          grantUserLedgerAccess(db, user.id, ledgerId)
-        }
-
-        appendOperationLog(db, {
-          ledgerId,
-          userId: user.id,
-          username: user.username,
-          module: 'ledger',
-          action: 'create',
-          targetType: 'ledger',
-          targetId: ledgerId,
-          details: {
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'ledger:create',
+          baseDir: app.getPath('userData'),
+          context: {
             standardType: data.standardType,
-            startPeriod: data.startPeriod,
-            customSubjectCount
+            startPeriod: data.startPeriod
           }
-        })
+        },
+        () => {
+          try {
+            const user = requirePermission(event, 'ledger_settings')
+            const result = createLedgerWithTemplate(db, {
+              name: data.name,
+              standardType: data.standardType,
+              startPeriod: data.startPeriod,
+              operatorUserId: user.id,
+              operatorIsAdmin: user.isAdmin
+            })
 
-        return { success: true, id: ledgerId }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+            appendOperationLog(db, {
+              ledgerId: result.ledgerId,
+              userId: user.id,
+              username: user.username,
+              module: 'ledger',
+              action: 'create',
+              targetType: 'ledger',
+              targetId: result.ledgerId,
+              details: {
+                standardType: data.standardType,
+                startPeriod: data.startPeriod,
+                customSubjectCount: result.customSubjectCount
+              }
+            })
+
+            return { success: true, id: result.ledgerId }
+          } catch (error) {
+            return { success: false, error: (error as Error).message }
+          }
+        }
+      )
   )
 
   ipcMain.handle(
     'ledger:update',
-    (event, data: { id: number; name?: string; currentPeriod?: string }) => {
-      try {
-        const user = requirePermission(event, 'ledger_settings')
-        requireLedgerAccess(event, db, data.id)
-        if (data.name !== undefined) {
-          const normalizedName = normalizeLedgerName(data.name)
-          assertLedgerNameAvailable(db, normalizedName, data.id)
-          db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(normalizedName, data.id)
-        }
-        if (data.currentPeriod !== undefined) {
-          const ledger = db
-            .prepare('SELECT start_period FROM ledgers WHERE id = ?')
-            .get(data.id) as { start_period: string } | undefined
-
-          if (!ledger) {
-            throw new Error('账套不存在')
+    (event, data: { id: number; name?: string; currentPeriod?: string }) =>
+      withIpcTelemetry(
+        {
+          channel: 'ledger:update',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: data.id,
+            hasName: data.name !== undefined,
+            hasCurrentPeriod: data.currentPeriod !== undefined
           }
+        },
+        () => {
+          try {
+            const user = requirePermission(event, 'ledger_settings')
+            requireLedgerAccess(event, db, data.id)
+            updateLedgerConfiguration(db, {
+              ledgerId: data.id,
+              name: data.name,
+              currentPeriod: data.currentPeriod
+            })
 
-          const nextStartPeriod =
-            data.currentPeriod < ledger.start_period ? data.currentPeriod : ledger.start_period
+            appendOperationLog(db, {
+              ledgerId: data.id,
+              userId: user.id,
+              username: user.username,
+              module: 'ledger',
+              action: 'update',
+              targetType: 'ledger',
+              targetId: data.id,
+              details: {
+                name: data.name,
+                currentPeriod: data.currentPeriod
+              }
+            })
 
-          db.prepare('UPDATE ledgers SET start_period = ?, current_period = ? WHERE id = ?').run(
-            nextStartPeriod,
-            data.currentPeriod,
-            data.id
-          )
-          db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
-            data.id,
-            data.currentPeriod
-          )
-        }
-
-        appendOperationLog(db, {
-          ledgerId: data.id,
-          userId: user.id,
-          username: user.username,
-          module: 'ledger',
-          action: 'update',
-          targetType: 'ledger',
-          targetId: data.id,
-          details: {
-            name: data.name,
-            currentPeriod: data.currentPeriod
+            return { success: true }
+          } catch (error) {
+            return { success: false, error: (error as Error).message }
           }
-        })
-
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+        }
+      )
   )
 
-  ipcMain.handle('ledger:delete', (event, id: number) => {
-    try {
-      const user = requirePermission(event, 'ledger_settings')
-      requireLedgerAccess(event, db, id)
-      assertLedgerDeletionAllowed(db, id)
-      db.prepare('DELETE FROM ledgers WHERE id = ?').run(id)
+  ipcMain.handle('ledger:delete', (event, id: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'ledger:delete',
+        baseDir: app.getPath('userData'),
+        context: { ledgerId: id }
+      },
+      () => {
+        try {
+          const user = requirePermission(event, 'ledger_settings')
+          requireLedgerAccess(event, db, id)
+          assertLedgerDeletionAllowed(db, id)
+          db.prepare('DELETE FROM ledgers WHERE id = ?').run(id)
 
-      appendOperationLog(db, {
-        ledgerId: id,
-        userId: user.id,
-        username: user.username,
-        module: 'ledger',
-        action: 'delete',
-        targetType: 'ledger',
-        targetId: id
-      })
+          appendOperationLog(db, {
+            ledgerId: id,
+            userId: user.id,
+            username: user.username,
+            module: 'ledger',
+            action: 'delete',
+            targetType: 'ledger',
+            targetId: id
+          })
 
-      return { success: true }
-    } catch (error) {
-      return { success: false, error: (error as Error).message }
-    }
-  })
+          return { success: true }
+        } catch (error) {
+          return { success: false, error: (error as Error).message }
+        }
+      }
+    )
+  )
 
   ipcMain.handle('ledger:getPeriods', (event, ledgerId: number) =>
     withIpcTelemetry(
@@ -202,103 +189,49 @@ export function registerLedgerHandlers(): void {
         ledgerId: number
         standardType: 'enterprise' | 'npo'
       }
-    ) => {
-      try {
-        const user = requirePermission(event, 'ledger_settings')
-        requireLedgerAccess(event, db, data.ledgerId)
-        const ledger = db.prepare('SELECT id FROM ledgers WHERE id = ?').get(data.ledgerId) as
-          | { id: number }
-          | undefined
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'ledger:applyStandardTemplate',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: data.ledgerId,
+            standardType: data.standardType
+          }
+        },
+        () => {
+          try {
+            const user = requirePermission(event, 'ledger_settings')
+            requireLedgerAccess(event, db, data.ledgerId)
+            const result = applyLedgerStandardTemplate(db, {
+              ledgerId: data.ledgerId,
+              standardType: data.standardType
+            })
 
-        if (!ledger) {
-          return { success: false, error: '账套不存在' }
-        }
+            appendOperationLog(db, {
+              ledgerId: data.ledgerId,
+              userId: user.id,
+              username: user.username,
+              module: 'ledger',
+              action: 'apply_standard_template',
+              targetType: 'ledger',
+              targetId: data.ledgerId,
+              details: {
+                standardType: data.standardType,
+                subjectCount: result.subjectCount,
+                customSubjectCount: result.customSubjectCount
+              }
+            })
 
-        const voucherCount = Number(
-          (
-            db
-              .prepare('SELECT COUNT(1) AS count FROM vouchers WHERE ledger_id = ?')
-              .get(data.ledgerId) as { count: number }
-          ).count
-        )
-        const nonZeroInitialBalanceCount = Number(
-          (
-            db
-              .prepare(
-                `SELECT COUNT(1) AS count
-                 FROM initial_balances
-                 WHERE ledger_id = ? AND (debit_amount <> 0 OR credit_amount <> 0)`
-              )
-              .get(data.ledgerId) as { count: number }
-          ).count
-        )
-
-        if (voucherCount > 0 || nonZeroInitialBalanceCount > 0) {
-          return {
-            success: false,
-            error: '账套已有业务数据，暂不允许切换会计准则模板'
+            return {
+              success: true,
+              ledger: result.updatedLedger,
+              subjectCount: result.subjectCount
+            }
+          } catch (error) {
+            return { success: false, error: (error as Error).message }
           }
         }
-
-        let customSubjectCount = 0
-        const replaceTemplate = db.transaction(() => {
-          db.prepare('DELETE FROM cash_flow_mappings WHERE ledger_id = ?').run(data.ledgerId)
-          db.prepare('DELETE FROM cash_flow_items WHERE ledger_id = ? AND is_system = 1').run(
-            data.ledgerId
-          )
-          db.prepare('DELETE FROM pl_carry_forward_rules WHERE ledger_id = ?').run(data.ledgerId)
-          db.prepare('DELETE FROM subjects WHERE ledger_id = ?').run(data.ledgerId)
-
-          db.prepare('UPDATE ledgers SET standard_type = ? WHERE id = ?').run(
-            data.standardType,
-            data.ledgerId
-          )
-
-          seedSubjectsForLedger(db, data.ledgerId, data.standardType)
-          customSubjectCount = applyCustomTopLevelSubjectTemplate(
-            db,
-            data.ledgerId,
-            data.standardType
-          )
-          seedCashFlowItemsForLedger(db, data.ledgerId)
-          seedCashFlowMappingsForLedger(db, data.ledgerId, data.standardType)
-          seedPLCarryForwardRulesForLedger(db, data.ledgerId, data.standardType)
-        })
-
-        replaceTemplate()
-
-        const updatedLedger = db.prepare('SELECT * FROM ledgers WHERE id = ?').get(data.ledgerId)
-        const subjectCount = Number(
-          (
-            db
-              .prepare('SELECT COUNT(1) AS count FROM subjects WHERE ledger_id = ?')
-              .get(data.ledgerId) as { count: number }
-          ).count
-        )
-
-        appendOperationLog(db, {
-          ledgerId: data.ledgerId,
-          userId: user.id,
-          username: user.username,
-          module: 'ledger',
-          action: 'apply_standard_template',
-          targetType: 'ledger',
-          targetId: data.ledgerId,
-          details: {
-            standardType: data.standardType,
-            subjectCount,
-            customSubjectCount
-          }
-        })
-
-        return {
-          success: true,
-          ledger: updatedLedger,
-          subjectCount
-        }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+      )
   )
 }
