@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
@@ -25,6 +25,7 @@ import {
   validateWallpaperSourceFile,
   WALLPAPER_SUPPORTED_FORMATS
 } from '../services/wallpaperPreference'
+import { getErrorLogStatus } from '../services/errorLog'
 import { requireAdmin, requireAuth, requirePermission } from './session'
 
 type StandardType = 'enterprise' | 'npo'
@@ -92,6 +93,36 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:getLoginWallpaperState', () => {
     return getLoginWallpaperState(db, app.getPath('userData'))
+  })
+
+  ipcMain.handle('settings:getErrorLogStatus', (event) => {
+    requireAuth(event)
+    return getErrorLogStatus(app.getPath('userData'))
+  })
+
+  ipcMain.handle('settings:openErrorLogDirectory', async (event) => {
+    try {
+      requireAuth(event)
+      const { logDirectory } = getErrorLogStatus(app.getPath('userData'))
+      await fs.promises.mkdir(logDirectory, { recursive: true })
+      const error = await shell.openPath(logDirectory)
+      if (error) {
+        return {
+          success: false,
+          error
+        }
+      }
+
+      return {
+        success: true,
+        logDirectory
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '打开错误日志目录失败'
+      }
+    }
   })
 
   ipcMain.handle('settings:setUserPreferences', (event, preferences: Record<string, string>) => {

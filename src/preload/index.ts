@@ -180,9 +180,11 @@ const api = {
     getUserPreferences: () => ipcRenderer.invoke('settings:getUserPreferences'),
     getWallpaperState: () => ipcRenderer.invoke('settings:getWallpaperState'),
     getLoginWallpaperState: () => ipcRenderer.invoke('settings:getLoginWallpaperState'),
+    getErrorLogStatus: () => ipcRenderer.invoke('settings:getErrorLogStatus'),
     set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
     setUserPreferences: (preferences: Record<string, string>) =>
       ipcRenderer.invoke('settings:setUserPreferences', preferences),
+    openErrorLogDirectory: () => ipcRenderer.invoke('settings:openErrorLogDirectory'),
     chooseWallpaper: () => ipcRenderer.invoke('settings:chooseWallpaper'),
     applyWallpaperCrop: (payload: { extension: string; bytes: number[]; sourcePath?: string }) =>
       ipcRenderer.invoke('settings:applyWallpaperCrop', payload),
@@ -417,6 +419,39 @@ const api = {
       filePath?: string
     }) => ipcRenderer.invoke('bookQuery:export', payload)
   }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (event) => {
+    ipcRenderer.send('diagnostics:rendererError', {
+      type: 'error',
+      message: event.message,
+      stack: event.error instanceof Error ? event.error.stack ?? null : null,
+      filename: event.filename || null,
+      lineno: event.lineno ?? null,
+      colno: event.colno ?? null,
+      href: window.location.href
+    })
+  })
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason =
+      typeof event.reason === 'string'
+        ? event.reason
+        : event.reason instanceof Error
+          ? event.reason.message
+          : event.reason === undefined
+            ? undefined
+            : String(event.reason)
+
+    ipcRenderer.send('diagnostics:rendererError', {
+      type: 'unhandledrejection',
+      message: reason,
+      stack: event.reason instanceof Error ? event.reason.stack ?? null : null,
+      reason,
+      href: window.location.href
+    })
+  })
 }
 
 if (process.contextIsolated) {

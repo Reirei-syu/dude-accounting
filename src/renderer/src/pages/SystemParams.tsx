@@ -2,6 +2,13 @@ import { useEffect, useState, type JSX } from 'react'
 
 type VoucherDateStrategy = 'last_voucher_date' | 'period_start'
 type VoucherListStatus = 'all' | 'pending' | 'audited' | 'posted'
+type ErrorLogStatus = {
+  logDirectory: string
+  runtimeLogPath: string
+  errorLogPath: string
+  runtimeLogExists: boolean
+  errorLogExists: boolean
+}
 
 export default function SystemParams(): JSX.Element {
   const [allowSameMakerAuditor, setAllowSameMakerAuditor] = useState(false)
@@ -11,14 +18,15 @@ export default function SystemParams(): JSX.Element {
   const [voucherListDefaultStatus, setVoucherListDefaultStatus] =
     useState<VoucherListStatus>('all')
   const [saving, setSaving] = useState(false)
+  const [openingLogDir, setOpeningLogDir] = useState(false)
+  const [errorLogStatus, setErrorLogStatus] = useState<ErrorLogStatus | null>(null)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
   useEffect(() => {
     if (!window.electron) return
 
-    window.api.settings
-      .getAll()
-      .then((settings) => {
+    Promise.all([window.api.settings.getAll(), window.api.settings.getErrorLogStatus()])
+      .then(([settings, nextErrorLogStatus]) => {
         setAllowSameMakerAuditor(settings.allow_same_maker_auditor === '1')
         setDefaultVoucherWord(settings.default_voucher_word || '记')
         setVoucherDateStrategy(
@@ -33,6 +41,7 @@ export default function SystemParams(): JSX.Element {
             ? settings.voucher_list_default_status
             : 'all'
         )
+        setErrorLogStatus(nextErrorLogStatus)
       })
       .catch((error) => {
         setMessage({
@@ -68,6 +77,35 @@ export default function SystemParams(): JSX.Element {
       })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleOpenErrorLogDirectory = async (): Promise<void> => {
+    setMessage(null)
+    if (!window.electron) {
+      setMessage({ type: 'error', text: '浏览器预览模式不支持打开错误日志目录' })
+      return
+    }
+
+    setOpeningLogDir(true)
+    try {
+      const result = await window.api.settings.openErrorLogDirectory()
+      if (!result.success) {
+        setMessage({
+          type: 'error',
+          text: result.error || '打开错误日志目录失败'
+        })
+        return
+      }
+
+      setMessage({ type: 'success', text: '错误日志目录已打开' })
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '打开错误日志目录失败'
+      })
+    } finally {
+      setOpeningLogDir(false)
     }
   }
 
@@ -158,6 +196,73 @@ export default function SystemParams(): JSX.Element {
               <option value="audited">已审核</option>
               <option value="posted">已记账</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="glass-panel-light p-4 flex flex-col gap-3">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-base" style={{ color: 'var(--color-text-primary)' }}>
+              错误日志
+            </div>
+            <div className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              系统会自动记录主进程未捕获异常、Promise 未处理拒绝、渲染进程脚本错误和进程异常退出，便于后续排查突然出现的 BUG。
+            </div>
+          </div>
+          <button
+            className="glass-btn-secondary px-4 py-2"
+            type="button"
+            onClick={() => void handleOpenErrorLogDirectory()}
+            disabled={openingLogDir}
+          >
+            {openingLogDir ? '打开中...' : '打开日志目录'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+          <div
+            className="rounded-xl border px-3 py-3"
+            style={{ borderColor: 'var(--color-glass-border-light)' }}
+          >
+            <div style={{ color: 'var(--color-text-secondary)' }}>日志目录</div>
+            <div className="mt-1 font-mono break-all" style={{ color: 'var(--color-text-primary)' }}>
+              {errorLogStatus?.logDirectory ?? '加载中...'}
+            </div>
+          </div>
+
+          <div
+            className="rounded-xl border px-3 py-3"
+            style={{ borderColor: 'var(--color-glass-border-light)' }}
+          >
+            <div style={{ color: 'var(--color-text-secondary)' }}>今日日志</div>
+            <div className="mt-1 font-mono break-all" style={{ color: 'var(--color-text-primary)' }}>
+              {errorLogStatus?.runtimeLogPath ?? '加载中...'}
+            </div>
+            <div className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              {errorLogStatus
+                ? errorLogStatus.runtimeLogExists
+                  ? '今日已生成运行日志'
+                  : '今日尚未生成运行日志'
+                : '正在读取状态'}
+            </div>
+          </div>
+
+          <div
+            className="rounded-xl border px-3 py-3"
+            style={{ borderColor: 'var(--color-glass-border-light)' }}
+          >
+            <div style={{ color: 'var(--color-text-secondary)' }}>今日错误日志</div>
+            <div className="mt-1 font-mono break-all" style={{ color: 'var(--color-text-primary)' }}>
+              {errorLogStatus?.errorLogPath ?? '加载中...'}
+            </div>
+            <div className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              {errorLogStatus
+                ? errorLogStatus.errorLogExists
+                  ? '今日已记录错误日志'
+                  : '今日尚未记录错误日志'
+                : '正在读取状态'}
+            </div>
           </div>
         </div>
       </div>

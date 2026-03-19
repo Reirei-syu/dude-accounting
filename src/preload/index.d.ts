@@ -195,6 +195,13 @@ interface AuxiliaryAPI {
 }
 
 interface SettingsAPI {
+  getErrorLogStatus: () => Promise<{
+    logDirectory: string
+    runtimeLogPath: string
+    errorLogPath: string
+    runtimeLogExists: boolean
+    errorLogExists: boolean
+  }>
   getWallpaperState: () => Promise<{
     mode: 'default' | 'custom'
     wallpaperPath: string | null
@@ -218,6 +225,11 @@ interface SettingsAPI {
   getUserPreferences: () => Promise<Record<string, string>>
   set: (key: string, value: string) => Promise<{ success: boolean }>
   setUserPreferences: (preferences: Record<string, string>) => Promise<{ success: boolean }>
+  openErrorLogDirectory: () => Promise<{
+    success: boolean
+    error?: string
+    logDirectory?: string
+  }>
   chooseWallpaper: () => Promise<{
     success: boolean
     cancelled?: boolean

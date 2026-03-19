@@ -26,6 +26,10 @@ import { registerElectronicVoucherHandlers } from './ipc/eVoucher'
 import { registerReportingHandlers } from './ipc/reporting'
 import { registerBookQueryHandlers } from './ipc/bookQuery'
 import { registerPrintHandlers } from './ipc/print'
+import { registerDiagnosticsHandlers } from './ipc/diagnostics'
+import { installGlobalErrorLogging } from './services/errorLog'
+
+installGlobalErrorLogging(() => app.getPath('userData'))
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -115,6 +119,7 @@ app.whenReady().then(() => {
   registerReportingHandlers()
   registerBookQueryHandlers()
   registerPrintHandlers()
+  registerDiagnosticsHandlers()
 
   createWindow()
 
