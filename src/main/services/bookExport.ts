@@ -35,7 +35,7 @@ export interface BookExportPayload {
 }
 
 function sanitizeFileName(value: string): string {
-  return sanitizePathSegment(value, '账簿导出')
+  return sanitizePathSegment(value, '账簿导出').slice(0, 120)
 }
 
 function formatAmount(value: number): string {
@@ -110,17 +110,46 @@ function measureDisplayWidth(text: string): number {
   return width
 }
 
+function normalizeText(value: string | null | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim()
+  return normalized ? normalized : undefined
+}
+
+function getDisplayTitle(payload: BookExportPayload): string {
+  return normalizeText(payload.title) ?? '账簿导出'
+}
+
+function sanitizeWorksheetName(value: string, fallback = '账簿导出'): string {
+  const normalized = value
+    .replace(/[[\]:*?/\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^'+|'+$/g, '')
+
+  const candidate = (normalized || fallback).slice(0, 31).trim()
+  return candidate || fallback
+}
+
+function getColumnLabel(column: BookExportColumn, index: number): string {
+  return normalizeText(column.label) ?? `列${index + 1}`
+}
+
 function buildDefaultMetaSubtitle(payload: BookExportPayload): string {
-  return (
-    payload.subtitle ??
-    [payload.subjectLabel, payload.periodLabel].filter(Boolean).join('-') ??
-    payload.title
-  )
+  const subtitle = normalizeText(payload.subtitle)
+  if (subtitle) {
+    return subtitle
+  }
+
+  const metaSubtitle = [normalizeText(payload.subjectLabel), normalizeText(payload.periodLabel)]
+    .filter((value): value is string => Boolean(value))
+    .join('-')
+
+  return metaSubtitle || getDisplayTitle(payload)
 }
 
 function buildExcelColumnWidths(payload: BookExportPayload): number[] {
   return payload.columns.map((column, index) => {
-    const headerWidth = measureDisplayWidth(column.label)
+    const headerWidth = measureDisplayWidth(getColumnLabel(column, index))
     const cellWidth = payload.rows.reduce((maxWidth, row) => {
       const cell = row.cells[index]
       const text = formatCellValue(cell ?? { value: '' })
@@ -156,7 +185,7 @@ function buildPdfLayout(
   }
 
   const naturalWidths = payload.columns.map((column, index) => {
-    const headerWidth = measureText(column.label, baseHeaderFontSize) + padding
+    const headerWidth = measureText(getColumnLabel(column, index), baseHeaderFontSize) + padding
     const cellWidth = payload.rows.reduce((maxWidth, row) => {
       const cellText = formatCellValue(row.cells[index] ?? { value: '' })
       return Math.max(maxWidth, measureText(cellText, baseBodyFontSize) + padding)
@@ -181,18 +210,20 @@ function writeExcelMetaRows(
   columnCount: number,
   payload: BookExportPayload
 ): void {
+  const displayTitle = getDisplayTitle(payload)
+  const displayLedgerName = normalizeText(payload.ledgerName) ?? ' '
+  const subjectLabel = normalizeText(payload.subjectLabel)
+  const periodLabel = normalizeText(payload.periodLabel)
+
   worksheet.mergeCells(1, 1, 1, columnCount)
-  worksheet.getCell(1, 1).value = payload.title
+  worksheet.getCell(1, 1).value = displayTitle
   worksheet.getCell(1, 1).font = { name: '宋体', size: 16, bold: true }
   worksheet.getCell(1, 1).alignment = { horizontal: 'center', vertical: 'middle' }
 
   worksheet.mergeCells(2, 1, 2, columnCount)
-  worksheet.getCell(2, 1).value = payload.ledgerName ?? ' '
+  worksheet.getCell(2, 1).value = displayLedgerName
   worksheet.getCell(2, 1).font = { name: '宋体', size: 10 }
   worksheet.getCell(2, 1).alignment = { horizontal: 'center', vertical: 'middle' }
-
-  const subjectLabel = payload.subjectLabel?.trim()
-  const periodLabel = payload.periodLabel?.trim()
 
   if (subjectLabel && periodLabel) {
     const splitColumn = Math.max(1, Math.floor(columnCount / 2))
@@ -226,9 +257,9 @@ export function buildDefaultBookExportFileName(
   payload: BookExportPayload,
   format: BookExportFormat
 ): string {
-  const baseName = buildDefaultMetaSubtitle(payload)
-    ? `${payload.title}-${buildDefaultMetaSubtitle(payload)}`
-    : payload.title
+  const displayTitle = getDisplayTitle(payload)
+  const subtitle = buildDefaultMetaSubtitle(payload)
+  const baseName = subtitle && subtitle !== displayTitle ? `${displayTitle}-${subtitle}` : displayTitle
   return `${sanitizeFileName(baseName)}.${format}`
 }
 
@@ -237,7 +268,7 @@ export async function writeBookExportExcel(
   payload: BookExportPayload
 ): Promise<string> {
   const workbook = new ExcelJS.Workbook()
-  const sheetName = payload.title.slice(0, 31) || '账簿导出'
+  const sheetName = sanitizeWorksheetName(getDisplayTitle(payload))
   const worksheet = workbook.addWorksheet(sheetName, {
     views: [{ state: 'frozen', ySplit: 5 }]
   })
@@ -249,7 +280,7 @@ export async function writeBookExportExcel(
   const headerRow = worksheet.getRow(headerRowIndex)
   payload.columns.forEach((column, index) => {
     const cell = headerRow.getCell(index + 1)
-    cell.value = column.label
+    cell.value = getColumnLabel(column, index)
     cell.font = { name: '宋体', size: 11, bold: true }
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
     cell.border = {
@@ -323,18 +354,18 @@ export async function writeBookExportPdf(
         tryApplyFont(document, cjkFontPath)
       }
 
-      document.fontSize(18).text(payload.title, { align: 'center' })
+      document.fontSize(18).text(getDisplayTitle(payload), { align: 'center' })
       document.moveDown(0.25)
 
       if (hasCjkFont) {
         tryApplyFont(document, cjkFontPath)
       }
-      document.fontSize(10).text(payload.ledgerName ?? '', { align: 'center' })
+      document.fontSize(10).text(normalizeText(payload.ledgerName) ?? '', { align: 'center' })
       document.moveDown(0.25)
 
       const metaTop = document.y
-      const subjectLabel = payload.subjectLabel?.trim()
-      const periodLabel = payload.periodLabel?.trim()
+      const subjectLabel = normalizeText(payload.subjectLabel)
+      const periodLabel = normalizeText(payload.periodLabel)
 
       if (subjectLabel && periodLabel) {
         document.text(subjectLabel, document.page.margins.left, metaTop, {
@@ -400,7 +431,7 @@ export async function writeBookExportPdf(
     let top = drawMetadata() + 6
     top = drawRow(
       {
-        cells: payload.columns.map((column) => ({ value: column.label }))
+        cells: payload.columns.map((column, index) => ({ value: getColumnLabel(column, index) }))
       },
       top,
       { bold: true, header: true, fillColor: '#f3f4f6' }
@@ -412,7 +443,7 @@ export async function writeBookExportPdf(
         top = drawMetadata() + 6
         top = drawRow(
           {
-            cells: payload.columns.map((column) => ({ value: column.label }))
+            cells: payload.columns.map((column, index) => ({ value: getColumnLabel(column, index) }))
           },
           top,
           { bold: true, header: true, fillColor: '#f3f4f6' }

@@ -2,8 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
 import PDFDocument from 'pdfkit'
-import { buildTimestampToken, ensureDirectory } from './fileIntegrity'
+import { buildTimestampToken, ensureDirectory, sanitizePathSegment } from './fileIntegrity'
 import type { ReportExportFormat, ReportSnapshotDetail, ReportSnapshotScope } from './reporting'
+
+const REPORT_EXPORT_FALLBACK_NAME = '报表导出'
+
+function normalizeText(value: string | null | undefined): string | undefined {
+  const normalized = value?.replace(/\s+/g, ' ').trim()
+  return normalized ? normalized : undefined
+}
 
 function assertPeriod(period: string): void {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
@@ -54,7 +61,30 @@ function escapeHtml(value: string): string {
 }
 
 function sanitizeFileName(value: string): string {
-  return value.replace(/[\\/:*?"<>|]/g, '_')
+  return sanitizePathSegment(value, REPORT_EXPORT_FALLBACK_NAME).slice(0, 120)
+}
+
+function sanitizeWorksheetName(value: string, fallback = REPORT_EXPORT_FALLBACK_NAME): string {
+  const normalized = value
+    .replace(/[[\]:*?/\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^'+|'+$/g, '')
+
+  const candidate = (normalized || fallback).slice(0, 31).trim()
+  return candidate || fallback
+}
+
+function getDisplayTitle(detail: ReportSnapshotDetail): string {
+  return (
+    normalizeText(detail.content.title) ??
+    normalizeText(detail.report_name) ??
+    REPORT_EXPORT_FALLBACK_NAME
+  )
+}
+
+function getHeaderFallbackLabel(index: number): string {
+  return index === 0 ? '项目' : `列${index + 1}`
 }
 
 function formatAmount(amountCents: number): string {
@@ -63,7 +93,9 @@ function formatAmount(amountCents: number): string {
 
 function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
   if (detail.content.tables && detail.content.tables.length > 0) {
-    return detail.content.tables[0].columns.map((column) => column.label)
+    return detail.content.tables[0].columns.map(
+      (column, index) => normalizeText(column.label) ?? getHeaderFallbackLabel(index)
+    )
   }
   if (detail.content.tableColumns && detail.content.tableColumns.length > 0) {
     return ['项目', ...detail.content.tableColumns.map((column) => column.label)]
@@ -106,7 +138,7 @@ function getExportTableRows(
 }
 
 export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
-  const title = escapeHtml(detail.content.title)
+  const title = escapeHtml(getDisplayTitle(detail))
   const ledgerName = escapeHtml(detail.ledger_name)
   const period = escapeHtml(formatExportPeriodLabel(detail.content.scope))
   const pageSize = detail.report_type === 'equity_statement' ? 'A4 landscape' : 'A4 portrait'
@@ -321,7 +353,8 @@ export async function writeReportSnapshotExcel(
   detail: ReportSnapshotDetail
 ): Promise<string> {
   const workbook = new ExcelJS.Workbook()
-  const worksheet = workbook.addWorksheet(detail.content.title, {
+  const displayTitle = getDisplayTitle(detail)
+  const worksheet = workbook.addWorksheet(sanitizeWorksheetName(displayTitle), {
     views: [{ state: 'frozen', ySplit: 4 }]
   })
 
@@ -331,7 +364,7 @@ export async function writeReportSnapshotExcel(
   const exportPeriod = formatExportPeriodLabel(detail.content.scope)
 
   worksheet.mergeCells(1, 1, 1, headers.length)
-  worksheet.getCell(1, 1).value = detail.content.title
+  worksheet.getCell(1, 1).value = displayTitle
   worksheet.getCell(1, 1).font = { name: '宋体', size: 16, bold: true }
   worksheet.getCell(1, 1).alignment = { horizontal: 'center', vertical: 'middle' }
 

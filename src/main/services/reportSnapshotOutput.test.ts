@@ -167,4 +167,71 @@ describe('reportSnapshotOutput service', () => {
     )
     expect(fs.readFileSync(htmlPath, 'utf8')).toContain('会计期间：2025年12月-2026年3月')
   })
+  it('falls back for blank report names and blank titles in export artifacts', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail = {
+      ...createCrossYearDetail(),
+      report_name: '   ',
+      content: {
+        ...createCrossYearDetail().content,
+        title: '   '
+      }
+    }
+    const xlsxPath = path.join(tempDir, 'blank.xlsx')
+
+    await writeReportSnapshotExcel(xlsxPath, detail)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(xlsxPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(buildDefaultReportExportFileName(detail, 'pdf')).toBe('报表导出.pdf')
+    expect(worksheet?.name).toBe('报表导出')
+    expect(worksheet?.getCell(1, 1).value).toBe('报表导出')
+    expect(buildReportSnapshotHtml(detail)).toContain('<h1>报表导出</h1>')
+  })
+
+  it('sanitizes long worksheet names and fills blank column labels', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail = {
+      ...createCrossYearDetail(),
+      content: {
+        ...createCrossYearDetail().content,
+        title: `${'超长利润表标题'.repeat(8)}[]:*?/\\`,
+        tables: [
+          {
+            key: 'enterprise-income-statement',
+            columns: [
+              { key: 'item', label: '项目' },
+              { key: 'current', label: '   ' },
+              { key: 'previous', label: '' }
+            ],
+            rows: [
+              {
+                key: 'operating-revenue',
+                cells: [
+                  { value: '一、营业收入' },
+                  { value: 57_000, isAmount: true },
+                  { value: 1_000, isAmount: true }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const xlsxPath = path.join(tempDir, 'long.xlsx')
+
+    await writeReportSnapshotExcel(xlsxPath, detail)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(xlsxPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(worksheet?.name.length).toBeLessThanOrEqual(31)
+    expect(worksheet?.name).not.toMatch(/[[\]:*?/\\]/)
+    expect(worksheet?.getCell(4, 1).value).toBe('项目')
+    expect(worksheet?.getCell(4, 2).value).toBe('列2')
+    expect(worksheet?.getCell(4, 3).value).toBe('列3')
+  })
 })

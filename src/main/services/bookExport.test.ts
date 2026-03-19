@@ -112,4 +112,41 @@ describe('bookExport service', () => {
     expect(worksheet.getCell(3, 2).value).toBe('期间：2025-12-01 至 2026-01-31')
     expect(worksheet.getCell(3, 2).alignment?.horizontal).toBe('right')
   })
+  it('falls back to a safe file name when title and metadata are blank', () => {
+    const payload = {
+      ...createPayload(),
+      title: '   ',
+      subtitle: undefined,
+      subjectLabel: undefined,
+      periodLabel: undefined
+    }
+
+    expect(buildDefaultBookExportFileName(payload, 'pdf')).toBe('账簿导出.pdf')
+  })
+
+  it('sanitizes invalid and overlong sheet names and fills blank column labels', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
+    const payload = {
+      ...createPayload(),
+      title: `${'超长账簿标题'.repeat(8)}[]:*?/\\`,
+      columns: [
+        { key: 'col_1', label: '   ', align: 'left' as const },
+        { key: 'col_2', label: '', align: 'left' as const },
+        { key: 'col_3', label: '期末余额', align: 'right' as const }
+      ]
+    }
+    const excelPath = path.join(tempDir, '异常标题.xlsx')
+
+    await writeBookExportExcel(excelPath, payload)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(excelPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(worksheet.name.length).toBeLessThanOrEqual(31)
+    expect(worksheet.name).not.toMatch(/[[\]:*?/\\]/)
+    expect(worksheet.getCell(5, 1).value).toBe('列1')
+    expect(worksheet.getCell(5, 2).value).toBe('列2')
+    expect(worksheet.getCell(5, 3).value).toBe('期末余额')
+  })
 })
