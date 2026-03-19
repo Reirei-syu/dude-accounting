@@ -11,6 +11,7 @@ export type LedgerRow = {
 export type SubjectRow = {
   code: string
   name: string
+  parent_code: string | null
   category: string
   balance_direction: number
   level: number
@@ -106,6 +107,7 @@ export function listBookSubjects(db: Database.Database, ledgerId: number): Subje
       `SELECT
          s.code,
          s.name,
+         s.parent_code,
          s.category,
          s.balance_direction,
          s.level,

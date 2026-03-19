@@ -306,6 +306,7 @@ Status:
 - 报表快照查询/明细/删除已收口到 `reportSnapshotCatalog` service，HTML/Excel/PDF 输出辅助已收口到 `reportSnapshotOutput` service；`reporting.ts` 当前主要保留报表计算与快照生成主链路。
 - 账簿查询的数据读取层已收口到 `bookQueryData` service，`bookQuery.ts` 当前主要保留结果组装与账簿口径计算。
 - 账簿导出的目录偏好、默认路径、导出编排已收口到 `bookQueryExport` service，`ipc/bookQuery.ts` 中的导出链路主要负责鉴权、弹窗、telemetry 与操作日志。
+- 账簿科目余额汇总已改为按父子层级一次聚合；当旧账套 `subjects.parent_code` 缺失时，仍按科目编码前缀推断父级，避免高频查询在大科目集下重复全量扫描。
 
 Current Channels:
 

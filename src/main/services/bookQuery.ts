@@ -22,6 +22,15 @@ type ExactSubjectStat = {
   endingSigned: number
 }
 
+function createEmptySubjectStat(): ExactSubjectStat {
+  return {
+    openingSigned: 0,
+    periodDebit: 0,
+    periodCredit: 0,
+    endingSigned: 0
+  }
+}
+
 export interface SubjectBalanceQuery {
   ledgerId: number
   startDate: string
@@ -298,33 +307,91 @@ function buildExactSubjectStats(
   return stats
 }
 
+function resolveParentSubjectCodes(subjects: SubjectRow[]): Map<string, string | null> {
+  const subjectCodes = new Set(subjects.map((subject) => subject.code))
+
+  return new Map(
+    subjects.map((subject) => {
+      if (subject.parent_code && subjectCodes.has(subject.parent_code)) {
+        return [subject.code, subject.parent_code] as const
+      }
+
+      for (let length = subject.code.length - 1; length > 0; length -= 1) {
+        const candidate = subject.code.slice(0, length)
+        if (subjectCodes.has(candidate)) {
+          return [subject.code, candidate] as const
+        }
+      }
+
+      return [subject.code, null] as const
+    })
+  )
+}
+
+function buildRolledUpSubjectStats(
+  subjects: SubjectRow[],
+  exactStats: Map<string, ExactSubjectStat>
+): Map<string, ExactSubjectStat> {
+  const resolvedParentCodes = resolveParentSubjectCodes(subjects)
+  const aggregated = new Map<string, ExactSubjectStat>(
+    subjects.map((subject) => {
+      const exact = exactStats.get(subject.code) ?? createEmptySubjectStat()
+      return [
+        subject.code,
+        {
+          openingSigned: exact.openingSigned,
+          periodDebit: exact.periodDebit,
+          periodCredit: exact.periodCredit,
+          endingSigned: exact.endingSigned
+        }
+      ] as const
+    })
+  )
+
+  const orderedSubjects = [...subjects].sort((left, right) => {
+    if (left.level !== right.level) {
+      return right.level - left.level
+    }
+    if (left.code.length !== right.code.length) {
+      return right.code.length - left.code.length
+    }
+    return right.code.localeCompare(left.code)
+  })
+
+  for (const subject of orderedSubjects) {
+    const parentCode = resolvedParentCodes.get(subject.code)
+    if (!parentCode) {
+      continue
+    }
+
+    const current = aggregated.get(subject.code)
+    if (!current) {
+      continue
+    }
+
+    const parent = aggregated.get(parentCode) ?? createEmptySubjectStat()
+    parent.openingSigned += current.openingSigned
+    parent.periodDebit += current.periodDebit
+    parent.periodCredit += current.periodCredit
+    parent.endingSigned += current.endingSigned
+    aggregated.set(parentCode, parent)
+  }
+
+  return aggregated
+}
+
 function buildBalanceRows(
   subjects: SubjectRow[],
-  exactStats: Map<string, ExactSubjectStat>,
+  rolledUpStats: Map<string, ExactSubjectStat>,
   includeZeroBalance: boolean
 ): SubjectBalanceRow[] {
   return subjects
     .map((subject) => {
-      let openingSigned = 0
-      let periodDebit = 0
-      let periodCredit = 0
-      let endingSigned = 0
-
-      for (const candidate of subjects) {
-        if (!matchesPrefix(candidate.code, subject.code)) {
-          continue
-        }
-
-        const candidateStats = exactStats.get(candidate.code)
-        if (!candidateStats) {
-          continue
-        }
-
-        openingSigned += candidateStats.openingSigned
-        periodDebit += candidateStats.periodDebit
-        periodCredit += candidateStats.periodCredit
-        endingSigned += candidateStats.endingSigned
-      }
+      const subjectStats = rolledUpStats.get(subject.code) ?? createEmptySubjectStat()
+      const openingSigned = subjectStats.openingSigned
+      const periodDebit = subjectStats.periodDebit
+      const periodCredit = subjectStats.periodCredit
+      const endingSigned = subjectStats.endingSigned
 
       const openingColumns = splitBalanceToColumns(subject.balance_direction, openingSigned)
       const endingColumns = splitBalanceToColumns(subject.balance_direction, endingSigned)
@@ -391,8 +458,9 @@ export function listSubjectBalances(
     query.startDate,
     query.endDate
   )
+  const rolledUpStats = buildRolledUpSubjectStats(subjects, exactStats)
 
-  const rows = buildBalanceRows(subjects, exactStats, query.includeZeroBalance === true)
+  const rows = buildBalanceRows(subjects, rolledUpStats, query.includeZeroBalance === true)
 
   if (!normalizedKeyword) {
     return rows

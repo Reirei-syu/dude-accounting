@@ -99,6 +99,7 @@ class FakeBookQueryDb {
             .map((subject) => ({
               code: subject.code,
               name: subject.name,
+              parent_code: subject.parent_code,
               category: subject.category,
               balance_direction: subject.balance_direction,
               level: subject.level,
@@ -688,6 +689,116 @@ function createDb(): FakeBookQueryDb {
   return db
 }
 
+function createLargeHierarchyDb(): {
+  db: FakeBookQueryDb
+  branchCount: number
+  leafCountPerBranch: number
+} {
+  const db = new FakeBookQueryDb()
+  const branchCount = 24
+  const leafCountPerBranch = 8
+  let voucherId = 3_001
+  let entryId = 6_001
+
+  db.ledgers.push({
+    id: 3,
+    name: 'stress-ledger',
+    standard_type: 'enterprise',
+    start_period: '2026-01',
+    current_period: '2026-03'
+  })
+
+  db.subjects.push(
+    {
+      ledger_id: 3,
+      code: '1001',
+      name: 'bank',
+      parent_code: null,
+      category: 'asset',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 3,
+      code: '6001',
+      name: 'batch-expense',
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 1
+    }
+  )
+
+  db.initialBalances.push({
+    ledger_id: 3,
+    period: '2026-01',
+    subject_code: '1001',
+    debit_amount: 500_000,
+    credit_amount: 0
+  })
+
+  for (let branchIndex = 1; branchIndex <= branchCount; branchIndex += 1) {
+    const branchCode = `6001${String(branchIndex).padStart(2, '0')}`
+    db.subjects.push({
+      ledger_id: 3,
+      code: branchCode,
+      name: `branch-${branchIndex}`,
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 2
+    })
+
+    for (let leafIndex = 1; leafIndex <= leafCountPerBranch; leafIndex += 1) {
+      const leafCode = `${branchCode}${String(leafIndex).padStart(2, '0')}`
+      db.subjects.push({
+        ledger_id: 3,
+        code: leafCode,
+        name: `leaf-${branchIndex}-${leafIndex}`,
+        parent_code: leafIndex % 2 === 0 ? branchCode : null,
+        category: 'expense',
+        balance_direction: 1,
+        level: 3
+      })
+
+      db.vouchers.push({
+        id: voucherId,
+        ledger_id: 3,
+        period: '2026-03',
+        voucher_date: `2026-03-${String(((branchIndex + leafIndex) % 28) + 1).padStart(2, '0')}`,
+        voucher_number: voucherId - 3_000,
+        voucher_word: 'J',
+        status: 2
+      })
+
+      db.voucherEntries.push(
+        {
+          id: entryId++,
+          voucher_id: voucherId,
+          row_order: 1,
+          summary: 'bulk-expense',
+          subject_code: leafCode,
+          debit_amount: 100,
+          credit_amount: 0
+        },
+        {
+          id: entryId++,
+          voucher_id: voucherId,
+          row_order: 2,
+          summary: 'bulk-expense',
+          subject_code: '1001',
+          debit_amount: 0,
+          credit_amount: 100
+        }
+      )
+
+      voucherId += 1
+    }
+  }
+
+  return { db, branchCount, leafCountPerBranch }
+}
+
 describe('bookQuery service', () => {
   it('lists subject balances for a custom date range', () => {
     const db = createDb()
@@ -713,6 +824,37 @@ describe('bookQuery service', () => {
       opening_debit_amount: 3_000,
       period_debit_amount: 2_000,
       ending_debit_amount: 5_000
+    })
+  })
+
+  it('aggregates deep parent subjects with prefix fallback under larger subject sets', () => {
+    const { db, branchCount, leafCountPerBranch } = createLargeHierarchyDb()
+    const totalLeafCount = branchCount * leafCountPerBranch
+
+    const rows = listSubjectBalances(db as never, {
+      ledgerId: 3,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31'
+    })
+
+    expect(rows.find((row) => row.subject_code === '6001')).toMatchObject({
+      is_leaf: 0,
+      period_debit_amount: totalLeafCount * 100,
+      ending_debit_amount: totalLeafCount * 100
+    })
+    expect(rows.find((row) => row.subject_code === '600101')).toMatchObject({
+      is_leaf: 0,
+      period_debit_amount: leafCountPerBranch * 100,
+      ending_debit_amount: leafCountPerBranch * 100
+    })
+    expect(rows.find((row) => row.subject_code === '60010101')).toMatchObject({
+      is_leaf: 1,
+      period_debit_amount: 100,
+      ending_debit_amount: 100
+    })
+    expect(rows.find((row) => row.subject_code === '1001')).toMatchObject({
+      period_credit_amount: totalLeafCount * 100,
+      ending_debit_amount: 500_000 - totalLeafCount * 100
     })
   })
 
