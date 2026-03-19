@@ -155,6 +155,7 @@ Current Extension:
 - 一级科目模板的批量导入采用“按科目代码合并”规则：导入同码条目覆盖当前草稿或已保存条目，导入异码条目追加保留，不允许整体覆盖原有手动维护记录。
 - 模板下载生成的 Excel 导入模板中，`科目类别`、`余额方向`、`现金流量科目`、`是否启用`、`期末结转目标科目` 均通过下拉选项限制录入范围；其中“期末结转目标科目”显示“科目代码 + 科目名称”，导入时后端自动转译为内部科目代码。
 - 系统预置模板仅支持“模板维护/清空模板”，不支持删除模板实体；独立自定义模板支持删除整个模板实体，删除后应从自定义模板列表中移除并保留操作日志。
+
 ### VoucherModule
 
 Responsibility:
@@ -202,6 +203,17 @@ Planned Channels:
 
 - `auditLog:list`
 - `auditLog:export`
+
+### RuntimeTelemetryModule
+
+Responsibility:
+记录关键 IPC 调用的结构化运行日志，补充耗时、状态、异常堆栈等排障信息。
+
+Status:
+
+- 已支持按天写入本地 JSONL 日志文件，路径为应用 `userData/logs/runtime-YYYY-MM-DD.jsonl`。
+- 运行日志与业务操作日志分离：`operation_logs` 用于业务留痕，`runtime-*.jsonl` 用于排查性能与异常。
+- 当前已覆盖报表导出/生成、备份创建/校验/恢复、归档导出/校验/删除、电子凭证导入/校验/解析/转换等关键 IPC。
 
 ### ElectronicVoucherModule
 
@@ -282,6 +294,7 @@ Current Channels:
 - `reporting:getDetail`
 - `reporting:delete`
 - `reporting:export`
+- `reporting:exportBatch`
 
 ### PrintOutputModule
 
@@ -372,7 +385,8 @@ Current:
 - `period:*`
 - `settings:*`
 - `bookQuery:listSubjectBalances/getDetailLedger/getJournal/getAuxiliaryBalances/getAuxiliaryDetail`
-- `reporting:generate/list/getDetail/delete/export`
+- `reporting:generate/list/getDetail/delete/export/exportBatch`
+- `eVoucher:import/list/verify/parse/convert`
 - `print:*`
 - `backup:create/list/validate/delete/restore`
 - `archive:export/list/validate/delete/getManifest`

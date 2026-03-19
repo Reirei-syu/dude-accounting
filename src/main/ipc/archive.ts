@@ -8,7 +8,10 @@ import {
   validateArchiveExportPackage,
   writeArchiveManifest
 } from '../services/archiveExport'
-import { deleteArchivePhysicalPackage, getArchivePhysicalPackageStatus } from '../services/packageDeletion'
+import {
+  deleteArchivePhysicalPackage,
+  getArchivePhysicalPackageStatus
+} from '../services/packageDeletion'
 import {
   buildUniqueDirectoryPath,
   computeFileSha256,
@@ -17,6 +20,7 @@ import {
 } from '../services/fileIntegrity'
 import { formatLocalDateTime } from '../services/localTime'
 import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
+import { withIpcTelemetry } from '../services/runtimeLogger'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requireLedgerAccess, requirePermission } from './session'
 
@@ -59,65 +63,74 @@ async function pickArchiveRootDirectory(
 export function registerArchiveHandlers(): void {
   ipcMain.handle(
     'archive:export',
-    async (
-      event,
-      payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }
-    ) => {
-      try {
-        const user = requirePermission(event, 'ledger_settings')
-        const db = getDatabase()
-        requireLedgerAccess(event, db, payload.ledgerId)
-        const ledger = db.prepare('SELECT id, name FROM ledgers WHERE id = ?').get(payload.ledgerId) as
-          | { id: number; name: string }
-          | undefined
+    async (event, payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
+      withIpcTelemetry(
+        {
+          channel: 'archive:export',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: payload.ledgerId,
+            fiscalYear: payload.fiscalYear,
+            hasDirectoryPath: Boolean(payload.directoryPath)
+          }
+        },
+        async () => {
+          try {
+            const user = requirePermission(event, 'ledger_settings')
+            const db = getDatabase()
+            requireLedgerAccess(event, db, payload.ledgerId)
+            const ledger = db
+              .prepare('SELECT id, name FROM ledgers WHERE id = ?')
+              .get(payload.ledgerId) as { id: number; name: string } | undefined
 
-        if (!ledger) {
-          return { success: false, error: '账套不存在' }
-        }
+            if (!ledger) {
+              return { success: false, error: '账套不存在' }
+            }
 
-        const preferredDir = getPathPreference(db, ARCHIVE_LAST_DIR_KEY) ?? getDefaultArchiveRootDir()
-        const picked = payload.directoryPath
-          ? { cancelled: false, directoryPath: payload.directoryPath }
-          : await pickArchiveRootDirectory(event.sender, preferredDir)
+            const preferredDir =
+              getPathPreference(db, ARCHIVE_LAST_DIR_KEY) ?? getDefaultArchiveRootDir()
+            const picked = payload.directoryPath
+              ? { cancelled: false, directoryPath: payload.directoryPath }
+              : await pickArchiveRootDirectory(event.sender, preferredDir)
 
-        if (picked.cancelled || !picked.directoryPath) {
-          return { success: false, cancelled: true }
-        }
+            if (picked.cancelled || !picked.directoryPath) {
+              return { success: false, cancelled: true }
+            }
 
-        rememberPathPreference(db, ARCHIVE_LAST_DIR_KEY, picked.directoryPath)
-        const createdAt = formatLocalDateTime()
+            rememberPathPreference(db, ARCHIVE_LAST_DIR_KEY, picked.directoryPath)
+            const createdAt = formatLocalDateTime()
 
-        const exportDir = buildUniqueDirectoryPath(
-          picked.directoryPath,
-          buildArchivePackageDirectoryName(ledger.name, payload.fiscalYear)
-        )
-        const originalVoucherDir = path.join(exportDir, 'original-vouchers')
-        ensureDirectory(exportDir)
-        ensureDirectory(originalVoucherDir)
+            const exportDir = buildUniqueDirectoryPath(
+              picked.directoryPath,
+              buildArchivePackageDirectoryName(ledger.name, payload.fiscalYear)
+            )
+            const originalVoucherDir = path.join(exportDir, 'original-vouchers')
+            ensureDirectory(exportDir)
+            ensureDirectory(originalVoucherDir)
 
-        const periodLike = `${payload.fiscalYear}-%`
-        const vouchers = db
-          .prepare(
-            `SELECT *
+            const periodLike = `${payload.fiscalYear}-%`
+            const vouchers = db
+              .prepare(
+                `SELECT *
              FROM vouchers
              WHERE ledger_id = ? AND period LIKE ?
              ORDER BY voucher_date ASC, voucher_number ASC, id ASC`
-          )
-          .all(payload.ledgerId, periodLike)
+              )
+              .all(payload.ledgerId, periodLike)
 
-        const voucherEntries = db
-          .prepare(
-            `SELECT ve.*
+            const voucherEntries = db
+              .prepare(
+                `SELECT ve.*
              FROM voucher_entries ve
              INNER JOIN vouchers v ON v.id = ve.voucher_id
              WHERE v.ledger_id = ? AND v.period LIKE ?
              ORDER BY ve.voucher_id ASC, ve.row_order ASC, ve.id ASC`
-          )
-          .all(payload.ledgerId, periodLike)
+              )
+              .all(payload.ledgerId, periodLike)
 
-        const electronicVoucherRows = db
-          .prepare(
-            `SELECT
+            const electronicVoucherRows = db
+              .prepare(
+                `SELECT
                r.*,
                f.original_name,
                f.stored_path,
@@ -129,76 +142,83 @@ export function registerArchiveHandlers(): void {
                r.source_date LIKE ? OR f.imported_at LIKE ?
              )
              ORDER BY r.id ASC`
-          )
-          .all(payload.ledgerId, periodLike, periodLike) as Array<{
-          id: number
-          original_name: string
-          stored_path: string
-          sha256: string
-          file_size: number
-        }>
+              )
+              .all(payload.ledgerId, periodLike, periodLike) as Array<{
+              id: number
+              original_name: string
+              stored_path: string
+              sha256: string
+              file_size: number
+            }>
 
-        const operationLogs = db
-          .prepare(
-            `SELECT *
+            const operationLogs = db
+              .prepare(
+                `SELECT *
              FROM operation_logs
              WHERE ledger_id = ? AND created_at LIKE ?
              ORDER BY id ASC`
-          )
-          .all(payload.ledgerId, periodLike)
+              )
+              .all(payload.ledgerId, periodLike)
 
-        fs.writeFileSync(path.join(exportDir, 'vouchers.json'), JSON.stringify(vouchers, null, 2), 'utf8')
-        fs.writeFileSync(
-          path.join(exportDir, 'voucher-entries.json'),
-          JSON.stringify(voucherEntries, null, 2),
-          'utf8'
-        )
-        fs.writeFileSync(
-          path.join(exportDir, 'electronic-vouchers.json'),
-          JSON.stringify(electronicVoucherRows, null, 2),
-          'utf8'
-        )
-        fs.writeFileSync(
-          path.join(exportDir, 'operation-logs.json'),
-          JSON.stringify(operationLogs, null, 2),
-          'utf8'
-        )
+            fs.writeFileSync(
+              path.join(exportDir, 'vouchers.json'),
+              JSON.stringify(vouchers, null, 2),
+              'utf8'
+            )
+            fs.writeFileSync(
+              path.join(exportDir, 'voucher-entries.json'),
+              JSON.stringify(voucherEntries, null, 2),
+              'utf8'
+            )
+            fs.writeFileSync(
+              path.join(exportDir, 'electronic-vouchers.json'),
+              JSON.stringify(electronicVoucherRows, null, 2),
+              'utf8'
+            )
+            fs.writeFileSync(
+              path.join(exportDir, 'operation-logs.json'),
+              JSON.stringify(operationLogs, null, 2),
+              'utf8'
+            )
 
-        let copiedOriginalVoucherCount = 0
-        for (const row of electronicVoucherRows) {
-          if (!fs.existsSync(row.stored_path)) continue
-          fs.copyFileSync(row.stored_path, path.join(originalVoucherDir, `${row.id}-${row.original_name}`))
-          copiedOriginalVoucherCount += 1
-        }
+            let copiedOriginalVoucherCount = 0
+            for (const row of electronicVoucherRows) {
+              if (!fs.existsSync(row.stored_path)) continue
+              fs.copyFileSync(
+                row.stored_path,
+                path.join(originalVoucherDir, `${row.id}-${row.original_name}`)
+              )
+              copiedOriginalVoucherCount += 1
+            }
 
-        const manifest = buildArchiveManifest({
-          ledgerId: payload.ledgerId,
-          ledgerName: ledger.name,
-          fiscalYear: payload.fiscalYear,
-          exportedAt: createdAt,
-          originalVoucherFileCount: copiedOriginalVoucherCount,
-          voucherCount: vouchers.length,
-          reportCount: 0,
-          metadata: {
-            exportMode: 'export-first',
-            selectedDirectory: picked.directoryPath,
-            generatedFiles: [
-              'manifest.json',
-              'vouchers.json',
-              'voucher-entries.json',
-              'electronic-vouchers.json',
-              'operation-logs.json'
-            ],
-            reportStatus: 'pending'
-          }
-        })
+            const manifest = buildArchiveManifest({
+              ledgerId: payload.ledgerId,
+              ledgerName: ledger.name,
+              fiscalYear: payload.fiscalYear,
+              exportedAt: createdAt,
+              originalVoucherFileCount: copiedOriginalVoucherCount,
+              voucherCount: vouchers.length,
+              reportCount: 0,
+              metadata: {
+                exportMode: 'export-first',
+                selectedDirectory: picked.directoryPath,
+                generatedFiles: [
+                  'manifest.json',
+                  'vouchers.json',
+                  'voucher-entries.json',
+                  'electronic-vouchers.json',
+                  'operation-logs.json'
+                ],
+                reportStatus: 'pending'
+              }
+            })
 
-        const manifestPath = writeArchiveManifest(exportDir, manifest)
-        const checksum = computeFileSha256(manifestPath)
+            const manifestPath = writeArchiveManifest(exportDir, manifest)
+            const checksum = computeFileSha256(manifestPath)
 
-        const result = db
-          .prepare(
-            `INSERT INTO archive_exports (
+            const result = db
+              .prepare(
+                `INSERT INTO archive_exports (
                ledger_id,
                fiscal_year,
                export_path,
@@ -209,50 +229,54 @@ export function registerArchiveHandlers(): void {
                created_by,
                created_at
              ) VALUES (?, ?, ?, ?, ?, 'generated', ?, ?, ?)`
-          )
-          .run(
-            payload.ledgerId,
-            payload.fiscalYear,
-            exportDir,
-            manifestPath,
-            checksum,
-            vouchers.length + voucherEntries.length + electronicVoucherRows.length + operationLogs.length,
-            user.id,
-            createdAt
-          )
+              )
+              .run(
+                payload.ledgerId,
+                payload.fiscalYear,
+                exportDir,
+                manifestPath,
+                checksum,
+                vouchers.length +
+                  voucherEntries.length +
+                  electronicVoucherRows.length +
+                  operationLogs.length,
+                user.id,
+                createdAt
+              )
 
-        appendOperationLog(db, {
-          ledgerId: payload.ledgerId,
-          userId: user.id,
-          username: user.username,
-          module: 'archive',
-          action: 'export',
-          targetType: 'archive_export',
-          targetId: Number(result.lastInsertRowid),
-          details: {
-            fiscalYear: payload.fiscalYear,
-            selectedDirectory: picked.directoryPath,
-            exportPath: exportDir,
-            manifestPath,
-            copiedOriginalVoucherCount,
-            createdAt
+            appendOperationLog(db, {
+              ledgerId: payload.ledgerId,
+              userId: user.id,
+              username: user.username,
+              module: 'archive',
+              action: 'export',
+              targetType: 'archive_export',
+              targetId: Number(result.lastInsertRowid),
+              details: {
+                fiscalYear: payload.fiscalYear,
+                selectedDirectory: picked.directoryPath,
+                exportPath: exportDir,
+                manifestPath,
+                copiedOriginalVoucherCount,
+                createdAt
+              }
+            })
+
+            return {
+              success: true,
+              exportId: Number(result.lastInsertRowid),
+              directoryPath: picked.directoryPath,
+              exportPath: exportDir,
+              manifestPath
+            }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : '导出电子档案失败'
+            }
           }
-        })
-
-        return {
-          success: true,
-          exportId: Number(result.lastInsertRowid),
-          directoryPath: picked.directoryPath,
-          exportPath: exportDir,
-          manifestPath
         }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : '导出电子档案失败'
-        }
-      }
-    }
+      )
   )
 
   ipcMain.handle('archive:list', (event, ledgerId?: number) => {
@@ -286,76 +310,85 @@ export function registerArchiveHandlers(): void {
       .all(user.id)
   })
 
-  ipcMain.handle('archive:validate', (event, exportId: number) => {
-    try {
-      const user = requirePermission(event, 'ledger_settings')
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(exportId) as
-        | {
-            id: number
-            ledger_id: number
-            fiscal_year: string
-            export_path: string
-            manifest_path: string
-            checksum: string | null
+  ipcMain.handle('archive:validate', (event, exportId: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'archive:validate',
+        baseDir: app.getPath('userData'),
+        context: { exportId }
+      },
+      () => {
+        try {
+          const user = requirePermission(event, 'ledger_settings')
+          const db = getDatabase()
+          const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(exportId) as
+            | {
+                id: number
+                ledger_id: number
+                fiscal_year: string
+                export_path: string
+                manifest_path: string
+                checksum: string | null
+              }
+            | undefined
+
+          if (!row) {
+            return { success: false, error: '电子档案导出记录不存在' }
           }
-        | undefined
 
-      if (!row) {
-        return { success: false, error: '电子档案导出记录不存在' }
-      }
+          requireLedgerAccess(event, db, row.ledger_id)
 
-      requireLedgerAccess(event, db, row.ledger_id)
+          const validation = validateArchiveExportPackage({
+            exportPath: row.export_path,
+            manifestPath: row.manifest_path,
+            expectedChecksum: row.checksum,
+            ledgerId: row.ledger_id,
+            fiscalYear: row.fiscal_year
+          })
 
-      const validation = validateArchiveExportPackage({
-        exportPath: row.export_path,
-        manifestPath: row.manifest_path,
-        expectedChecksum: row.checksum,
-        ledgerId: row.ledger_id,
-        fiscalYear: row.fiscal_year
-      })
+          db.prepare(
+            `UPDATE archive_exports
+             SET status = ?, validated_at = CASE WHEN ? = 'validated' THEN ? ELSE validated_at END
+             WHERE id = ?`
+          ).run(
+            validation.valid ? 'validated' : 'failed',
+            validation.valid ? 'validated' : 'failed',
+            validation.valid ? formatLocalDateTime() : null,
+            exportId
+          )
 
-      db.prepare(
-        `UPDATE archive_exports
-         SET status = ?, validated_at = CASE WHEN ? = 'validated' THEN ? ELSE validated_at END
-         WHERE id = ?`
-      ).run(
-        validation.valid ? 'validated' : 'failed',
-        validation.valid ? 'validated' : 'failed',
-        validation.valid ? formatLocalDateTime() : null,
-        exportId
-      )
+          appendOperationLog(db, {
+            ledgerId: row.ledger_id,
+            userId: user.id,
+            username: user.username,
+            module: 'archive',
+            action: 'validate',
+            targetType: 'archive_export',
+            targetId: row.id,
+            details: {
+              valid: validation.valid,
+              actualChecksum: validation.actualChecksum,
+              error: validation.error ?? null,
+              manifest: validation.manifest ?? null,
+              missingFiles: validation.missingFiles ?? []
+            }
+          })
 
-      appendOperationLog(db, {
-        ledgerId: row.ledger_id,
-        userId: user.id,
-        username: user.username,
-        module: 'archive',
-        action: 'validate',
-        targetType: 'archive_export',
-        targetId: row.id,
-        details: {
-          valid: validation.valid,
-          actualChecksum: validation.actualChecksum,
-          error: validation.error ?? null,
-          manifest: validation.manifest ?? null,
-          missingFiles: validation.missingFiles ?? []
+          return {
+            success: validation.valid,
+            valid: validation.valid,
+            actualChecksum: validation.actualChecksum,
+            error: validation.error
+          }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : '校验电子档案失败'
+          }
         }
-      })
-
-      return {
-        success: validation.valid,
-        valid: validation.valid,
-        actualChecksum: validation.actualChecksum,
-        error: validation.error
       }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '校验电子档案失败'
-      }
-    }
-  })
+    )
+  )
 
   ipcMain.handle(
     'archive:delete',
@@ -365,107 +398,121 @@ export function registerArchiveHandlers(): void {
         exportId: number
         deleteRecordOnly?: boolean
       }
-    ) => {
-    try {
-      const user = requirePermission(event, 'ledger_settings')
-      const db = getDatabase()
-      const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(payload.exportId) as
-        | {
-            id: number
-            ledger_id: number
-            fiscal_year: string
-            export_path: string
-            manifest_path: string
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'archive:delete',
+          baseDir: app.getPath('userData'),
+          context: {
+            exportId: payload.exportId,
+            deleteRecordOnly: payload.deleteRecordOnly === true
           }
-        | undefined
+        },
+        () => {
+          try {
+            const user = requirePermission(event, 'ledger_settings')
+            const db = getDatabase()
+            const row = db
+              .prepare('SELECT * FROM archive_exports WHERE id = ?')
+              .get(payload.exportId) as
+              | {
+                  id: number
+                  ledger_id: number
+                  fiscal_year: string
+                  export_path: string
+                  manifest_path: string
+                }
+              | undefined
 
-      if (!row) {
-        return { success: false, error: '电子档案导出记录不存在' }
-      }
+            if (!row) {
+              return { success: false, error: '电子档案导出记录不存在' }
+            }
 
-      requireLedgerAccess(event, db, row.ledger_id)
+            requireLedgerAccess(event, db, row.ledger_id)
 
-      const versionRows = db
-        .prepare(
-          `SELECT id
+            const versionRows = db
+              .prepare(
+                `SELECT id
              FROM archive_exports
             WHERE ledger_id = ?
             ORDER BY id DESC`
-        )
-        .all(row.ledger_id) as Array<{ id: number }>
+              )
+              .all(row.ledger_id) as Array<{ id: number }>
 
-      assertHistoricalVersionDeletable(
-        row.id,
-        versionRows.map((item) => item.id),
-        '归档'
-      )
+            assertHistoricalVersionDeletable(
+              row.id,
+              versionRows.map((item) => item.id),
+              '归档'
+            )
 
-      const physicalStatus = getArchivePhysicalPackageStatus(row.export_path)
+            const physicalStatus = getArchivePhysicalPackageStatus(row.export_path)
 
-      if (payload.deleteRecordOnly && physicalStatus.physicalExists) {
-        return {
-          success: false,
-          error: '路径下档案包仍存在，请执行正常删除以同时删除实体包。'
-        }
-      }
+            if (payload.deleteRecordOnly && physicalStatus.physicalExists) {
+              return {
+                success: false,
+                error: '路径下档案包仍存在，请执行正常删除以同时删除实体包。'
+              }
+            }
 
-      const deletionResult = payload.deleteRecordOnly
-        ? {
-            physicalExists: false,
-            deletedPaths: [],
-            packagePath: physicalStatus.packagePath
+            const deletionResult = payload.deleteRecordOnly
+              ? {
+                  physicalExists: false,
+                  deletedPaths: [],
+                  packagePath: physicalStatus.packagePath
+                }
+              : deleteArchivePhysicalPackage(row.export_path)
+
+            if (!payload.deleteRecordOnly && !deletionResult.physicalExists) {
+              return {
+                success: false,
+                missingPhysicalPackage: true,
+                requiresRecordDeletionConfirmation: true,
+                packagePath: deletionResult.packagePath,
+                error: '路径下档案包已不存在，是否删除本条记录？'
+              }
+            }
+
+            db.prepare('DELETE FROM archive_exports WHERE id = ?').run(payload.exportId)
+
+            appendOperationLog(db, {
+              ledgerId: row.ledger_id,
+              userId: user.id,
+              username: user.username,
+              module: 'archive',
+              action: 'delete',
+              targetType: 'archive_export',
+              targetId: row.id,
+              details: {
+                fiscalYear: row.fiscal_year,
+                exportPath: row.export_path,
+                manifestPath: row.manifest_path,
+                deletedPaths: deletionResult.deletedPaths,
+                deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package',
+                physicalPackageMissing: !deletionResult.physicalExists
+              }
+            })
+
+            return {
+              success: true,
+              deletedPhysicalPackage: deletionResult.physicalExists,
+              deletedPaths: deletionResult.deletedPaths
+            }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : '删除电子档案失败'
+            }
           }
-        : deleteArchivePhysicalPackage(row.export_path)
-
-      if (!payload.deleteRecordOnly && !deletionResult.physicalExists) {
-        return {
-          success: false,
-          missingPhysicalPackage: true,
-          requiresRecordDeletionConfirmation: true,
-          packagePath: deletionResult.packagePath,
-          error: '路径下档案包已不存在，是否删除本条记录？'
         }
-      }
-
-      db.prepare('DELETE FROM archive_exports WHERE id = ?').run(payload.exportId)
-
-      appendOperationLog(db, {
-        ledgerId: row.ledger_id,
-        userId: user.id,
-        username: user.username,
-        module: 'archive',
-        action: 'delete',
-        targetType: 'archive_export',
-        targetId: row.id,
-        details: {
-          fiscalYear: row.fiscal_year,
-          exportPath: row.export_path,
-          manifestPath: row.manifest_path,
-          deletedPaths: deletionResult.deletedPaths,
-          deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package',
-          physicalPackageMissing: !deletionResult.physicalExists
-        }
-      })
-
-      return {
-        success: true,
-        deletedPhysicalPackage: deletionResult.physicalExists,
-        deletedPaths: deletionResult.deletedPaths
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '删除电子档案失败'
-      }
-    }
-  })
+      )
+  )
 
   ipcMain.handle('archive:getManifest', (event, exportId: number) => {
     requirePermission(event, 'ledger_settings')
     const db = getDatabase()
-    const row = db.prepare('SELECT ledger_id, manifest_path FROM archive_exports WHERE id = ?').get(exportId) as
-      | { ledger_id: number; manifest_path: string }
-      | undefined
+    const row = db
+      .prepare('SELECT ledger_id, manifest_path FROM archive_exports WHERE id = ?')
+      .get(exportId) as { ledger_id: number; manifest_path: string } | undefined
 
     if (!row) {
       throw new Error('档案导出记录不存在')

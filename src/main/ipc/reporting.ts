@@ -14,6 +14,7 @@ import {
   type GenerateReportSnapshotParams,
   type ReportListFilters
 } from '../services/reporting'
+import { withIpcTelemetry } from '../services/runtimeLogger'
 import { requireAuth, requireLedgerAccess } from './session'
 
 const REPORT_EXPORT_LAST_DIR_KEY = 'report_export_last_dir'
@@ -23,9 +24,9 @@ function getReportExportDir(): string {
 }
 
 function getLastReportExportDir(db: ReturnType<typeof getDatabase>): string | null {
-  const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(REPORT_EXPORT_LAST_DIR_KEY) as
-    | { value: string }
-    | undefined
+  const row = db
+    .prepare('SELECT value FROM system_settings WHERE key = ?')
+    .get(REPORT_EXPORT_LAST_DIR_KEY) as { value: string } | undefined
   return row?.value ?? null
 }
 
@@ -68,7 +69,9 @@ async function printReportHtmlToPdf(filePath: string, html: string): Promise<str
         right: 0
       }
     })
-    await import('node:fs/promises').then((fs) => fs.mkdir(path.dirname(filePath), { recursive: true }))
+    await import('node:fs/promises').then((fs) =>
+      fs.mkdir(path.dirname(filePath), { recursive: true })
+    )
     await import('node:fs/promises').then((fs) => fs.writeFile(filePath, pdfBuffer))
     return filePath
   } finally {
@@ -83,13 +86,16 @@ export function registerReportingHandlers(): void {
     return listReportSnapshots(getDatabase(), filters)
   })
 
-  ipcMain.handle('reporting:getDetail', (event, payload: { snapshotId: number; ledgerId?: number }) => {
-    requireAuth(event)
-    const db = getDatabase()
-    const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-    requireLedgerAccess(event, db, detail.ledger_id)
-    return detail
-  })
+  ipcMain.handle(
+    'reporting:getDetail',
+    (event, payload: { snapshotId: number; ledgerId?: number }) => {
+      requireAuth(event)
+      const db = getDatabase()
+      const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+      requireLedgerAccess(event, db, detail.ledger_id)
+      return detail
+    }
+  )
 
   ipcMain.handle(
     'reporting:export',
@@ -101,76 +107,92 @@ export function registerReportingHandlers(): void {
         format: ReportExportFormat
         filePath?: string
       }
-    ) => {
-    try {
-      const user = requireAuth(event)
-      const db = getDatabase()
-      const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-      requireLedgerAccess(event, db, detail.ledger_id)
-      const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
-      const defaultPath = path.join(
-        preferredDir,
-        buildDefaultReportExportFileName(detail, payload.format)
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'reporting:export',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: payload.ledgerId ?? null,
+            snapshotId: payload.snapshotId,
+            format: payload.format
+          }
+        },
+        async () => {
+          try {
+            const user = requireAuth(event)
+            const db = getDatabase()
+            const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+            requireLedgerAccess(event, db, detail.ledger_id)
+            const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
+            const defaultPath = path.join(
+              preferredDir,
+              buildDefaultReportExportFileName(detail, payload.format)
+            )
+            const browserWindow = BrowserWindow.fromWebContents(event.sender)
+            const saveResult = payload.filePath
+              ? { canceled: false, filePath: payload.filePath }
+              : browserWindow
+                ? await dialog.showSaveDialog(browserWindow, {
+                    defaultPath,
+                    filters: [
+                      payload.format === 'xlsx'
+                        ? { name: 'Excel 工作簿', extensions: ['xlsx'] }
+                        : { name: 'PDF 文档', extensions: ['pdf'] }
+                    ]
+                  })
+                : await dialog.showSaveDialog({
+                    defaultPath,
+                    filters: [
+                      payload.format === 'xlsx'
+                        ? { name: 'Excel 工作簿', extensions: ['xlsx'] }
+                        : { name: 'PDF 文档', extensions: ['pdf'] }
+                    ]
+                  })
+
+            if (saveResult.canceled || !saveResult.filePath) {
+              return {
+                success: false,
+                cancelled: true
+              }
+            }
+
+            const exportPath = await exportReportSnapshotToPath(
+              detail,
+              payload.format,
+              saveResult.filePath
+            )
+            rememberReportExportDir(db, exportPath)
+
+            appendOperationLog(db, {
+              ledgerId: detail.ledger_id,
+              userId: user.id,
+              username: user.username,
+              module: 'reporting',
+              action: 'export_snapshot',
+              targetType: 'report_snapshot',
+              targetId: detail.id,
+              details: {
+                reportType: detail.report_type,
+                period: detail.period,
+                reportName: detail.report_name,
+                exportPath,
+                format: payload.format
+              }
+            })
+
+            return {
+              success: true,
+              filePath: exportPath
+            }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : '导出报表失败'
+            }
+          }
+        }
       )
-      const browserWindow = BrowserWindow.fromWebContents(event.sender)
-      const saveResult = payload.filePath
-        ? { canceled: false, filePath: payload.filePath }
-        : browserWindow
-          ? await dialog.showSaveDialog(browserWindow, {
-              defaultPath,
-              filters: [
-                payload.format === 'xlsx'
-                  ? { name: 'Excel 工作簿', extensions: ['xlsx'] }
-                  : { name: 'PDF 文档', extensions: ['pdf'] }
-              ]
-            })
-          : await dialog.showSaveDialog({
-              defaultPath,
-              filters: [
-                payload.format === 'xlsx'
-                  ? { name: 'Excel 工作簿', extensions: ['xlsx'] }
-                  : { name: 'PDF 文档', extensions: ['pdf'] }
-              ]
-            })
-
-      if (saveResult.canceled || !saveResult.filePath) {
-        return {
-          success: false,
-          cancelled: true
-        }
-      }
-
-      const exportPath = await exportReportSnapshotToPath(detail, payload.format, saveResult.filePath)
-      rememberReportExportDir(db, exportPath)
-
-      appendOperationLog(db, {
-        ledgerId: detail.ledger_id,
-        userId: user.id,
-        username: user.username,
-        module: 'reporting',
-        action: 'export_snapshot',
-        targetType: 'report_snapshot',
-        targetId: detail.id,
-        details: {
-          reportType: detail.report_type,
-          period: detail.period,
-          reportName: detail.report_name,
-          exportPath,
-          format: payload.format
-        }
-      })
-
-      return {
-        success: true,
-        filePath: exportPath
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '导出报表失败'
-      }
-    }
-    }
   )
 
   ipcMain.handle(
@@ -183,149 +205,189 @@ export function registerReportingHandlers(): void {
         format: ReportExportFormat
         directoryPath?: string
       }
-    ) => {
-      try {
-        const user = requireAuth(event)
-        const db = getDatabase()
-
-        if (!Array.isArray(payload.snapshotIds) || payload.snapshotIds.length === 0) {
-          return { success: false, error: '请先选择至少一张报表' }
-        }
-
-        const details = payload.snapshotIds.map((snapshotId) =>
-          getReportSnapshotDetail(db, snapshotId, payload.ledgerId)
-        )
-        for (const detail of details) {
-          requireLedgerAccess(event, db, detail.ledger_id)
-        }
-        const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
-        const browserWindow = BrowserWindow.fromWebContents(event.sender)
-        const openResult = payload.directoryPath
-          ? { canceled: false, filePaths: [payload.directoryPath] }
-          : browserWindow
-            ? await dialog.showOpenDialog(browserWindow, {
-                defaultPath: preferredDir,
-                properties: ['openDirectory', 'createDirectory']
-              })
-            : await dialog.showOpenDialog({
-                defaultPath: preferredDir,
-                properties: ['openDirectory', 'createDirectory']
-              })
-
-        if (openResult.canceled || openResult.filePaths.length === 0) {
-          return { success: false, cancelled: true }
-        }
-
-        const directoryPath = openResult.filePaths[0]
-        const filePaths: string[] = []
-        for (const detail of details) {
-          const filePath = path.join(
-            directoryPath,
-            buildDefaultReportExportFileName(detail, payload.format)
-          )
-          filePaths.push(await exportReportSnapshotToPath(detail, payload.format, filePath))
-        }
-        rememberReportExportDir(db, directoryPath)
-
-        appendOperationLog(db, {
-          ledgerId: details[0]?.ledger_id ?? null,
-          userId: user.id,
-          username: user.username,
-          module: 'reporting',
-          action: 'export_snapshot_batch',
-          targetType: 'report_snapshot_batch',
-          targetId: payload.snapshotIds.join(','),
-          details: {
-            reportCount: details.length,
-            format: payload.format,
-            directoryPath
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'reporting:exportBatch',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: payload.ledgerId ?? null,
+            snapshotCount: payload.snapshotIds.length,
+            format: payload.format
           }
-        })
+        },
+        async () => {
+          try {
+            const user = requireAuth(event)
+            const db = getDatabase()
 
-        return {
-          success: true,
-          directoryPath,
-          filePaths
+            if (!Array.isArray(payload.snapshotIds) || payload.snapshotIds.length === 0) {
+              return { success: false, error: '请先选择至少一张报表' }
+            }
+
+            const details = payload.snapshotIds.map((snapshotId) =>
+              getReportSnapshotDetail(db, snapshotId, payload.ledgerId)
+            )
+            for (const detail of details) {
+              requireLedgerAccess(event, db, detail.ledger_id)
+            }
+            const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
+            const browserWindow = BrowserWindow.fromWebContents(event.sender)
+            const openResult = payload.directoryPath
+              ? { canceled: false, filePaths: [payload.directoryPath] }
+              : browserWindow
+                ? await dialog.showOpenDialog(browserWindow, {
+                    defaultPath: preferredDir,
+                    properties: ['openDirectory', 'createDirectory']
+                  })
+                : await dialog.showOpenDialog({
+                    defaultPath: preferredDir,
+                    properties: ['openDirectory', 'createDirectory']
+                  })
+
+            if (openResult.canceled || openResult.filePaths.length === 0) {
+              return { success: false, cancelled: true }
+            }
+
+            const directoryPath = openResult.filePaths[0]
+            const filePaths: string[] = []
+            for (const detail of details) {
+              const filePath = path.join(
+                directoryPath,
+                buildDefaultReportExportFileName(detail, payload.format)
+              )
+              filePaths.push(await exportReportSnapshotToPath(detail, payload.format, filePath))
+            }
+            rememberReportExportDir(db, directoryPath)
+
+            appendOperationLog(db, {
+              ledgerId: details[0]?.ledger_id ?? null,
+              userId: user.id,
+              username: user.username,
+              module: 'reporting',
+              action: 'export_snapshot_batch',
+              targetType: 'report_snapshot_batch',
+              targetId: payload.snapshotIds.join(','),
+              details: {
+                reportCount: details.length,
+                format: payload.format,
+                directoryPath
+              }
+            })
+
+            return {
+              success: true,
+              directoryPath,
+              filePaths
+            }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : '批量导出报表失败'
+            }
+          }
         }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : '批量导出报表失败'
-        }
-      }
-    }
+      )
   )
 
-  ipcMain.handle('reporting:delete', (event, payload: { snapshotId: number; ledgerId: number }) => {
-    try {
-      const user = requireAuth(event)
-      const db = getDatabase()
-      requireLedgerAccess(event, db, payload.ledgerId)
-      const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-      const deleted = deleteReportSnapshot(db, payload.snapshotId, payload.ledgerId)
-
-      if (!deleted) {
-        return { success: false, error: '报表快照不存在或已删除' }
-      }
-
-      appendOperationLog(db, {
-        ledgerId: payload.ledgerId,
-        userId: user.id,
-        username: user.username,
-        module: 'reporting',
-        action: 'delete_snapshot',
-        targetType: 'report_snapshot',
-        targetId: payload.snapshotId,
-        details: {
-          reportType: detail.report_type,
-          period: detail.period,
-          reportName: detail.report_name
+  ipcMain.handle('reporting:delete', (event, payload: { snapshotId: number; ledgerId: number }) =>
+    withIpcTelemetry(
+      {
+        channel: 'reporting:delete',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: payload.ledgerId,
+          snapshotId: payload.snapshotId
         }
-      })
+      },
+      () => {
+        try {
+          const user = requireAuth(event)
+          const db = getDatabase()
+          requireLedgerAccess(event, db, payload.ledgerId)
+          const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+          const deleted = deleteReportSnapshot(db, payload.snapshotId, payload.ledgerId)
 
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '删除报表快照失败'
-      }
-    }
-  })
+          if (!deleted) {
+            return { success: false, error: '报表快照不存在或已删除' }
+          }
 
-  ipcMain.handle('reporting:generate', (event, payload: GenerateReportSnapshotParams) => {
-    try {
-      const user = requireAuth(event)
-      const db = getDatabase()
-      requireLedgerAccess(event, db, payload.ledgerId)
-      const snapshot = generateReportSnapshot(db, {
-        ...payload,
-        generatedBy: user.id
-      })
+          appendOperationLog(db, {
+            ledgerId: payload.ledgerId,
+            userId: user.id,
+            username: user.username,
+            module: 'reporting',
+            action: 'delete_snapshot',
+            targetType: 'report_snapshot',
+            targetId: payload.snapshotId,
+            details: {
+              reportType: detail.report_type,
+              period: detail.period,
+              reportName: detail.report_name
+            }
+          })
 
-      appendOperationLog(db, {
-        ledgerId: snapshot.ledger_id,
-        userId: user.id,
-        username: user.username,
-        module: 'reporting',
-        action: 'generate_snapshot',
-        targetType: 'report_snapshot',
-        targetId: snapshot.id,
-        details: {
-          reportType: snapshot.report_type,
-          period: snapshot.period,
-          reportName: snapshot.report_name
+          return { success: true }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : '删除报表快照失败'
+          }
         }
-      })
+      }
+    )
+  )
 
-      return {
-        success: true,
-        snapshot
+  ipcMain.handle('reporting:generate', (event, payload: GenerateReportSnapshotParams) =>
+    withIpcTelemetry(
+      {
+        channel: 'reporting:generate',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: payload.ledgerId,
+          reportType: payload.reportType,
+          month: payload.month ?? null,
+          startPeriod: payload.startPeriod ?? null,
+          endPeriod: payload.endPeriod ?? null,
+          includeUnpostedVouchers: payload.includeUnpostedVouchers === true
+        }
+      },
+      () => {
+        try {
+          const user = requireAuth(event)
+          const db = getDatabase()
+          requireLedgerAccess(event, db, payload.ledgerId)
+          const snapshot = generateReportSnapshot(db, {
+            ...payload,
+            generatedBy: user.id
+          })
+
+          appendOperationLog(db, {
+            ledgerId: snapshot.ledger_id,
+            userId: user.id,
+            username: user.username,
+            module: 'reporting',
+            action: 'generate_snapshot',
+            targetType: 'report_snapshot',
+            targetId: snapshot.id,
+            details: {
+              reportType: snapshot.report_type,
+              period: snapshot.period,
+              reportName: snapshot.report_name
+            }
+          })
+
+          return {
+            success: true,
+            snapshot
+          }
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : '生成报表快照失败'
+          }
+        }
       }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '生成报表快照失败'
-      }
-    }
-  })
+    )
+  )
 }
