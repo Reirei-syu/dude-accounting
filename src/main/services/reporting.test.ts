@@ -495,6 +495,71 @@ function seedNpoLedger(db: FakeReportingDb): void {
   )
 }
 
+function seedNpoCrossYearLedger(db: FakeReportingDb): void {
+  db.ledgers.push({
+    id: 3,
+    name: '民非跨年测试账套',
+    standard_type: 'npo',
+    start_period: '2024-12',
+    current_period: '2026-01'
+  })
+
+  db.subjects.push(
+    { ledger_id: 3, code: '1002', name: '银行存款', category: 'asset', balance_direction: 1 },
+    { ledger_id: 3, code: '3101', name: '非限定性净资产', category: 'net_assets', balance_direction: -1 },
+    { ledger_id: 3, code: '430101', name: '提供服务收入-非限定性', category: 'income', balance_direction: -1 },
+    { ledger_id: 3, code: '5301', name: '管理费用', category: 'expense', balance_direction: 1 }
+  )
+
+  db.initialBalances.push(
+    { ledger_id: 3, period: '2024-12', subject_code: '1002', debit_amount: 30_000, credit_amount: 0 },
+    { ledger_id: 3, period: '2024-12', subject_code: '3101', debit_amount: 0, credit_amount: 30_000 }
+  )
+
+  db.cashFlowItems.push(
+    {
+      id: 31,
+      ledger_id: 3,
+      code: 'CF01',
+      name: '提供服务收到的现金',
+      category: 'operating',
+      direction: 'inflow'
+    },
+    {
+      id: 32,
+      ledger_id: 3,
+      code: 'CF07',
+      name: '支付其他与经营活动有关的现金',
+      category: 'operating',
+      direction: 'outflow'
+    }
+  )
+
+  db.vouchers.push(
+    { id: 301, ledger_id: 3, period: '2024-12', voucher_date: '2024-12-20', status: 2, is_carry_forward: 0 },
+    { id: 302, ledger_id: 3, period: '2025-01', voucher_date: '2025-01-12', status: 2, is_carry_forward: 0 },
+    { id: 303, ledger_id: 3, period: '2025-12', voucher_date: '2025-12-10', status: 2, is_carry_forward: 0 },
+    { id: 304, ledger_id: 3, period: '2025-12', voucher_date: '2025-12-20', status: 2, is_carry_forward: 0 },
+    { id: 305, ledger_id: 3, period: '2026-01', voucher_date: '2026-01-08', status: 2, is_carry_forward: 0 },
+    { id: 306, ledger_id: 3, period: '2026-01', voucher_date: '2026-01-18', status: 2, is_carry_forward: 0 }
+  )
+
+  db.voucherEntries.push(
+    { id: 41, voucher_id: 301, row_order: 1, subject_code: '1002', debit_amount: 6_000, credit_amount: 0, cash_flow_item_id: 31 },
+    { id: 42, voucher_id: 301, row_order: 2, subject_code: '430101', debit_amount: 0, credit_amount: 6_000, cash_flow_item_id: null },
+    { id: 43, voucher_id: 302, row_order: 1, subject_code: '5301', debit_amount: 1_500, credit_amount: 0, cash_flow_item_id: null },
+    { id: 44, voucher_id: 302, row_order: 2, subject_code: '1002', debit_amount: 0, credit_amount: 1_500, cash_flow_item_id: 32 },
+    { id: 45, voucher_id: 303, row_order: 1, subject_code: '1002', debit_amount: 8_000, credit_amount: 0, cash_flow_item_id: 31 },
+    { id: 46, voucher_id: 303, row_order: 2, subject_code: '430101', debit_amount: 0, credit_amount: 8_000, cash_flow_item_id: null },
+    { id: 47, voucher_id: 304, row_order: 1, subject_code: '5301', debit_amount: 3_000, credit_amount: 0, cash_flow_item_id: null },
+    { id: 48, voucher_id: 304, row_order: 2, subject_code: '1002', debit_amount: 0, credit_amount: 3_000, cash_flow_item_id: 32 },
+    { id: 49, voucher_id: 305, row_order: 1, subject_code: '1002', debit_amount: 12_000, credit_amount: 0, cash_flow_item_id: 31 },
+    { id: 50, voucher_id: 305, row_order: 2, subject_code: '430101', debit_amount: 0, credit_amount: 12_000, cash_flow_item_id: null },
+    { id: 51, voucher_id: 306, row_order: 1, subject_code: '5301', debit_amount: 4_000, credit_amount: 0, cash_flow_item_id: null },
+    { id: 52, voucher_id: 306, row_order: 2, subject_code: '1002', debit_amount: 0, credit_amount: 4_000, cash_flow_item_id: 32 }
+  )
+}
+
 function readTotal(totals: ReportSnapshotTotal[], key: string): number {
   return totals.find((item) => item.key === key)?.amountCents ?? 0
 }
@@ -874,6 +939,61 @@ describe('reporting service', () => {
         (row) => row.cells[0]?.value === '业务活动产生的现金流量净额' && row.cells[1]?.value === 15_000
       )
     ).toBe(true)
+  })
+
+  it('supports cross-year NGO activity statement ranges with month and cumulative columns', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoCrossYearLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 3,
+      reportType: 'activity_statement',
+      startPeriod: '2025-12',
+      endPeriod: '2026-01',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-19T07:00:00.000Z'
+    })
+
+    expect(snapshot.period).toBe('2025.12-2026.01')
+    expect(snapshot.content.scope.startDate).toBe('2025-12-01')
+    expect(snapshot.content.scope.endDate).toBe('2026-01-31')
+    expect(readTotal(snapshot.content.totals, 'income_total')).toBe(20_000)
+    expect(readTotal(snapshot.content.totals, 'expense_total')).toBe(7_000)
+    expect(readTotal(snapshot.content.totals, 'net_assets_change')).toBe(13_000)
+    expect(findTableRow(snapshot, '提供服务收入')?.cells[1]?.value).toBe(12_000)
+    expect(findTableRow(snapshot, '提供服务收入')?.cells[4]?.value).toBe(20_000)
+    expect(findTableRow(snapshot, '管理费用')?.cells[1]?.value).toBe(4_000)
+    expect(findTableRow(snapshot, '管理费用')?.cells[4]?.value).toBe(7_000)
+    expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[3]?.value).toBe(8_000)
+    expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[6]?.value).toBe(13_000)
+  })
+
+  it('supports cross-year NGO cash flow statement ranges with prior-year comparison', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoCrossYearLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 3,
+      reportType: 'cashflow_statement',
+      startPeriod: '2025-12',
+      endPeriod: '2026-01',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-19T07:05:00.000Z'
+    })
+
+    expect(snapshot.period).toBe('2025.12-2026.01')
+    expect(snapshot.content.scope.startDate).toBe('2025-12-01')
+    expect(snapshot.content.scope.endDate).toBe('2026-01-31')
+    expect(findTableRow(snapshot, '提供服务收到的现金')?.cells[1]?.value).toBe(20_000)
+    expect(findTableRow(snapshot, '提供服务收到的现金')?.cells[2]?.value).toBe(6_000)
+    expect(findTableRow(snapshot, '支付的其他与业务活动有关的现金')?.cells[1]?.value).toBe(7_000)
+    expect(findTableRow(snapshot, '支付的其他与业务活动有关的现金')?.cells[2]?.value).toBe(1_500)
+    expect(findTableRow(snapshot, '业务活动产生的现金流量净额')?.cells[1]?.value).toBe(13_000)
+    expect(findTableRow(snapshot, '业务活动产生的现金流量净额')?.cells[2]?.value).toBe(4_500)
   })
 
   it('uses the NGO system balance sheet template rows and year-start/year-end columns', () => {
