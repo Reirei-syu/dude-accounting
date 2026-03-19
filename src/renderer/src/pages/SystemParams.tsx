@@ -26,8 +26,12 @@ export default function SystemParams(): JSX.Element {
   useEffect(() => {
     if (!window.electron) return
 
-    Promise.all([window.api.settings.getAll(), window.api.settings.getErrorLogStatus()])
-      .then(([settings, nextErrorLogStatus]) => {
+    let cancelled = false
+
+    void window.api.settings
+      .getSystemParams()
+      .then((settings) => {
+        if (cancelled) return
         setAllowSameMakerAuditor(settings.allow_same_maker_auditor === '1')
         setDefaultVoucherWord(settings.default_voucher_word || '记')
         setVoucherDateStrategy(
@@ -42,14 +46,32 @@ export default function SystemParams(): JSX.Element {
             ? settings.voucher_list_default_status
             : 'all'
         )
-        setErrorLogStatus(nextErrorLogStatus)
       })
       .catch((error) => {
+        if (cancelled) return
         setMessage({
           type: 'error',
           text: error instanceof Error ? error.message : '加载系统参数失败'
         })
       })
+
+    void window.api.settings
+      .getErrorLogStatus()
+      .then((nextErrorLogStatus) => {
+        if (cancelled) return
+        setErrorLogStatus(nextErrorLogStatus)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '加载错误日志状态失败'
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const handleSave = async (): Promise<void> => {
@@ -61,15 +83,29 @@ export default function SystemParams(): JSX.Element {
 
     setSaving(true)
     try {
-      await Promise.all([
-        window.api.settings.set(
+      const results = await Promise.all([
+        window.api.settings.setSystemParam(
           'allow_same_maker_auditor',
           allowSameMakerAuditor ? '1' : '0'
         ),
-        window.api.settings.set('default_voucher_word', defaultVoucherWord.trim() || '记'),
-        window.api.settings.set('new_voucher_date_strategy', voucherDateStrategy),
-        window.api.settings.set('voucher_list_default_status', voucherListDefaultStatus)
+        window.api.settings.setSystemParam(
+          'default_voucher_word',
+          defaultVoucherWord.trim() || '记'
+        ),
+        window.api.settings.setSystemParam('new_voucher_date_strategy', voucherDateStrategy),
+        window.api.settings.setSystemParam(
+          'voucher_list_default_status',
+          voucherListDefaultStatus
+        )
       ])
+      const failedResult = results.find((result) => !result.success)
+      if (failedResult) {
+        setMessage({
+          type: 'error',
+          text: failedResult.error || '保存系统参数失败'
+        })
+        return
+      }
       setMessage({ type: 'success', text: '系统参数已更新' })
     } catch (error) {
       setMessage({

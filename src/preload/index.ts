@@ -175,13 +175,21 @@ const api = {
       ipcRenderer.invoke('period:reopen', data)
   },
   settings: {
-    get: (key: string) => ipcRenderer.invoke('settings:get', key),
-    getAll: () => ipcRenderer.invoke('settings:getAll'),
+    getSystemParams: () => ipcRenderer.invoke('settings:getSystemParams'),
+    getRuntimeDefaults: () => ipcRenderer.invoke('settings:getRuntimeDefaults'),
     getUserPreferences: () => ipcRenderer.invoke('settings:getUserPreferences'),
     getWallpaperState: () => ipcRenderer.invoke('settings:getWallpaperState'),
     getLoginWallpaperState: () => ipcRenderer.invoke('settings:getLoginWallpaperState'),
     getErrorLogStatus: () => ipcRenderer.invoke('settings:getErrorLogStatus'),
-    set: (key: string, value: string) => ipcRenderer.invoke('settings:set', key, value),
+    setSystemParam: (
+      key:
+        | 'allow_same_maker_auditor'
+        | 'default_voucher_word'
+        | 'new_voucher_date_strategy'
+        | 'voucher_list_default_status',
+      value: string
+    ) =>
+      ipcRenderer.invoke('settings:setSystemParam', key, value),
     setUserPreferences: (preferences: Record<string, string>) =>
       ipcRenderer.invoke('settings:setUserPreferences', preferences),
     openErrorLogDirectory: () => ipcRenderer.invoke('settings:openErrorLogDirectory'),

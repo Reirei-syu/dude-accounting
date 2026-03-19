@@ -67,18 +67,40 @@ export default function MyPreferences(): JSX.Element {
   useEffect(() => {
     if (!window.electron) return
 
-    Promise.all([window.api.settings.getUserPreferences(), window.api.settings.getWallpaperState()])
-      .then(([preferences, nextWallpaperState]) => {
+    let cancelled = false
+
+    void window.api.settings
+      .getUserPreferences()
+      .then((preferences) => {
+        if (cancelled) return
         setDefaultLedgerId(preferences.default_ledger_id ?? '')
         setDefaultHomeTab(preferences.default_home_tab ?? 'voucher-entry')
-        setWallpaper(nextWallpaperState)
       })
       .catch((error) => {
+        if (cancelled) return
         setMessage({
           type: 'error',
           text: error instanceof Error ? error.message : '加载个人偏好失败'
         })
       })
+
+    void window.api.settings
+      .getWallpaperState()
+      .then((nextWallpaperState) => {
+        if (cancelled) return
+        setWallpaper(nextWallpaperState)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        setMessage({
+          type: 'error',
+          text: error instanceof Error ? error.message : '加载壁纸状态失败'
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [setWallpaper])
 
   useEffect(() => {

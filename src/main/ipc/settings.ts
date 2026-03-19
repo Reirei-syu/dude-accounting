@@ -26,6 +26,12 @@ import {
   WALLPAPER_SUPPORTED_FORMATS
 } from '../services/wallpaperPreference'
 import { exportDiagnosticLogs, getErrorLogStatus } from '../services/errorLog'
+import {
+  getRuntimeDefaultsSnapshot,
+  getSystemParamSnapshot,
+  isSystemParamKey,
+  updateSystemParam
+} from '../services/systemSettings'
 import { requireAdmin, requireAuth, requirePermission } from './session'
 
 type StandardType = 'enterprise' | 'npo'
@@ -43,7 +49,9 @@ function getWallpaperMimeType(extension: string): string {
 
 function getTemplateDefaultPath(standardType: StandardType): string {
   const fileName =
-    standardType === 'enterprise' ? '企业一级科目导入模板.xlsx' : '民非一级科目导入模板.xlsx'
+    standardType === 'enterprise'
+      ? '企业一级科目导入模板.xlsx'
+      : '民非一级科目导入模板.xlsx'
   return path.join(app.getPath('documents'), 'Dude Accounting', '导入模板', fileName)
 }
 
@@ -54,27 +62,15 @@ function getDiagnosticsExportDefaultPath(): string {
 export function registerSettingsHandlers(): void {
   const db = getDatabase()
 
-  // 获取系统设置
-  ipcMain.handle('settings:get', (event, key: string) => {
-    requireAuth(event)
-    const row = db.prepare('SELECT value FROM system_settings WHERE key = ?').get(key) as
-      | { value: string }
-      | undefined
-    return row ? row.value : null
+  // 读取系统参数
+  ipcMain.handle('settings:getSystemParams', (event) => {
+    requirePermission(event, 'system_settings')
+    return getSystemParamSnapshot(db)
   })
 
-  // 获取所有系统设置
-  ipcMain.handle('settings:getAll', (event) => {
+  ipcMain.handle('settings:getRuntimeDefaults', (event) => {
     requireAuth(event)
-    const rows = db.prepare('SELECT key, value FROM system_settings').all() as {
-      key: string
-      value: string
-    }[]
-    const settings: Record<string, string> = {}
-    for (const row of rows) {
-      settings[row.key] = row.value
-    }
-    return settings
+    return getRuntimeDefaultsSnapshot(db)
   })
 
   ipcMain.handle('settings:getUserPreferences', (event) => {
@@ -304,15 +300,47 @@ export function registerSettingsHandlers(): void {
     }
   })
 
-  // 更新系统设置
-  ipcMain.handle('settings:set', (event, key: string, value: string) => {
-    requirePermission(event, 'system_settings')
-    db.prepare(
-      `INSERT INTO system_settings (key, value, updated_at)
-       VALUES (?, ?, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    ).run(key, value)
-    return { success: true }
+  // 更新系统参数
+  ipcMain.handle('settings:setSystemParam', (event, key: string, value: string) => {
+    const user = requirePermission(event, 'system_settings')
+    if (!isSystemParamKey(key)) {
+      return {
+        success: false,
+        error: `不支持修改系统参数 ${key}`
+      }
+    }
+
+    try {
+      const result = updateSystemParam(db, key, value)
+
+      if (result.changed) {
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: 'set_system_param',
+          targetType: 'system_setting',
+          targetId: key,
+          details: {
+            key,
+            previousValue: result.previousValue,
+            nextValue: result.nextValue
+          }
+        })
+      }
+
+      return {
+        success: true,
+        key,
+        value: result.nextValue,
+        changed: result.changed
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '保存系统参数失败'
+      }
+    }
   })
 
   ipcMain.handle('settings:getSubjectTemplate', (event, standardType: StandardType) => {

@@ -261,7 +261,7 @@ export default function VoucherList(): JSX.Element {
   useEffect(() => {
     if (!window.electron) return
 
-    Promise.all([window.api.settings.getAll(), window.api.settings.getUserPreferences()])
+    Promise.all([window.api.settings.getRuntimeDefaults(), window.api.settings.getUserPreferences()])
       .then(([settings, preferences]) => {
         if (
           settings.voucher_list_default_status === 'pending' ||

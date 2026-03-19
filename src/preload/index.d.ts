@@ -195,6 +195,17 @@ interface AuxiliaryAPI {
 }
 
 interface SettingsAPI {
+  getSystemParams: () => Promise<{
+    allow_same_maker_auditor: string
+    default_voucher_word: string
+    new_voucher_date_strategy: string
+    voucher_list_default_status: string
+  }>
+  getRuntimeDefaults: () => Promise<{
+    default_voucher_word: string
+    new_voucher_date_strategy: string
+    voucher_list_default_status: string
+  }>
   getErrorLogStatus: () => Promise<{
     logDirectory: string
     runtimeLogPath: string
@@ -215,15 +226,26 @@ interface SettingsAPI {
     mode: 'default' | 'custom'
     wallpaperPath: string | null
     wallpaperUrl: string | null
-    recommendedResolution: string
-    recommendedRatio: string
-    maxFileSizeMb: number
-    supportedFormats: string[]
+      recommendedResolution: string
+      recommendedRatio: string
+      maxFileSizeMb: number
+      supportedFormats: string[]
   }>
-  get: (key: string) => Promise<string | null>
-  getAll: () => Promise<Record<string, string>>
   getUserPreferences: () => Promise<Record<string, string>>
-  set: (key: string, value: string) => Promise<{ success: boolean }>
+  setSystemParam: (
+    key:
+      | 'allow_same_maker_auditor'
+      | 'default_voucher_word'
+      | 'new_voucher_date_strategy'
+      | 'voucher_list_default_status',
+    value: string
+  ) => Promise<{
+    success: boolean
+    error?: string
+    key?: string
+    value?: string
+    changed?: boolean
+  }>
   setUserPreferences: (preferences: Record<string, string>) => Promise<{ success: boolean }>
   openErrorLogDirectory: () => Promise<{
     success: boolean

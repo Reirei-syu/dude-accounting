@@ -78,16 +78,22 @@ describe('preload diagnostics bridge', () => {
 
     const api = apiExposeCall?.[1] as {
       settings: {
+        getSystemParams: () => Promise<unknown>
+        getRuntimeDefaults: () => Promise<unknown>
         getErrorLogStatus: () => Promise<unknown>
         openErrorLogDirectory: () => Promise<unknown>
       }
     }
 
+    await api.settings.getSystemParams()
+    await api.settings.getRuntimeDefaults()
     await api.settings.getErrorLogStatus()
     await api.settings.openErrorLogDirectory()
 
-    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(1, 'settings:getErrorLogStatus')
-    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(2, 'settings:openErrorLogDirectory')
+    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(1, 'settings:getSystemParams')
+    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(2, 'settings:getRuntimeDefaults')
+    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(3, 'settings:getErrorLogStatus')
+    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(4, 'settings:openErrorLogDirectory')
   })
 
   it('forwards window error events to diagnostics:rendererError', () => {

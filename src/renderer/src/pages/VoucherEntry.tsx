@@ -638,7 +638,7 @@ export default function VoucherEntry({
   useEffect(() => {
     if (!window.electron) return
 
-    Promise.all([window.api.settings.getAll(), window.api.settings.getUserPreferences()])
+    Promise.all([window.api.settings.getRuntimeDefaults(), window.api.settings.getUserPreferences()])
       .then(([settings, preferences]) => {
         setDefaultVoucherWord(settings.default_voucher_word || '记')
         setNewVoucherDateStrategy(

@@ -134,8 +134,11 @@ Responsibility:
 
 Planned Channels:
 
+- `settings:getSystemParams`
+- `settings:getRuntimeDefaults`
 - `settings:getUserPreferences`
 - `settings:setUserPreferences`
+- `settings:setSystemParam`
 - `settings:getWallpaperState`
 - `settings:getLoginWallpaperState`
 - `settings:getErrorLogStatus`
@@ -144,6 +147,10 @@ Planned Channels:
 - `settings:chooseWallpaper`
 - `settings:applyWallpaperCrop`
 - `settings:restoreDefaultWallpaper`
+
+Current Constraint:
+
+- 系统参数读取已拆分为管理员专用 `settings:getSystemParams` 与业务页默认值专用 `settings:getRuntimeDefaults`；通用 `settings:getAll/set` 已收口，避免把科目模板、路径偏好等保存在 `system_settings` 中的保留键暴露给普通业务页。
 
 ### AccountSetupModule
 
