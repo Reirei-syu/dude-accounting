@@ -717,6 +717,31 @@ describe('reporting service', () => {
     ).toBe(true)
   })
 
+  it('generates enterprise cash flow snapshots correctly for cross-year ranges', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedEnterpriseLedger(db)
+
+    const cashflowStatement = generateReportSnapshot(testDb, {
+      ledgerId: 1,
+      reportType: 'cashflow_statement',
+      startPeriod: '2025-12',
+      endPeriod: '2026-01',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-19T06:00:00.000Z'
+    })
+
+    expect(cashflowStatement.period).toBe('2025.12-2026.01')
+    expect(cashflowStatement.content.scope.startDate).toBe('2025-12-01')
+    expect(cashflowStatement.content.scope.endDate).toBe('2026-01-31')
+    expect(cashflowStatement.content.formCode).toBe('会企03表')
+    expect(findTableRow(cashflowStatement, '销售商品、提供劳务收到的现金')?.cells[1]?.value).toBe(1_000)
+    expect(findTableRow(cashflowStatement, '支付其他与经营活动有关的现金')?.cells[1]?.value).toBe(200)
+    expect(findTableRow(cashflowStatement, '经营活动产生的现金流量净额')?.cells[1]?.value).toBe(800)
+    expect(findTableRow(cashflowStatement, '经营活动产生的现金流量净额')?.cells[2]?.value).toBe(0)
+  })
+
   it('adds enterprise equity statements with dual year blocks and official columns', () => {
     const db = createTestDb()
     const testDb = db as never
