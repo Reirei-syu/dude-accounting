@@ -28,7 +28,13 @@ import {
   normalizeEmergencyReversalPayload
 } from '../services/voucherControl'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
-import { buildVoucherSwapPlan, type VoucherSwapEntry, type VoucherSwapVoucher } from './voucherSwap'
+import {
+  applyVoucherSwapPlan,
+  buildVoucherSwapPlan,
+  listVoucherSwapEntriesByVoucherId,
+  listVoucherSwapVouchers,
+  type VoucherSwapVoucher
+} from '../services/voucherSwapLifecycle'
 
 interface SaveVoucherInput {
   ledgerId: number
@@ -270,257 +276,108 @@ export function registerVoucherHandlers(): void {
     )
   )
 
-  ipcMain.handle('voucher:swapPositions', (event, payload: SwapVoucherPositionsInput) => {
-    try {
-      requirePermission(event, 'voucher_entry')
-
-      if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length !== 2) {
-        return {
-          success: false,
-          error: '\u4ec5\u9009\u62e9 2 \u5f20\u51ed\u8bc1\u65f6\u624d\u53ef\u4ea4\u6362\u4f4d\u7f6e'
+  ipcMain.handle('voucher:swapPositions', (event, payload: SwapVoucherPositionsInput) =>
+    withIpcTelemetry(
+      {
+        channel: 'voucher:swapPositions',
+        baseDir: app.getPath('userData'),
+        context: {
+          requestedCount: payload.voucherIds.length
         }
-      }
+      },
+      () => {
+        try {
+          const currentUser = requirePermission(event, 'voucher_entry')
 
-      const voucherIds = Array.from(new Set(payload.voucherIds))
-      if (voucherIds.length !== 2) {
-        return {
-          success: false,
-          error: '\u8bf7\u9009\u62e9\u4e24\u5f20\u4e0d\u540c\u7684\u51ed\u8bc1'
-        }
-      }
-
-      const placeholders = voucherIds.map(() => '?').join(',')
-      const voucherRows = db
-        .prepare(
-          `SELECT
-             id,
-             ledger_id,
-             period,
-             voucher_date,
-             status,
-             creator_id,
-             auditor_id,
-             bookkeeper_id,
-             attachment_count,
-             is_carry_forward
-           FROM vouchers
-           WHERE id IN (${placeholders})`
-        )
-        .all(...voucherIds) as Array<{
-        id: number
-        ledger_id: number
-        period: string
-        voucher_date: string
-        status: number
-        creator_id: number | null
-        auditor_id: number | null
-        bookkeeper_id: number | null
-        attachment_count: number
-        is_carry_forward: number
-      }>
-
-      if (voucherRows.length !== 2) {
-        return {
-          success: false,
-          error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
-        }
-      }
-      for (const voucher of voucherRows) {
-        requireLedgerAccess(event, db, voucher.ledger_id)
-      }
-
-      const vouchersById = new Map<number, VoucherSwapVoucher>(
-        voucherRows.map((voucher) => [
-          voucher.id,
-          {
-            id: voucher.id,
-            ledgerId: voucher.ledger_id,
-            period: voucher.period,
-            voucherDate: voucher.voucher_date,
-            status: voucher.status,
-            creatorId: voucher.creator_id,
-            auditorId: voucher.auditor_id,
-            bookkeeperId: voucher.bookkeeper_id,
-            attachmentCount: voucher.attachment_count,
-            isCarryForward: voucher.is_carry_forward
+          if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length !== 2) {
+            return {
+              success: false,
+              error:
+                '\u4ec5\u9009\u62e9 2 \u5f20\u51ed\u8bc1\u65f6\u624d\u53ef\u4ea4\u6362\u4f4d\u7f6e'
+            }
           }
-        ])
-      )
 
-      const firstVoucher = vouchersById.get(voucherIds[0])
-      const secondVoucher = vouchersById.get(voucherIds[1])
+          const voucherIds = Array.from(new Set(payload.voucherIds))
+          if (voucherIds.length !== 2) {
+            return {
+              success: false,
+              error: '\u8bf7\u9009\u62e9\u4e24\u5f20\u4e0d\u540c\u7684\u51ed\u8bc1'
+            }
+          }
 
-      if (!firstVoucher || !secondVoucher) {
-        return {
-          success: false,
-          error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
-        }
-      }
+          const vouchers = listVoucherSwapVouchers(db, voucherIds)
+          if (vouchers.length !== 2) {
+            return {
+              success: false,
+              error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
+            }
+          }
+          for (const voucher of vouchers) {
+            requireLedgerAccess(event, db, voucher.ledgerId)
+          }
 
-      assertVoucherSwapAllowed([firstVoucher, secondVoucher])
-
-      if (
-        firstVoucher.ledgerId !== secondVoucher.ledgerId ||
-        firstVoucher.period !== secondVoucher.period
-      ) {
-        return {
-          success: false,
-          error:
-            '\u4ec5\u652f\u6301\u540c\u4e00\u8d26\u5957\u3001\u540c\u4e00\u671f\u95f4\u7684\u4e24\u5f20\u51ed\u8bc1\u4ea4\u6362\u4f4d\u7f6e'
-        }
-      }
-
-      const entryRows = db
-        .prepare(
-          `SELECT
-             voucher_id,
-             row_order,
-             summary,
-             subject_code,
-             debit_amount,
-             credit_amount,
-             auxiliary_item_id,
-             cash_flow_item_id
-           FROM voucher_entries
-           WHERE voucher_id IN (${placeholders})
-           ORDER BY voucher_id ASC, row_order ASC, id ASC`
-        )
-        .all(...voucherIds) as Array<{
-        voucher_id: number
-        row_order: number
-        summary: string
-        subject_code: string
-        debit_amount: number
-        credit_amount: number
-        auxiliary_item_id: number | null
-        cash_flow_item_id: number | null
-      }>
-
-      const buildEntriesForVoucher = (voucherId: number): VoucherSwapEntry[] =>
-        entryRows
-          .filter((entry) => entry.voucher_id === voucherId)
-          .map((entry) => ({
-            rowOrder: entry.row_order,
-            summary: entry.summary,
-            subjectCode: entry.subject_code,
-            debitAmount: entry.debit_amount,
-            creditAmount: entry.credit_amount,
-            auxiliaryItemId: entry.auxiliary_item_id,
-            cashFlowItemId: entry.cash_flow_item_id
-          }))
-
-      const plan = buildVoucherSwapPlan(
-        firstVoucher,
-        secondVoucher,
-        buildEntriesForVoucher(firstVoucher.id),
-        buildEntriesForVoucher(secondVoucher.id)
-      )
-
-      const updateVoucherStmt = db.prepare(
-        `UPDATE vouchers
-         SET voucher_date = ?,
-             status = ?,
-             creator_id = ?,
-             auditor_id = ?,
-             bookkeeper_id = ?,
-             attachment_count = ?,
-             is_carry_forward = ?,
-             updated_at = datetime('now')
-         WHERE id = ?`
-      )
-      const deleteEntriesStmt = db.prepare('DELETE FROM voucher_entries WHERE voucher_id = ?')
-      const insertEntryStmt = db.prepare(
-        `INSERT INTO voucher_entries (
-           voucher_id,
-           row_order,
-           summary,
-           subject_code,
-           debit_amount,
-           credit_amount,
-           auxiliary_item_id,
-           cash_flow_item_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-
-      const swapTx = db.transaction(() => {
-        updateVoucherStmt.run(
-          plan.firstVoucherUpdate.voucherDate,
-          plan.firstVoucherUpdate.status,
-          plan.firstVoucherUpdate.creatorId,
-          plan.firstVoucherUpdate.auditorId,
-          plan.firstVoucherUpdate.bookkeeperId,
-          plan.firstVoucherUpdate.attachmentCount,
-          plan.firstVoucherUpdate.isCarryForward,
-          plan.firstVoucherId
-        )
-        updateVoucherStmt.run(
-          plan.secondVoucherUpdate.voucherDate,
-          plan.secondVoucherUpdate.status,
-          plan.secondVoucherUpdate.creatorId,
-          plan.secondVoucherUpdate.auditorId,
-          plan.secondVoucherUpdate.bookkeeperId,
-          plan.secondVoucherUpdate.attachmentCount,
-          plan.secondVoucherUpdate.isCarryForward,
-          plan.secondVoucherId
-        )
-
-        deleteEntriesStmt.run(plan.firstVoucherId)
-        deleteEntriesStmt.run(plan.secondVoucherId)
-
-        for (const entry of plan.firstVoucherEntries) {
-          insertEntryStmt.run(
-            plan.firstVoucherId,
-            entry.rowOrder,
-            entry.summary,
-            entry.subjectCode,
-            entry.debitAmount,
-            entry.creditAmount,
-            entry.auxiliaryItemId,
-            entry.cashFlowItemId
+          const vouchersById = new Map<number, VoucherSwapVoucher>(
+            vouchers.map((voucher) => [voucher.id, voucher])
           )
-        }
+          const firstVoucher = vouchersById.get(voucherIds[0])
+          const secondVoucher = vouchersById.get(voucherIds[1])
 
-        for (const entry of plan.secondVoucherEntries) {
-          insertEntryStmt.run(
-            plan.secondVoucherId,
-            entry.rowOrder,
-            entry.summary,
-            entry.subjectCode,
-            entry.debitAmount,
-            entry.creditAmount,
-            entry.auxiliaryItemId,
-            entry.cashFlowItemId
+          if (!firstVoucher || !secondVoucher) {
+            return {
+              success: false,
+              error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
+            }
+          }
+
+          assertVoucherSwapAllowed([firstVoucher, secondVoucher])
+
+          if (
+            firstVoucher.ledgerId !== secondVoucher.ledgerId ||
+            firstVoucher.period !== secondVoucher.period
+          ) {
+            return {
+              success: false,
+              error:
+                '\u4ec5\u652f\u6301\u540c\u4e00\u8d26\u5957\u3001\u540c\u4e00\u671f\u95f4\u7684\u4e24\u5f20\u51ed\u8bc1\u4ea4\u6362\u4f4d\u7f6e'
+            }
+          }
+
+          const entryMap = listVoucherSwapEntriesByVoucherId(db, voucherIds)
+          const plan = buildVoucherSwapPlan(
+            firstVoucher,
+            secondVoucher,
+            entryMap.get(firstVoucher.id) ?? [],
+            entryMap.get(secondVoucher.id) ?? []
           )
+
+          applyVoucherSwapPlan(db, plan)
+
+          appendOperationLog(db, {
+            ledgerId: firstVoucher.ledgerId,
+            userId: currentUser.id,
+            username: currentUser.username,
+            module: 'voucher',
+            action: 'swap_positions',
+            targetType: 'voucher_pair',
+            targetId: voucherIds.join(','),
+            details: {
+              voucherIds
+            }
+          })
+
+          return { success: true, voucherIds }
+        } catch (error) {
+          return {
+            success: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : '\u4ea4\u6362\u51ed\u8bc1\u4f4d\u7f6e\u5931\u8d25'
+          }
         }
-      })
-
-      swapTx()
-
-      const currentUser = requirePermission(event, 'voucher_entry')
-      appendOperationLog(db, {
-        ledgerId: firstVoucher.ledgerId,
-        userId: currentUser.id,
-        username: currentUser.username,
-        module: 'voucher',
-        action: 'swap_positions',
-        targetType: 'voucher_pair',
-        targetId: voucherIds.join(','),
-        details: {
-          voucherIds
-        }
-      })
-
-      return { success: true, voucherIds }
-    } catch (error) {
-      return {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : '\u4ea4\u6362\u51ed\u8bc1\u4f4d\u7f6e\u5931\u8d25'
       }
-    }
-  })
+    )
+  )
 
   ipcMain.handle(
     'voucher:batchAction',

@@ -178,6 +178,7 @@ Current Constraint:
 - 凭证保存/更新的分录校验、现金流匹配和写库流程已收口到 `voucherLifecycle` service，`voucher.ts` 中该链路主要负责权限、期间校验和 IPC 返回结构。
 - 凭证列表、取号、分录明细查询已收口到 `voucherCatalog` service，`voucher.ts` 中对应读路径主要负责鉴权与 telemetry 包装。
 - 凭证批量审核、记账、反记账、删除/恢复删除状态流转已收口到 `voucherBatchLifecycle` service，`voucher.ts` 中对应链路主要负责权限、参数校验与操作日志。
+- 凭证位置交换的查询、换位方案构建与事务写回已收口到 `voucherSwapLifecycle` service，`voucher.ts` 中对应链路主要负责权限、同账套同期间约束与 telemetry 包装。
 
 Key Channels:
 
