@@ -1,6 +1,7 @@
 appId: com.electron.app
 productName: dude-app
 directories:
+  output: D:/coding/completed/dude-app
   buildResources: build
 files:
   - '!**/.vscode/*'
@@ -15,9 +16,12 @@ win:
   executableName: dude-app
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
+  oneClick: false
+  allowToChangeInstallationDirectory: true
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  deleteAppDataOnUninstall: false
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:

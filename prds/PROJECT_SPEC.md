@@ -72,6 +72,8 @@ Infrastructure:
 - Cloud: no
 - Data: local SQLite only
 - Packaging: `electron-builder`
+- Windows 安装器：NSIS，支持用户选择安装目录
+- 安装包输出目录：`D:\coding\completed\dude-app`
 
 ---
 
