@@ -215,42 +215,15 @@ export default function MainLayout(): JSX.Element {
     async function loadLedgers(): Promise<void> {
       try {
         if (!window.electron) {
-          const mockLedger = {
-            id: 0,
-            name: '演示账套',
-            standard_type: 'enterprise' as const,
-            start_period: '2026-01',
-            current_period: '2026-03',
-            created_at: new Date().toISOString()
-          }
-          setLedgers([mockLedger])
-          setCurrentLedger(mockLedger)
-          if (!startupAppliedRef.current && tabs.length === 0) {
-            openTab({
-              id: 'voucher-entry',
-              title: '凭证录入',
-              componentType: 'VoucherEntry'
-            })
-            startupAppliedRef.current = true
-          }
+          setLedgers([])
+          setCurrentLedger(null)
           return
         }
 
-        const [loadedLedgers, preferences] = await Promise.all([
+        const [finalLedgers, preferences] = await Promise.all([
           window.api.ledger.getAll(),
           window.api.settings.getUserPreferences()
         ])
-        if (loadedLedgers.length === 0 && user?.isAdmin) {
-          const now = new Date()
-          const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-          await window.api.ledger.create({
-            name: '默认账套',
-            standardType: 'enterprise',
-            startPeriod: period
-          })
-        }
-
-        const finalLedgers = await window.api.ledger.getAll()
         setLedgers(finalLedgers)
         const preferredLedgerId = Number(preferences.default_ledger_id || 0)
         const nextLedger = pickInitialLedger(
@@ -261,7 +234,7 @@ export default function MainLayout(): JSX.Element {
           setCurrentLedger(nextLedger)
         }
 
-        if (!startupAppliedRef.current && tabs.length === 0) {
+        if (!startupAppliedRef.current && tabs.length === 0 && finalLedgers.length > 0) {
           const preset = getHomeTabPreset(preferences.default_home_tab || 'voucher-entry')
           if (preset) {
             openTab(preset)

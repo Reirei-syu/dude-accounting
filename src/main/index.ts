@@ -28,6 +28,12 @@ import { registerBookQueryHandlers } from './ipc/bookQuery'
 import { registerPrintHandlers } from './ipc/print'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics'
 import { installGlobalErrorLogging } from './services/errorLog'
+import { getRuntimeUserDataPath } from './services/runtimeAppPaths'
+
+const runtimeUserDataPath = getRuntimeUserDataPath(app.getPath('appData'), is.dev)
+if (runtimeUserDataPath) {
+  app.setPath('userData', runtimeUserDataPath)
+}
 
 installGlobalErrorLogging(() => app.getPath('userData'))
 

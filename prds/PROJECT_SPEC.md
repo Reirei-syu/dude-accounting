@@ -74,6 +74,7 @@ Infrastructure:
 - Packaging: `electron-builder`
 - Windows 安装器：NSIS，支持用户选择安装目录
 - 安装包输出目录：`D:\coding\completed\dude-app`
+- 开发模式与安装版使用隔离的 `userData` 目录，避免共享同一份 SQLite 账套数据与日志
 
 ---
 
