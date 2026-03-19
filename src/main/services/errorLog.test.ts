@@ -10,6 +10,7 @@ import {
   writeErrorLog,
   writeRendererErrorLog
 } from './errorLog'
+import { setDiagnosticsLogDirectory } from './diagnosticsLogPath'
 
 describe('errorLog service', () => {
   let tempDir = ''
@@ -84,9 +85,37 @@ describe('errorLog service', () => {
     }, now)
 
     const nextStatus = getErrorLogStatus(tempDir, now)
+    expect(nextStatus.mode).toBe('default')
+    expect(nextStatus.defaultLogDirectory).toBe(path.join(tempDir, 'logs'))
+    expect(nextStatus.customLogDirectory).toBeNull()
     expect(nextStatus.logDirectory).toBe(path.join(tempDir, 'logs'))
     expect(nextStatus.errorLogPath).toBe(getErrorLogFilePath(tempDir, now))
     expect(nextStatus.errorLogExists).toBe(true)
+  })
+
+  it('writes logs into the custom diagnostics log directory when configured', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-error-log-'))
+    const now = new Date('2026-03-19T10:20:30')
+    const customDirectory = path.join(tempDir, 'custom-logs')
+    setDiagnosticsLogDirectory(tempDir, customDirectory)
+
+    const filePath = writeErrorLog(
+      tempDir,
+      {
+        source: 'main',
+        event: 'custom-path-test',
+        errorMessage: 'boom'
+      },
+      now
+    )
+
+    expect(filePath).toBe(path.join(customDirectory, 'error-2026-03-19.jsonl'))
+    expect(getErrorLogStatus(tempDir, now)).toMatchObject({
+      mode: 'custom',
+      customLogDirectory: customDirectory,
+      logDirectory: customDirectory,
+      errorLogPath: path.join(customDirectory, 'error-2026-03-19.jsonl')
+    })
   })
 
   it('lists and exports runtime and error logs into a timestamped directory', () => {

@@ -181,6 +181,10 @@ const api = {
     getWallpaperState: () => ipcRenderer.invoke('settings:getWallpaperState'),
     getLoginWallpaperState: () => ipcRenderer.invoke('settings:getLoginWallpaperState'),
     getErrorLogStatus: () => ipcRenderer.invoke('settings:getErrorLogStatus'),
+    chooseDiagnosticsLogDirectory: () =>
+      ipcRenderer.invoke('settings:chooseDiagnosticsLogDirectory'),
+    restoreDefaultDiagnosticsLogDirectory: () =>
+      ipcRenderer.invoke('settings:restoreDefaultDiagnosticsLogDirectory'),
     setSystemParam: (
       key:
         | 'allow_same_maker_auditor'

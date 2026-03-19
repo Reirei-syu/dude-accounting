@@ -2,7 +2,11 @@ import { useEffect, useState, type JSX } from 'react'
 
 type VoucherDateStrategy = 'last_voucher_date' | 'period_start'
 type VoucherListStatus = 'all' | 'pending' | 'audited' | 'posted'
+
 type ErrorLogStatus = {
+  mode: 'default' | 'custom'
+  defaultLogDirectory: string
+  customLogDirectory: string | null
   logDirectory: string
   runtimeLogPath: string
   errorLogPath: string
@@ -20,6 +24,8 @@ export default function SystemParams(): JSX.Element {
   const [saving, setSaving] = useState(false)
   const [openingLogDir, setOpeningLogDir] = useState(false)
   const [exportingLogs, setExportingLogs] = useState(false)
+  const [changingLogDir, setChangingLogDir] = useState(false)
+  const [resettingLogDir, setResettingLogDir] = useState(false)
   const [errorLogStatus, setErrorLogStatus] = useState<ErrorLogStatus | null>(null)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
@@ -98,6 +104,7 @@ export default function SystemParams(): JSX.Element {
           voucherListDefaultStatus
         )
       ])
+
       const failedResult = results.find((result) => !result.success)
       if (failedResult) {
         setMessage({
@@ -106,11 +113,12 @@ export default function SystemParams(): JSX.Element {
         })
         return
       }
+
       setMessage({ type: 'success', text: '系统参数已更新' })
     } catch (error) {
       setMessage({
         type: 'error',
-        text: error instanceof Error ? error.message : '保存失败'
+        text: error instanceof Error ? error.message : '保存系统参数失败'
       })
     } finally {
       setSaving(false)
@@ -178,6 +186,69 @@ export default function SystemParams(): JSX.Element {
       })
     } finally {
       setExportingLogs(false)
+    }
+  }
+
+  const handleChooseDiagnosticsLogDirectory = async (): Promise<void> => {
+    setMessage(null)
+    if (!window.electron) {
+      setMessage({ type: 'error', text: '浏览器预览模式不支持更改日志保存路径' })
+      return
+    }
+
+    setChangingLogDir(true)
+    try {
+      const result = await window.api.settings.chooseDiagnosticsLogDirectory()
+      if (result.cancelled) {
+        return
+      }
+      if (!result.success || !result.status) {
+        setMessage({
+          type: 'error',
+          text: result.error || '更改日志保存路径失败'
+        })
+        return
+      }
+
+      setErrorLogStatus(result.status)
+      setMessage({ type: 'success', text: '日志保存路径已更新' })
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '更改日志保存路径失败'
+      })
+    } finally {
+      setChangingLogDir(false)
+    }
+  }
+
+  const handleRestoreDefaultDiagnosticsLogDirectory = async (): Promise<void> => {
+    setMessage(null)
+    if (!window.electron) {
+      setMessage({ type: 'error', text: '浏览器预览模式不支持恢复默认日志路径' })
+      return
+    }
+
+    setResettingLogDir(true)
+    try {
+      const result = await window.api.settings.restoreDefaultDiagnosticsLogDirectory()
+      if (!result.success || !result.status) {
+        setMessage({
+          type: 'error',
+          text: result.error || '恢复默认日志保存路径失败'
+        })
+        return
+      }
+
+      setErrorLogStatus(result.status)
+      setMessage({ type: 'success', text: '已恢复默认日志保存路径' })
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '恢复默认日志保存路径失败'
+      })
+    } finally {
+      setResettingLogDir(false)
     }
   }
 
@@ -285,8 +356,24 @@ export default function SystemParams(): JSX.Element {
           <button
             className="glass-btn-secondary px-4 py-2"
             type="button"
+            onClick={() => void handleChooseDiagnosticsLogDirectory()}
+            disabled={changingLogDir || resettingLogDir}
+          >
+            {changingLogDir ? '更改中...' : '更改保存路径'}
+          </button>
+          <button
+            className="glass-btn-secondary px-4 py-2"
+            type="button"
+            onClick={() => void handleRestoreDefaultDiagnosticsLogDirectory()}
+            disabled={resettingLogDir || errorLogStatus?.mode !== 'custom'}
+          >
+            {resettingLogDir ? '恢复中...' : '恢复默认路径'}
+          </button>
+          <button
+            className="glass-btn-secondary px-4 py-2"
+            type="button"
             onClick={() => void handleExportDiagnosticsLogs()}
-            disabled={exportingLogs}
+            disabled={exportingLogs || changingLogDir || resettingLogDir}
           >
             {exportingLogs ? '导出中...' : '导出日志文件'}
           </button>
@@ -294,7 +381,7 @@ export default function SystemParams(): JSX.Element {
             className="glass-btn-secondary px-4 py-2"
             type="button"
             onClick={() => void handleOpenErrorLogDirectory()}
-            disabled={openingLogDir}
+            disabled={openingLogDir || changingLogDir || resettingLogDir}
           >
             {openingLogDir ? '打开中...' : '打开日志目录'}
           </button>
@@ -308,6 +395,13 @@ export default function SystemParams(): JSX.Element {
             <div style={{ color: 'var(--color-text-secondary)' }}>日志目录</div>
             <div className="mt-1 font-mono break-all" style={{ color: 'var(--color-text-primary)' }}>
               {errorLogStatus?.logDirectory ?? '加载中...'}
+            </div>
+            <div className="mt-1" style={{ color: 'var(--color-text-muted)' }}>
+              {errorLogStatus
+                ? errorLogStatus.mode === 'custom'
+                  ? '当前使用自定义日志目录'
+                  : '当前使用默认日志目录'
+                : '正在读取状态'}
             </div>
           </div>
 

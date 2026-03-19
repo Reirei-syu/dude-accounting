@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { app, type WebContents } from 'electron'
+import { getDiagnosticsLogPathState, resolveDiagnosticsLogDirectory } from './diagnosticsLogPath'
 import { buildTimestampToken, ensureDirectory } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
 import { getRuntimeLogFilePath } from './runtimeLogger'
@@ -80,7 +81,7 @@ function safeGetWebContentsUrl(webContents: WebContents | null | undefined): str
 }
 
 export function getErrorLogDirectory(baseDir: string): string {
-  return path.join(baseDir, 'logs')
+  return resolveDiagnosticsLogDirectory(baseDir)
 }
 
 export function getErrorLogFilePath(baseDir: string, now: Date = new Date()): string {
@@ -133,17 +134,24 @@ export function writeRendererErrorLog(
 }
 
 export function getErrorLogStatus(baseDir: string, now: Date = new Date()): {
+  mode: 'default' | 'custom'
+  defaultLogDirectory: string
+  customLogDirectory: string | null
   logDirectory: string
   runtimeLogPath: string
   errorLogPath: string
   runtimeLogExists: boolean
   errorLogExists: boolean
 } {
-  const logDirectory = getErrorLogDirectory(baseDir)
+  const diagnosticsPathState = getDiagnosticsLogPathState(baseDir)
+  const logDirectory = diagnosticsPathState.activeDirectory
   const runtimeLogPath = getRuntimeLogFilePath(baseDir, now)
   const errorLogPath = getErrorLogFilePath(baseDir, now)
 
   return {
+    mode: diagnosticsPathState.mode,
+    defaultLogDirectory: diagnosticsPathState.defaultDirectory,
+    customLogDirectory: diagnosticsPathState.customDirectory,
     logDirectory,
     runtimeLogPath,
     errorLogPath,

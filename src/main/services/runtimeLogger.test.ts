@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { setDiagnosticsLogDirectory } from './diagnosticsLogPath'
 import { getRuntimeLogFilePath, withIpcTelemetry, writeRuntimeLog } from './runtimeLogger'
 
 describe('runtimeLogger service', () => {
@@ -93,5 +94,28 @@ describe('runtimeLogger service', () => {
       errorMessage: '磁盘写入失败',
       context: { ledgerId: 3 }
     })
+  })
+
+  it('writes runtime logs into the custom diagnostics log directory when configured', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-log-'))
+    const now = new Date('2026-03-15T09:30:00')
+    const customDirectory = path.join(tempDir, 'custom-logs')
+    setDiagnosticsLogDirectory(tempDir, customDirectory)
+
+    const filePath = writeRuntimeLog(
+      tempDir,
+      {
+        level: 'info',
+        event: 'ipc.invoke',
+        channel: 'reporting:generate',
+        status: 'success'
+      },
+      now
+    )
+
+    expect(filePath).toBe(path.join(customDirectory, 'runtime-2026-03-15.jsonl'))
+    expect(getRuntimeLogFilePath(tempDir, now)).toBe(
+      path.join(customDirectory, 'runtime-2026-03-15.jsonl')
+    )
   })
 })

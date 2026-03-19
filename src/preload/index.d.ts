@@ -207,11 +207,43 @@ interface SettingsAPI {
     voucher_list_default_status: string
   }>
   getErrorLogStatus: () => Promise<{
+    mode: 'default' | 'custom'
+    defaultLogDirectory: string
+    customLogDirectory: string | null
     logDirectory: string
     runtimeLogPath: string
     errorLogPath: string
     runtimeLogExists: boolean
     errorLogExists: boolean
+  }>
+  chooseDiagnosticsLogDirectory: () => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    status?: {
+      mode: 'default' | 'custom'
+      defaultLogDirectory: string
+      customLogDirectory: string | null
+      logDirectory: string
+      runtimeLogPath: string
+      errorLogPath: string
+      runtimeLogExists: boolean
+      errorLogExists: boolean
+    }
+  }>
+  restoreDefaultDiagnosticsLogDirectory: () => Promise<{
+    success: boolean
+    error?: string
+    status?: {
+      mode: 'default' | 'custom'
+      defaultLogDirectory: string
+      customLogDirectory: string | null
+      logDirectory: string
+      runtimeLogPath: string
+      errorLogPath: string
+      runtimeLogExists: boolean
+      errorLogExists: boolean
+    }
   }>
   getWallpaperState: () => Promise<{
     mode: 'default' | 'custom'

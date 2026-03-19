@@ -21,6 +21,8 @@ const settingsMocks = vi.hoisted(() => {
     appendOperationLog: vi.fn(),
     getErrorLogStatus: vi.fn(),
     exportDiagnosticLogs: vi.fn(),
+    setDiagnosticsLogDirectory: vi.fn(),
+    resetDiagnosticsLogDirectory: vi.fn(),
     getSystemParamSnapshot: vi.fn(),
     getRuntimeDefaultsSnapshot: vi.fn(),
     isSystemParamKey: vi.fn(),
@@ -82,6 +84,11 @@ vi.mock('../services/errorLog', () => ({
   exportDiagnosticLogs: settingsMocks.exportDiagnosticLogs
 }))
 
+vi.mock('../services/diagnosticsLogPath', () => ({
+  setDiagnosticsLogDirectory: settingsMocks.setDiagnosticsLogDirectory,
+  resetDiagnosticsLogDirectory: settingsMocks.resetDiagnosticsLogDirectory
+}))
+
 vi.mock('../services/systemSettings', () => ({
   getSystemParamSnapshot: settingsMocks.getSystemParamSnapshot,
   getRuntimeDefaultsSnapshot: settingsMocks.getRuntimeDefaultsSnapshot,
@@ -110,6 +117,9 @@ describe('settings IPC handlers', () => {
     settingsMocks.requireAuth.mockReturnValue({ id: 1, username: 'tester' })
     settingsMocks.requirePermission.mockReturnValue({ id: 1, username: 'tester' })
     settingsMocks.getErrorLogStatus.mockReturnValue({
+      mode: 'default',
+      defaultLogDirectory: path.join(tempDir, 'logs'),
+      customLogDirectory: null,
       logDirectory: path.join(tempDir, 'logs'),
       runtimeLogPath: path.join(tempDir, 'logs', 'runtime-2026-03-19.jsonl'),
       errorLogPath: path.join(tempDir, 'logs', 'error-2026-03-19.jsonl'),
@@ -140,6 +150,18 @@ describe('settings IPC handlers', () => {
         path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'error-2026-03-19.jsonl')
       ]
     })
+    settingsMocks.setDiagnosticsLogDirectory.mockReturnValue({
+      mode: 'custom',
+      defaultDirectory: path.join(tempDir, 'logs'),
+      customDirectory: 'D:/CustomLogs',
+      activeDirectory: 'D:/CustomLogs'
+    })
+    settingsMocks.resetDiagnosticsLogDirectory.mockReturnValue({
+      mode: 'default',
+      defaultDirectory: path.join(tempDir, 'logs'),
+      customDirectory: null,
+      activeDirectory: path.join(tempDir, 'logs')
+    })
 
     registerSettingsHandlers()
   })
@@ -160,9 +182,112 @@ describe('settings IPC handlers', () => {
     expect(settingsMocks.requireAuth).toHaveBeenCalledTimes(1)
     expect(settingsMocks.getErrorLogStatus).toHaveBeenCalledWith(tempDir)
     expect(result).toMatchObject({
+      mode: 'default',
+      defaultLogDirectory: path.join(tempDir, 'logs'),
+      customLogDirectory: null,
       logDirectory: path.join(tempDir, 'logs'),
       runtimeLogExists: false,
       errorLogExists: false
+    })
+  })
+
+  it('changes the diagnostics log directory and returns the refreshed status', async () => {
+    settingsMocks.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ['D:/CustomLogs']
+    })
+    settingsMocks.getErrorLogStatus
+      .mockReturnValueOnce({
+        mode: 'default',
+        defaultLogDirectory: path.join(tempDir, 'logs'),
+        customLogDirectory: null,
+        logDirectory: path.join(tempDir, 'logs'),
+        runtimeLogPath: path.join(tempDir, 'logs', 'runtime-2026-03-19.jsonl'),
+        errorLogPath: path.join(tempDir, 'logs', 'error-2026-03-19.jsonl'),
+        runtimeLogExists: false,
+        errorLogExists: false
+      })
+      .mockReturnValueOnce({
+        mode: 'custom',
+        defaultLogDirectory: path.join(tempDir, 'logs'),
+        customLogDirectory: 'D:/CustomLogs',
+        logDirectory: 'D:/CustomLogs',
+        runtimeLogPath: 'D:/CustomLogs/runtime-2026-03-19.jsonl',
+        errorLogPath: 'D:/CustomLogs/error-2026-03-19.jsonl',
+        runtimeLogExists: false,
+        errorLogExists: false
+      })
+    const handler = settingsMocks.handlers.get('settings:chooseDiagnosticsLogDirectory')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event)
+
+    expect(settingsMocks.showOpenDialog.mock.calls[0]?.[0]).toMatchObject({
+      defaultPath: path.join(tempDir, 'logs'),
+      properties: ['openDirectory', 'createDirectory']
+    })
+    expect(settingsMocks.setDiagnosticsLogDirectory).toHaveBeenCalledWith(
+      tempDir,
+      'D:/CustomLogs'
+    )
+    expect(settingsMocks.appendOperationLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'set_diagnostics_log_directory',
+        targetType: 'diagnostics_log_directory'
+      })
+    )
+    expect(result).toEqual({
+      success: true,
+      status: {
+        mode: 'custom',
+        defaultLogDirectory: path.join(tempDir, 'logs'),
+        customLogDirectory: 'D:/CustomLogs',
+        logDirectory: 'D:/CustomLogs',
+        runtimeLogPath: 'D:/CustomLogs/runtime-2026-03-19.jsonl',
+        errorLogPath: 'D:/CustomLogs/error-2026-03-19.jsonl',
+        runtimeLogExists: false,
+        errorLogExists: false
+      }
+    })
+  })
+
+  it('restores the default diagnostics log directory and returns the refreshed status', async () => {
+    settingsMocks.getErrorLogStatus.mockReturnValue({
+      mode: 'default',
+      defaultLogDirectory: path.join(tempDir, 'logs'),
+      customLogDirectory: null,
+      logDirectory: path.join(tempDir, 'logs'),
+      runtimeLogPath: path.join(tempDir, 'logs', 'runtime-2026-03-19.jsonl'),
+      errorLogPath: path.join(tempDir, 'logs', 'error-2026-03-19.jsonl'),
+      runtimeLogExists: false,
+      errorLogExists: false
+    })
+    const handler = settingsMocks.handlers.get('settings:restoreDefaultDiagnosticsLogDirectory')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event)
+
+    expect(settingsMocks.resetDiagnosticsLogDirectory).toHaveBeenCalledWith(tempDir)
+    expect(settingsMocks.appendOperationLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        action: 'restore_default_diagnostics_log_directory',
+        targetType: 'diagnostics_log_directory'
+      })
+    )
+    expect(result).toEqual({
+      success: true,
+      status: {
+        mode: 'default',
+        defaultLogDirectory: path.join(tempDir, 'logs'),
+        customLogDirectory: null,
+        logDirectory: path.join(tempDir, 'logs'),
+        runtimeLogPath: path.join(tempDir, 'logs', 'runtime-2026-03-19.jsonl'),
+        errorLogPath: path.join(tempDir, 'logs', 'error-2026-03-19.jsonl'),
+        runtimeLogExists: false,
+        errorLogExists: false
+      }
     })
   })
 

@@ -27,6 +27,10 @@ import {
 } from '../services/wallpaperPreference'
 import { exportDiagnosticLogs, getErrorLogStatus } from '../services/errorLog'
 import {
+  resetDiagnosticsLogDirectory,
+  setDiagnosticsLogDirectory
+} from '../services/diagnosticsLogPath'
+import {
   getRuntimeDefaultsSnapshot,
   getSystemParamSnapshot,
   isSystemParamKey,
@@ -98,6 +102,85 @@ export function registerSettingsHandlers(): void {
   ipcMain.handle('settings:getErrorLogStatus', (event) => {
     requireAuth(event)
     return getErrorLogStatus(app.getPath('userData'))
+  })
+
+  ipcMain.handle('settings:chooseDiagnosticsLogDirectory', async (event) => {
+    try {
+      const user = requirePermission(event, 'system_settings')
+      const browserWindow = BrowserWindow.fromWebContents(event.sender)
+      const currentStatus = getErrorLogStatus(app.getPath('userData'))
+      const openResult = browserWindow
+        ? await dialog.showOpenDialog(browserWindow, {
+            defaultPath: currentStatus.logDirectory,
+            properties: ['openDirectory', 'createDirectory']
+          })
+        : await dialog.showOpenDialog({
+            defaultPath: currentStatus.logDirectory,
+            properties: ['openDirectory', 'createDirectory']
+          })
+
+      if (openResult.canceled || openResult.filePaths.length === 0) {
+        return { success: false, cancelled: true }
+      }
+
+      const pathState = setDiagnosticsLogDirectory(app.getPath('userData'), openResult.filePaths[0])
+
+      appendOperationLog(db, {
+        userId: user.id,
+        username: user.username,
+        module: 'settings',
+        action: 'set_diagnostics_log_directory',
+        targetType: 'diagnostics_log_directory',
+        targetId: 'diagnostics_log_directory',
+        details: {
+          mode: pathState.mode,
+          logDirectory: pathState.activeDirectory,
+          defaultLogDirectory: pathState.defaultDirectory,
+          customLogDirectory: pathState.customDirectory
+        }
+      })
+
+      return {
+        success: true,
+        status: getErrorLogStatus(app.getPath('userData'))
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '更改日志保存路径失败'
+      }
+    }
+  })
+
+  ipcMain.handle('settings:restoreDefaultDiagnosticsLogDirectory', (event) => {
+    try {
+      const user = requirePermission(event, 'system_settings')
+      const pathState = resetDiagnosticsLogDirectory(app.getPath('userData'))
+
+      appendOperationLog(db, {
+        userId: user.id,
+        username: user.username,
+        module: 'settings',
+        action: 'restore_default_diagnostics_log_directory',
+        targetType: 'diagnostics_log_directory',
+        targetId: 'diagnostics_log_directory',
+        details: {
+          mode: pathState.mode,
+          logDirectory: pathState.activeDirectory,
+          defaultLogDirectory: pathState.defaultDirectory
+        }
+      })
+
+      return {
+        success: true,
+        status: getErrorLogStatus(app.getPath('userData'))
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : '恢复默认日志保存路径失败'
+      }
+    }
   })
 
   ipcMain.handle('settings:openErrorLogDirectory', async (event) => {

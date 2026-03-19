@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { resolveDiagnosticsLogDirectory } from './diagnosticsLogPath'
 import { ensureDirectory } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
 
@@ -76,7 +77,10 @@ function extractResultErrorMessage(result: unknown): string | undefined {
 }
 
 export function getRuntimeLogFilePath(baseDir: string, now: Date = new Date()): string {
-  return path.join(baseDir, 'logs', `runtime-${formatLocalDateToken(now)}.jsonl`)
+  return path.join(
+    resolveDiagnosticsLogDirectory(baseDir),
+    `runtime-${formatLocalDateToken(now)}.jsonl`
+  )
 }
 
 export function writeRuntimeLog(

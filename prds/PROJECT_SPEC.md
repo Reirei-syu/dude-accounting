@@ -142,6 +142,8 @@ Planned Channels:
 - `settings:getWallpaperState`
 - `settings:getLoginWallpaperState`
 - `settings:getErrorLogStatus`
+- `settings:chooseDiagnosticsLogDirectory`
+- `settings:restoreDefaultDiagnosticsLogDirectory`
 - `settings:openErrorLogDirectory`
 - `settings:exportDiagnosticsLogs`
 - `settings:chooseWallpaper`
@@ -233,10 +235,10 @@ Responsibility:
 Status:
 
 - 已支持按天写入本地 JSONL 日志文件，路径为应用 `userData/logs/runtime-YYYY-MM-DD.jsonl`。
-- 已补充独立错误日志，路径为应用 `userData/logs/error-YYYY-MM-DD.jsonl`，用于记录主进程未捕获异常、未处理 Promise 拒绝、渲染进程脚本错误和进程异常退出。
+- 已补充独立错误日志，默认路径为应用 `userData/logs/error-YYYY-MM-DD.jsonl`，并支持在系统参数页切换到自定义日志目录，用于记录主进程未捕获异常、未处理 Promise 拒绝、渲染进程脚本错误和进程异常退出。
 - 运行日志与业务操作日志分离：`operation_logs` 用于业务留痕，`runtime-*.jsonl` 用于排查性能与异常。
 - 渲染进程通过 preload 自动上报 `window.error` 与 `unhandledrejection`；主进程补充记录 `uncaughtExceptionMonitor`、`unhandledRejection`、`render-process-gone`、`child-process-gone`。
-- 系统参数页支持查看日志目录、今日日志文件状态，并可直接打开日志目录或导出当前日志文件到用户指定目录。
+- 系统参数页支持查看日志目录、今日日志文件状态，并可直接更改日志保存路径、恢复默认日志路径、打开日志目录或导出当前日志文件到用户指定目录。
 - 当前已覆盖报表导出/生成、备份创建/校验/恢复、归档导出/校验/删除、电子凭证导入/校验/解析/转换等关键 IPC。
 - 当前已额外覆盖首页和高频读路径，包括 `ledger:getAll`、`ledger:getPeriods`、`backup:list`、`archive:list`、`reporting:list`、`reporting:getDetail`。
 - 当前也已覆盖账套写路径，包括 `ledger:create`、`ledger:update`、`ledger:delete`、`ledger:applyStandardTemplate`。
