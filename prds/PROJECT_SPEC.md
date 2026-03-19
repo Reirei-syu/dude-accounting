@@ -117,6 +117,7 @@ Current Constraint:
 
 - 账套 `start_period` 的历史兼容归一化改为应用启动时执行一次，不再在 `ledger:getAll` 首页读取链路中每次全量扫描 `periods`、`vouchers`、`initial_balances`。
 - `initialBalance:save` 在保存期初余额时会同步补齐 `periods` 记录，避免后续期间列表与期初数据脱节。
+- 账套列表与期间列表查询已收口到 `ledgerCatalog` service，`ledger.ts` 中的读路径主要负责鉴权与 IPC 编排。
 
 Key Channels:
 
@@ -219,6 +220,7 @@ Status:
 - 已支持按天写入本地 JSONL 日志文件，路径为应用 `userData/logs/runtime-YYYY-MM-DD.jsonl`。
 - 运行日志与业务操作日志分离：`operation_logs` 用于业务留痕，`runtime-*.jsonl` 用于排查性能与异常。
 - 当前已覆盖报表导出/生成、备份创建/校验/恢复、归档导出/校验/删除、电子凭证导入/校验/解析/转换等关键 IPC。
+- 当前已额外覆盖首页和高频读路径，包括 `ledger:getAll`、`ledger:getPeriods`、`backup:list`、`archive:list`、`reporting:list`、`reporting:getDetail`。
 
 ### ElectronicVoucherModule
 

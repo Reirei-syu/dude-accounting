@@ -274,24 +274,35 @@ export function registerArchiveHandlers(): void {
       )
   )
 
-  ipcMain.handle('archive:list', (event, ledgerId?: number) => {
-    const user = requirePermission(event, 'ledger_settings')
-    const db = getDatabase()
+  ipcMain.handle('archive:list', (event, ledgerId?: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'archive:list',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: typeof ledgerId === 'number' ? ledgerId : null
+        }
+      },
+      () => {
+        const user = requirePermission(event, 'ledger_settings')
+        const db = getDatabase()
 
-    if (typeof ledgerId === 'number') {
-      requireLedgerAccess(event, db, ledgerId)
-      return listArchiveExports(db, {
-        ledgerId,
-        userId: user.id,
-        isAdmin: user.isAdmin
-      })
-    }
+        if (typeof ledgerId === 'number') {
+          requireLedgerAccess(event, db, ledgerId)
+          return listArchiveExports(db, {
+            ledgerId,
+            userId: user.id,
+            isAdmin: user.isAdmin
+          })
+        }
 
-    return listArchiveExports(db, {
-      userId: user.id,
-      isAdmin: user.isAdmin
-    })
-  })
+        return listArchiveExports(db, {
+          userId: user.id,
+          isAdmin: user.isAdmin
+        })
+      }
+    )
+  )
 
   ipcMain.handle('archive:validate', (event, exportId: number) =>
     withIpcTelemetry(

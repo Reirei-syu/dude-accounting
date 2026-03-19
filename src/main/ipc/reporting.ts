@@ -53,21 +53,45 @@ async function printReportHtmlToPdf(filePath: string, html: string): Promise<str
 }
 
 export function registerReportingHandlers(): void {
-  ipcMain.handle('reporting:list', (event, filters: ReportListFilters) => {
-    requireAuth(event)
-    requireLedgerAccess(event, getDatabase(), filters.ledgerId)
-    return listReportSnapshots(getDatabase(), filters)
-  })
+  ipcMain.handle('reporting:list', (event, filters: ReportListFilters) =>
+    withIpcTelemetry(
+      {
+        channel: 'reporting:list',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: filters.ledgerId,
+          reportTypeCount: filters.reportTypes?.length ?? 0,
+          periodCount: filters.periods?.length ?? 0
+        }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, getDatabase(), filters.ledgerId)
+        return listReportSnapshots(getDatabase(), filters)
+      }
+    )
+  )
 
   ipcMain.handle(
     'reporting:getDetail',
-    (event, payload: { snapshotId: number; ledgerId?: number }) => {
-      requireAuth(event)
-      const db = getDatabase()
-      const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-      requireLedgerAccess(event, db, detail.ledger_id)
-      return detail
-    }
+    (event, payload: { snapshotId: number; ledgerId?: number }) =>
+      withIpcTelemetry(
+        {
+          channel: 'reporting:getDetail',
+          baseDir: app.getPath('userData'),
+          context: {
+            snapshotId: payload.snapshotId,
+            ledgerId: payload.ledgerId ?? null
+          }
+        },
+        () => {
+          requireAuth(event)
+          const db = getDatabase()
+          const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+          requireLedgerAccess(event, db, detail.ledger_id)
+          return detail
+        }
+      )
   )
 
   ipcMain.handle(

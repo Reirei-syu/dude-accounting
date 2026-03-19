@@ -191,24 +191,35 @@ export function registerBackupHandlers(): void {
       )
   )
 
-  ipcMain.handle('backup:list', (event, ledgerId?: number) => {
-    const user = requirePermission(event, 'ledger_settings')
-    const db = getDatabase()
+  ipcMain.handle('backup:list', (event, ledgerId?: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'backup:list',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: typeof ledgerId === 'number' ? ledgerId : null
+        }
+      },
+      () => {
+        const user = requirePermission(event, 'ledger_settings')
+        const db = getDatabase()
 
-    if (typeof ledgerId === 'number') {
-      requireLedgerAccess(event, db, ledgerId)
-      return listBackupPackages(db, {
-        ledgerId,
-        userId: user.id,
-        isAdmin: user.isAdmin
-      })
-    }
+        if (typeof ledgerId === 'number') {
+          requireLedgerAccess(event, db, ledgerId)
+          return listBackupPackages(db, {
+            ledgerId,
+            userId: user.id,
+            isAdmin: user.isAdmin
+          })
+        }
 
-    return listBackupPackages(db, {
-      userId: user.id,
-      isAdmin: user.isAdmin
-    })
-  })
+        return listBackupPackages(db, {
+          userId: user.id,
+          isAdmin: user.isAdmin
+        })
+      }
+    )
+  )
 
   ipcMain.handle('backup:validate', (event, backupId: number) =>
     withIpcTelemetry(

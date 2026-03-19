@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import {
   getStandardTemplateSummaries,
@@ -8,30 +8,32 @@ import {
   seedSubjectsForLedger
 } from '../database/seed'
 import { appendOperationLog } from '../services/auditLog'
+import { listAccessibleLedgers, listLedgerPeriods } from '../services/ledgerCatalog'
 import { assertLedgerNameAvailable, normalizeLedgerName } from '../services/ledgerNaming'
 import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
 import { applyCustomTopLevelSubjectTemplate } from '../services/subjectTemplate'
+import { withIpcTelemetry } from '../services/runtimeLogger'
 import { grantUserLedgerAccess } from '../services/userLedgerAccess'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
 export function registerLedgerHandlers(): void {
   const db = getDatabase()
 
-  ipcMain.handle('ledger:getAll', (event) => {
-    const user = requireAuth(event)
-    if (user.isAdmin) {
-      return db.prepare('SELECT * FROM ledgers ORDER BY created_at DESC').all()
-    }
-    return db
-      .prepare(
-        `SELECT l.*
-           FROM ledgers l
-           INNER JOIN user_ledger_permissions ulp ON ulp.ledger_id = l.id
-          WHERE ulp.user_id = ?
-          ORDER BY l.created_at DESC`
-      )
-      .all(user.id)
-  })
+  ipcMain.handle('ledger:getAll', (event) =>
+    withIpcTelemetry(
+      {
+        channel: 'ledger:getAll',
+        baseDir: app.getPath('userData')
+      },
+      () => {
+        const user = requireAuth(event)
+        return listAccessibleLedgers(db, {
+          userId: user.id,
+          isAdmin: user.isAdmin
+        })
+      }
+    )
+  )
 
   ipcMain.handle(
     'ledger:create',
@@ -172,11 +174,20 @@ export function registerLedgerHandlers(): void {
     }
   })
 
-  ipcMain.handle('ledger:getPeriods', (event, ledgerId: number) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, ledgerId)
-    return db.prepare('SELECT * FROM periods WHERE ledger_id = ? ORDER BY period').all(ledgerId)
-  })
+  ipcMain.handle('ledger:getPeriods', (event, ledgerId: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'ledger:getPeriods',
+        baseDir: app.getPath('userData'),
+        context: { ledgerId }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, db, ledgerId)
+        return listLedgerPeriods(db, ledgerId)
+      }
+    )
+  )
 
   ipcMain.handle('ledger:getStandardTemplates', (event) => {
     requireAuth(event)
