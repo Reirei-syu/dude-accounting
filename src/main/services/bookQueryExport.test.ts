@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import ExcelJS from 'exceljs'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildBookQueryExportDefaultPath,
@@ -49,7 +50,7 @@ class FakePathPreferenceDb {
   }
 }
 
-function createPayload(): BookQueryExportPayload {
+function createPayload(overrides?: Partial<BookQueryExportPayload>): BookQueryExportPayload {
   return {
     ledgerId: 1,
     bookType: 'detail_ledger',
@@ -68,7 +69,8 @@ function createPayload(): BookQueryExportPayload {
         key: '',
         cells: [{ value: '2026-03-01' }, { value: '摘要' }]
       }
-    ]
+    ],
+    ...overrides
   }
 }
 
@@ -108,11 +110,48 @@ describe('bookQueryExport service', () => {
     )
   })
 
+  it('falls back to subject and cross-year period labels when subtitle is absent', () => {
+    const payload = normalizeBookQueryExportPayload(
+      createPayload({
+        title: '序时账',
+        subtitle: undefined,
+        periodLabel: '期间：2025-12-01 至 2026-01-31'
+      })
+    )
+
+    expect(buildBookQueryExportDefaultPath('D:/exports', payload)).toBe(
+      'D:\\exports\\序时账-科目：银行存款-期间：2025-12-01 至 2026-01-31.xlsx'
+    )
+  })
+
   it('returns export filters by format', () => {
     expect(getBookQueryExportFilters('xlsx')).toEqual([
       { name: 'Excel 工作簿', extensions: ['xlsx'] }
     ])
     expect(getBookQueryExportFilters('pdf')).toEqual([{ name: 'PDF 文档', extensions: ['pdf'] }])
+  })
+
+  it('writes cross-year subject and period labels into excel header rows', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
+    const payload = normalizeBookQueryExportPayload(
+      createPayload({
+        title: '序时账',
+        subtitle: undefined,
+        subjectLabel: '科目：库存现金',
+        periodLabel: '期间：2025-12-01 至 2026-01-31'
+      })
+    )
+    const filePath = path.join(tempDir, 'book.xlsx')
+
+    await exportBookQueryToFile(payload, filePath)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(filePath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(worksheet?.getCell(1, 1).value).toBe('序时账')
+    expect(worksheet?.getCell(3, 1).value).toBe('科目：库存现金')
+    expect(worksheet?.getCell(3, 2).value).toBe('期间：2025-12-01 至 2026-01-31')
   })
 
   it('exports through the matching book export writer', async () => {

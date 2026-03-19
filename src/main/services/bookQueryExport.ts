@@ -54,7 +54,7 @@ export function normalizeBookQueryExportPayload(
   return {
     ...payload,
     title: payload.title.trim(),
-    subtitle: payload.subtitle?.trim() ?? '',
+    subtitle: payload.subtitle?.trim() || undefined,
     ledgerName: payload.ledgerName?.trim() ?? '',
     columns: payload.columns.map((column, index) => ({
       key: column.key || `col_${index + 1}`,
