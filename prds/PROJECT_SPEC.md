@@ -77,6 +77,7 @@ Infrastructure:
 - 开发模式与安装版使用隔离的 `userData` 目录，避免共享同一份 SQLite 账套数据与日志
 - 打包安装版的主数据库默认存放在安装目录下的 `data/dude-accounting.db`；若检测到旧版仍将数据库保存在 legacy `userData` 目录，则首次启动自动迁移到安装目录 `data`
 - 发布脚本在生成新安装包前会自动清理输出目录中的旧版安装包产物，避免 `completed` 目录持续堆积历史安装包
+- Windows 安装器默认使用当前用户可写安装目录，并禁止选择 `Program Files`、`Windows` 等受保护目录；应用启动时会再次校验安装目录 `data` 的写权限，不可写则阻断启动
 
 ---
 

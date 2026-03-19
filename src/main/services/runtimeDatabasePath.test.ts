@@ -65,4 +65,20 @@ describe('runtimeDatabasePath service', () => {
     expect(fs.readFileSync(state.targetPath, 'utf8')).toBe('legacy-db')
     expect(fs.readFileSync(`${state.targetPath}-wal`, 'utf8')).toBe('legacy-wal')
   })
+
+  it('throws a clear error when the packaged data directory is not writable', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-db-'))
+    const userDataPath = path.join(tempDir, 'userData')
+    const installDirectoryAsFile = path.join(tempDir, 'install-root-file')
+    fs.mkdirSync(userDataPath, { recursive: true })
+    fs.writeFileSync(installDirectoryAsFile, 'not-a-directory', 'utf8')
+
+    expect(() =>
+      ensurePrimaryDatabasePath({
+        userDataPath,
+        isDevelopment: false,
+        installDirectory: installDirectoryAsFile
+      })
+    ).toThrow('数据库目录不可写')
+  })
 })

@@ -13,6 +13,7 @@
 - 开发模式：数据库仍存放在当前用户的开发隔离目录，例如 `AppData\Roaming\dude-app-dev\dude-accounting.db`
 - 打包安装版：主数据库默认存放在安装目录下的 `data` 文件夹，例如 `D:\DudeAcc\dude-app\data\dude-accounting.db`
 - 旧版安装用户首次启动新版时，如果安装目录下还没有数据库、但旧的 `AppData\Roaming\dude-app\dude-accounting.db` 存在，程序会自动迁移到安装目录 `data` 下继续使用
+- Windows 安装器会默认把安装目录指向当前用户可写路径，并阻止选择 `Program Files`、`Windows` 等受保护目录；程序启动时也会再次校验 `安装目录\data` 是否可写，不可写则直接阻断启动并提示重新安装
 
 ## 公开仓库后是否可以直接安装并打包
 

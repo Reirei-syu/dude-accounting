@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -103,9 +103,17 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // Initialize database
-  initializeDatabase()
-  flushPendingRestoreLog()
+  try {
+    initializeDatabase()
+    flushPendingRestoreLog()
+  } catch (error) {
+    dialog.showErrorBox(
+      '启动失败',
+      error instanceof Error ? error.message : '初始化数据库失败，请检查安装目录与数据目录权限。'
+    )
+    app.quit()
+    return
+  }
 
   // Register IPC handlers
   registerAuthHandlers()

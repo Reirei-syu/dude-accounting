@@ -16,6 +16,7 @@ win:
   executableName: dude-app
   signAndEditExecutable: false
 nsis:
+  include: build/installer.nsh
   artifactName: ${name}-${version}-setup.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true

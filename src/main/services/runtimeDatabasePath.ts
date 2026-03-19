@@ -22,6 +22,35 @@ export interface RuntimeDatabasePathState {
   migratedFiles: string[]
 }
 
+function buildUnwritableDatabaseDirectoryError(targetDirectory: string): Error {
+  return new Error(
+    `数据库目录不可写：${targetDirectory}。请将软件安装到当前用户可写目录，例如 %LOCALAPPDATA%\\dude-app。`
+  )
+}
+
+function ensureWritableDirectory(directoryPath: string): void {
+  try {
+    ensureDirectory(directoryPath)
+  } catch {
+    throw buildUnwritableDatabaseDirectoryError(directoryPath)
+  }
+
+  const probePath = path.join(
+    directoryPath,
+    `.dude-write-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`
+  )
+
+  try {
+    fs.writeFileSync(probePath, 'ok', 'utf8')
+    fs.rmSync(probePath, { force: true })
+  } catch {
+    if (fs.existsSync(probePath)) {
+      fs.rmSync(probePath, { force: true })
+    }
+    throw buildUnwritableDatabaseDirectoryError(directoryPath)
+  }
+}
+
 function resolveInstallDirectory(options: RuntimeDatabasePathOptions): string | null {
   if (options.installDirectory) {
     const normalizedInstallDirectory = options.installDirectory.trim()
@@ -72,7 +101,7 @@ export function ensureRuntimeDatabasePath(
   const targetPath = path.join(targetDirectory, fileName)
   const legacyPath = getLegacyDatabasePath(fileName, options.userDataPath, options.isDevelopment)
 
-  ensureDirectory(targetDirectory)
+  ensureWritableDirectory(targetDirectory)
 
   if (options.isDevelopment || fs.existsSync(targetPath) || !legacyPath || !fs.existsSync(legacyPath)) {
     return {
