@@ -2,6 +2,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
+import {
+  createArchiveExportRecord,
+  deleteArchiveExportRecord,
+  getArchiveExportById,
+  listArchiveExportIdsByLedger,
+  listArchiveExports,
+  updateArchiveExportValidation
+} from '../services/archiveCatalog'
 import { appendOperationLog } from '../services/auditLog'
 import {
   buildArchiveManifest,
@@ -216,33 +224,20 @@ export function registerArchiveHandlers(): void {
             const manifestPath = writeArchiveManifest(exportDir, manifest)
             const checksum = computeFileSha256(manifestPath)
 
-            const result = db
-              .prepare(
-                `INSERT INTO archive_exports (
-               ledger_id,
-               fiscal_year,
-               export_path,
-               manifest_path,
-               checksum,
-               status,
-               item_count,
-               created_by,
-               created_at
-             ) VALUES (?, ?, ?, ?, ?, 'generated', ?, ?, ?)`
-              )
-              .run(
-                payload.ledgerId,
-                payload.fiscalYear,
-                exportDir,
-                manifestPath,
-                checksum,
+            const exportId = createArchiveExportRecord(db, {
+              ledgerId: payload.ledgerId,
+              fiscalYear: payload.fiscalYear,
+              exportPath: exportDir,
+              manifestPath,
+              checksum,
+              itemCount:
                 vouchers.length +
-                  voucherEntries.length +
-                  electronicVoucherRows.length +
-                  operationLogs.length,
-                user.id,
-                createdAt
-              )
+                voucherEntries.length +
+                electronicVoucherRows.length +
+                operationLogs.length,
+              createdBy: user.id,
+              createdAt
+            })
 
             appendOperationLog(db, {
               ledgerId: payload.ledgerId,
@@ -251,7 +246,7 @@ export function registerArchiveHandlers(): void {
               module: 'archive',
               action: 'export',
               targetType: 'archive_export',
-              targetId: Number(result.lastInsertRowid),
+              targetId: exportId,
               details: {
                 fiscalYear: payload.fiscalYear,
                 selectedDirectory: picked.directoryPath,
@@ -264,7 +259,7 @@ export function registerArchiveHandlers(): void {
 
             return {
               success: true,
-              exportId: Number(result.lastInsertRowid),
+              exportId,
               directoryPath: picked.directoryPath,
               exportPath: exportDir,
               manifestPath
@@ -285,29 +280,17 @@ export function registerArchiveHandlers(): void {
 
     if (typeof ledgerId === 'number') {
       requireLedgerAccess(event, db, ledgerId)
-      return db
-        .prepare(
-          `SELECT *
-           FROM archive_exports
-           WHERE ledger_id = ?
-           ORDER BY id DESC`
-        )
-        .all(ledgerId)
+      return listArchiveExports(db, {
+        ledgerId,
+        userId: user.id,
+        isAdmin: user.isAdmin
+      })
     }
 
-    if (user.isAdmin) {
-      return db.prepare('SELECT * FROM archive_exports ORDER BY id DESC').all()
-    }
-
-    return db
-      .prepare(
-        `SELECT ae.*
-           FROM archive_exports ae
-           INNER JOIN user_ledger_permissions ulp ON ulp.ledger_id = ae.ledger_id
-          WHERE ulp.user_id = ?
-          ORDER BY ae.id DESC`
-      )
-      .all(user.id)
+    return listArchiveExports(db, {
+      userId: user.id,
+      isAdmin: user.isAdmin
+    })
   })
 
   ipcMain.handle('archive:validate', (event, exportId: number) =>
@@ -321,16 +304,7 @@ export function registerArchiveHandlers(): void {
         try {
           const user = requirePermission(event, 'ledger_settings')
           const db = getDatabase()
-          const row = db.prepare('SELECT * FROM archive_exports WHERE id = ?').get(exportId) as
-            | {
-                id: number
-                ledger_id: number
-                fiscal_year: string
-                export_path: string
-                manifest_path: string
-                checksum: string | null
-              }
-            | undefined
+          const row = getArchiveExportById(db, exportId)
 
           if (!row) {
             return { success: false, error: '电子档案导出记录不存在' }
@@ -346,16 +320,10 @@ export function registerArchiveHandlers(): void {
             fiscalYear: row.fiscal_year
           })
 
-          db.prepare(
-            `UPDATE archive_exports
-             SET status = ?, validated_at = CASE WHEN ? = 'validated' THEN ? ELSE validated_at END
-             WHERE id = ?`
-          ).run(
-            validation.valid ? 'validated' : 'failed',
-            validation.valid ? 'validated' : 'failed',
-            validation.valid ? formatLocalDateTime() : null,
-            exportId
-          )
+          updateArchiveExportValidation(db, exportId, {
+            valid: validation.valid,
+            validatedAt: validation.valid ? formatLocalDateTime() : null
+          })
 
           appendOperationLog(db, {
             ledgerId: row.ledger_id,
@@ -412,17 +380,7 @@ export function registerArchiveHandlers(): void {
           try {
             const user = requirePermission(event, 'ledger_settings')
             const db = getDatabase()
-            const row = db
-              .prepare('SELECT * FROM archive_exports WHERE id = ?')
-              .get(payload.exportId) as
-              | {
-                  id: number
-                  ledger_id: number
-                  fiscal_year: string
-                  export_path: string
-                  manifest_path: string
-                }
-              | undefined
+            const row = getArchiveExportById(db, payload.exportId)
 
             if (!row) {
               return { success: false, error: '电子档案导出记录不存在' }
@@ -430,18 +388,9 @@ export function registerArchiveHandlers(): void {
 
             requireLedgerAccess(event, db, row.ledger_id)
 
-            const versionRows = db
-              .prepare(
-                `SELECT id
-             FROM archive_exports
-            WHERE ledger_id = ?
-            ORDER BY id DESC`
-              )
-              .all(row.ledger_id) as Array<{ id: number }>
-
             assertHistoricalVersionDeletable(
               row.id,
-              versionRows.map((item) => item.id),
+              listArchiveExportIdsByLedger(db, row.ledger_id),
               '归档'
             )
 
@@ -472,7 +421,7 @@ export function registerArchiveHandlers(): void {
               }
             }
 
-            db.prepare('DELETE FROM archive_exports WHERE id = ?').run(payload.exportId)
+            deleteArchiveExportRecord(db, payload.exportId)
 
             appendOperationLog(db, {
               ledgerId: row.ledger_id,
@@ -510,9 +459,7 @@ export function registerArchiveHandlers(): void {
   ipcMain.handle('archive:getManifest', (event, exportId: number) => {
     requirePermission(event, 'ledger_settings')
     const db = getDatabase()
-    const row = db
-      .prepare('SELECT ledger_id, manifest_path FROM archive_exports WHERE id = ?')
-      .get(exportId) as { ledger_id: number; manifest_path: string } | undefined
+    const row = getArchiveExportById(db, exportId)
 
     if (!row) {
       throw new Error('档案导出记录不存在')

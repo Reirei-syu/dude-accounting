@@ -4,6 +4,14 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { closeDatabase, getDatabase, getDatabasePath, initializeDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import {
+  createBackupPackageRecord,
+  deleteBackupPackageRecord,
+  getBackupPackageById,
+  listBackupPackageIdsByLedger,
+  listBackupPackages,
+  updateBackupPackageValidation
+} from '../services/backupCatalog'
+import {
   createBackupArtifact,
   resolveBackupArtifactPaths,
   restoreBackupArtifact,
@@ -130,32 +138,17 @@ export function registerBackupHandlers(): void {
             })
             const createdAt = formatLocalDateTime(createdAtDate)
 
-            const result = db
-              .prepare(
-                `INSERT INTO backup_packages (
-               ledger_id,
-               backup_period,
-               fiscal_year,
-               backup_path,
-               manifest_path,
-               checksum,
-               file_size,
-               status,
-               created_by,
-               created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)`
-              )
-              .run(
-                payload.ledgerId,
-                backupPeriod,
-                fiscalYear,
-                artifact.backupPath,
-                artifact.manifestPath,
-                artifact.checksum,
-                artifact.fileSize,
-                user.id,
-                createdAt
-              )
+            const backupId = createBackupPackageRecord(db, {
+              ledgerId: payload.ledgerId,
+              backupPeriod,
+              fiscalYear,
+              backupPath: artifact.backupPath,
+              manifestPath: artifact.manifestPath,
+              checksum: artifact.checksum,
+              fileSize: artifact.fileSize,
+              createdBy: user.id,
+              createdAt
+            })
 
             appendOperationLog(db, {
               ledgerId: payload.ledgerId,
@@ -164,7 +157,7 @@ export function registerBackupHandlers(): void {
               module: 'backup',
               action: 'create',
               targetType: 'backup_package',
-              targetId: Number(result.lastInsertRowid),
+              targetId: backupId,
               details: {
                 period: backupPeriod,
                 fiscalYear,
@@ -180,7 +173,7 @@ export function registerBackupHandlers(): void {
 
             return {
               success: true,
-              backupId: Number(result.lastInsertRowid),
+              backupId,
               directoryPath: picked.directoryPath,
               period: backupPeriod,
               backupPath: artifact.backupPath,
@@ -204,29 +197,17 @@ export function registerBackupHandlers(): void {
 
     if (typeof ledgerId === 'number') {
       requireLedgerAccess(event, db, ledgerId)
-      return db
-        .prepare(
-          `SELECT *
-           FROM backup_packages
-           WHERE ledger_id = ?
-           ORDER BY id DESC`
-        )
-        .all(ledgerId)
+      return listBackupPackages(db, {
+        ledgerId,
+        userId: user.id,
+        isAdmin: user.isAdmin
+      })
     }
 
-    if (user.isAdmin) {
-      return db.prepare('SELECT * FROM backup_packages ORDER BY id DESC').all()
-    }
-
-    return db
-      .prepare(
-        `SELECT bp.*
-           FROM backup_packages bp
-           INNER JOIN user_ledger_permissions ulp ON ulp.ledger_id = bp.ledger_id
-          WHERE ulp.user_id = ?
-          ORDER BY bp.id DESC`
-      )
-      .all(user.id)
+    return listBackupPackages(db, {
+      userId: user.id,
+      isAdmin: user.isAdmin
+    })
   })
 
   ipcMain.handle('backup:validate', (event, backupId: number) =>
@@ -240,15 +221,7 @@ export function registerBackupHandlers(): void {
         try {
           const user = requirePermission(event, 'ledger_settings')
           const db = getDatabase()
-          const row = db.prepare('SELECT * FROM backup_packages WHERE id = ?').get(backupId) as
-            | {
-                id: number
-                ledger_id: number
-                backup_path: string
-                manifest_path: string | null
-                checksum: string
-              }
-            | undefined
+          const row = getBackupPackageById(db, backupId)
 
           if (!row) {
             return { success: false, error: '备份记录不存在' }
@@ -260,16 +233,10 @@ export function registerBackupHandlers(): void {
             row.checksum,
             row.manifest_path
           )
-          db.prepare(
-            `UPDATE backup_packages
-             SET status = ?, validated_at = CASE WHEN ? = 'validated' THEN ? ELSE validated_at END
-             WHERE id = ?`
-          ).run(
-            validation.valid ? 'validated' : 'failed',
-            validation.valid ? 'validated' : 'failed',
-            validation.valid ? formatLocalDateTime() : null,
-            backupId
-          )
+          updateBackupPackageValidation(db, backupId, {
+            valid: validation.valid,
+            validatedAt: validation.valid ? formatLocalDateTime() : null
+          })
 
           appendOperationLog(db, {
             ledgerId: row.ledger_id,
@@ -323,17 +290,7 @@ export function registerBackupHandlers(): void {
           try {
             const user = requirePermission(event, 'ledger_settings')
             const db = getDatabase()
-            const row = db
-              .prepare('SELECT * FROM backup_packages WHERE id = ?')
-              .get(payload.backupId) as
-              | {
-                  id: number
-                  ledger_id: number
-                  backup_period: string | null
-                  backup_path: string
-                  manifest_path: string | null
-                }
-              | undefined
+            const row = getBackupPackageById(db, payload.backupId)
 
             if (!row) {
               return { success: false, error: '备份记录不存在' }
@@ -341,18 +298,9 @@ export function registerBackupHandlers(): void {
 
             requireLedgerAccess(event, db, row.ledger_id)
 
-            const versionRows = db
-              .prepare(
-                `SELECT id
-             FROM backup_packages
-            WHERE ledger_id = ?
-            ORDER BY id DESC`
-              )
-              .all(row.ledger_id) as Array<{ id: number }>
-
             assertHistoricalVersionDeletable(
               row.id,
-              versionRows.map((item) => item.id),
+              listBackupPackageIdsByLedger(db, row.ledger_id),
               '备份'
             )
 
@@ -391,7 +339,7 @@ export function registerBackupHandlers(): void {
               }
             }
 
-            db.prepare('DELETE FROM backup_packages WHERE id = ?').run(payload.backupId)
+            deleteBackupPackageRecord(db, payload.backupId)
 
             appendOperationLog(db, {
               ledgerId: row.ledger_id,
@@ -471,17 +419,7 @@ export function registerBackupHandlers(): void {
             let expectedChecksum = ''
 
             if (typeof payload?.backupId === 'number') {
-              const row = db
-                .prepare('SELECT * FROM backup_packages WHERE id = ?')
-                .get(payload.backupId) as
-                | {
-                    id: number
-                    ledger_id: number
-                    backup_path: string
-                    manifest_path: string | null
-                    checksum: string
-                  }
-                | undefined
+              const row = getBackupPackageById(db, payload.backupId)
 
               if (!row) {
                 return { success: false, error: '备份记录不存在' }
