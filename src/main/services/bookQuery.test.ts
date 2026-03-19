@@ -912,6 +912,123 @@ function createLargePeriodDetailDb(): FakeBookQueryDb {
   return db
 }
 
+function createLargePeriodAuxiliaryDb(): FakeBookQueryDb {
+  const db = new FakeBookQueryDb()
+  let voucherId = 7_001
+  let entryId = 10_001
+
+  db.ledgers.push({
+    id: 5,
+    name: 'long-range-aux-ledger',
+    standard_type: 'enterprise',
+    start_period: '2025-01',
+    current_period: '2026-12'
+  })
+
+  db.subjects.push(
+    {
+      ledger_id: 5,
+      code: '1001',
+      name: 'bank',
+      parent_code: null,
+      category: 'asset',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 5,
+      code: '6601',
+      name: 'admin-expense',
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 1
+    },
+    {
+      ledger_id: 5,
+      code: '660101',
+      name: 'office-expense',
+      parent_code: '6601',
+      category: 'expense',
+      balance_direction: 1,
+      level: 2
+    },
+    {
+      ledger_id: 5,
+      code: '660102',
+      name: 'travel-expense',
+      parent_code: null,
+      category: 'expense',
+      balance_direction: 1,
+      level: 2
+    }
+  )
+
+  db.auxiliaryItems.push({
+    id: 201,
+    ledger_id: 5,
+    category: 'department',
+    code: 'DEP-LONG',
+    name: 'long-range-dept'
+  })
+
+  db.subjectCustomAuxiliaryLinks.push(
+    {
+      subject_code: '660101',
+      auxiliary_item_id: 201
+    },
+    {
+      subject_code: '660102',
+      auxiliary_item_id: 201
+    }
+  )
+
+  for (let index = 0; index < 24; index += 1) {
+    const year = 2025 + Math.floor(index / 12)
+    const month = (index % 12) + 1
+    const amount = (index + 1) * 120
+    const monthToken = String(month).padStart(2, '0')
+    const subjectCode = index % 2 === 0 ? '660101' : '660102'
+    const auxiliaryItemId = index % 2 === 0 ? 201 : undefined
+
+    db.vouchers.push({
+      id: voucherId,
+      ledger_id: 5,
+      period: `${year}-${monthToken}`,
+      voucher_date: `${year}-${monthToken}-18`,
+      voucher_number: index + 1,
+      voucher_word: 'J',
+      status: 2
+    })
+
+    db.voucherEntries.push(
+      {
+        id: entryId++,
+        voucher_id: voucherId,
+        row_order: 1,
+        summary: `monthly-aux-expense-${year}-${monthToken}`,
+        subject_code: subjectCode,
+        debit_amount: amount,
+        credit_amount: 0,
+        auxiliary_item_id: auxiliaryItemId
+      },
+      {
+        id: entryId++,
+        voucher_id: voucherId,
+        row_order: 2,
+        summary: `monthly-aux-expense-${year}-${monthToken}`,
+        subject_code: '1001',
+        debit_amount: 0,
+        credit_amount: amount
+      }
+    )
+
+    voucherId += 1
+  }
+
+  return db
+}
+
 describe('bookQuery service', () => {
   it('lists subject balances for a custom date range', () => {
     const db = createDb()
@@ -1306,6 +1423,45 @@ describe('bookQuery service', () => {
       voucher_id: 4,
       summary: 'draft-travel',
       balance_amount: 1_000
+    })
+  })
+
+  it('keeps opening and running balance stable for long-range auxiliary detail queries', () => {
+    const db = createLargePeriodAuxiliaryDb()
+
+    const detail = getAuxiliaryDetail(db as never, {
+      ledgerId: 5,
+      subjectCode: '6601',
+      auxiliaryItemId: 201,
+      startDate: '2026-07-01',
+      endDate: '2026-12-31'
+    })
+
+    expect(detail.auxiliary).toMatchObject({
+      id: 201,
+      category: 'department',
+      code: 'DEP-LONG',
+      name: 'long-range-dept'
+    })
+    expect(detail.rows).toHaveLength(7)
+    expect(detail.rows[0]).toMatchObject({
+      row_type: 'opening',
+      balance_amount: 20_520,
+      balance_side: 'debit'
+    })
+    expect(detail.rows[1]).toMatchObject({
+      voucher_date: '2026-07-18',
+      summary: 'monthly-aux-expense-2026-07',
+      debit_amount: 2_280,
+      balance_amount: 22_800,
+      balance_side: 'debit'
+    })
+    expect(detail.rows.at(-1)).toMatchObject({
+      voucher_date: '2026-12-18',
+      summary: 'monthly-aux-expense-2026-12',
+      debit_amount: 2_880,
+      balance_amount: 36_000,
+      balance_side: 'debit'
     })
   })
 
