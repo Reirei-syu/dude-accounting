@@ -75,6 +75,7 @@ Infrastructure:
 - Windows 安装器：NSIS，支持用户选择安装目录
 - 安装包输出目录：`D:\coding\completed\dude-app`
 - 开发模式与安装版使用隔离的 `userData` 目录，避免共享同一份 SQLite 账套数据与日志
+- 打包安装版的主数据库默认存放在安装目录下的 `data/dude-accounting.db`；若检测到旧版仍将数据库保存在 legacy `userData` 目录，则首次启动自动迁移到安装目录 `data`
 
 ---
 

@@ -8,6 +8,12 @@
 - 当前支持两类账套：`enterprise`、`npo`
 - 本地 SQLite 存储，不依赖云端服务
 
+## 数据存储位置
+
+- 开发模式：数据库仍存放在当前用户的开发隔离目录，例如 `AppData\Roaming\dude-app-dev\dude-accounting.db`
+- 打包安装版：主数据库默认存放在安装目录下的 `data` 文件夹，例如 `D:\DudeAcc\dude-app\data\dude-accounting.db`
+- 旧版安装用户首次启动新版时，如果安装目录下还没有数据库、但旧的 `AppData\Roaming\dude-app\dude-accounting.db` 存在，程序会自动迁移到安装目录 `data` 下继续使用
+
 ## 公开仓库后是否可以直接安装并打包
 
 可以，但有前提。

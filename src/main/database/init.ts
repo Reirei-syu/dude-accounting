@@ -1,14 +1,25 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
-import path from 'path'
 import { normalizeLedgerStartPeriods } from '../services/ledgerStartPeriod'
+import { ensurePrimaryDatabasePath } from '../services/runtimeDatabasePath'
 import { seedAdminUser, seedSubjects, seedCashFlowItems, seedPLCarryForwardRules } from './seed'
 import { ALL_SUBJECT_CATEGORIES } from './subjectCategoryRules'
 
 let db: Database.Database | null = null
+let databasePath: string | null = null
 
 export function getDatabasePath(): string {
-  return path.join(app.getPath('userData'), 'dude-accounting.db')
+  if (databasePath) {
+    return databasePath
+  }
+
+  const state = ensurePrimaryDatabasePath({
+    userDataPath: app.getPath('userData'),
+    isDevelopment: !app.isPackaged,
+    executablePath: process.execPath
+  })
+  databasePath = state.targetPath
+  return databasePath
 }
 
 export function getDatabase(): Database.Database {
@@ -949,4 +960,5 @@ export function closeDatabase(): void {
     db.close()
     db = null
   }
+  databasePath = null
 }
