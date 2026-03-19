@@ -15,6 +15,13 @@ mkdir -p "$RELEASE_DIR"
 echo "Repository: $REPO_ROOT"
 echo "macOS installer output: $RELEASE_DIR"
 
+find "$RELEASE_DIR" -maxdepth 1 -type f \
+  \( -name '*.dmg' -o -name '*.zip' -o -name '*.blockmap' -o -name 'latest*.yml' -o -name 'builder-debug.yml' \) \
+  -delete
+find "$RELEASE_DIR" -maxdepth 1 -type d \
+  \( -name 'mac*' -o -name '*-unpacked' \) \
+  -exec rm -rf {} +
+
 npm run build
 npx electron-builder --mac dmg zip --publish never -c.directories.output="$RELEASE_DIR"
 

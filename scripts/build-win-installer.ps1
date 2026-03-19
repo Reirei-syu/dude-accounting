@@ -10,6 +10,20 @@ New-Item -ItemType Directory -Force -Path $releaseOutput | Out-Null
 Write-Host "Repository: $repoRoot"
 Write-Host "Installer output: $releaseOutput"
 
+$staleArtifacts = @(
+  (Join-Path $releaseOutput '*-setup.exe'),
+  (Join-Path $releaseOutput '*-setup.exe.blockmap'),
+  (Join-Path $releaseOutput 'latest*.yml'),
+  (Join-Path $releaseOutput 'builder-debug.yml')
+)
+
+foreach ($pattern in $staleArtifacts) {
+  Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | Remove-Item -Force
+}
+
+Get-ChildItem -Path (Join-Path $releaseOutput 'win-unpacked') -ErrorAction SilentlyContinue |
+  Remove-Item -Recurse -Force
+
 npm run build
 npx electron-builder --win nsis --publish never
 

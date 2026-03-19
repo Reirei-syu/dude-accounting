@@ -115,6 +115,7 @@ npm run build:win
 
 1. `npm run build`
 2. `electron-builder --win`
+3. 构建前自动清理输出目录中的旧版 Windows 安装包产物，避免安装包持续堆积
 
 ## macOS 打包
 
@@ -127,6 +128,7 @@ npm run build:mac:installer
 
 1. `npm run build`
 2. `electron-builder --mac dmg zip --publish never`
+3. 构建前自动清理输出目录中的旧版 macOS 安装包产物，避免安装包持续堆积
 
 注意：
 
