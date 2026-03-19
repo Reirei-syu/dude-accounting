@@ -1,7 +1,14 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import { assertPeriodWritable } from '../services/periodState'
+import {
+  getNextVoucherNumber,
+  getVoucherLedgerId,
+  listVoucherEntries,
+  listVoucherSummaries,
+  type VoucherListStatusFilter
+} from '../services/voucherCatalog'
 import {
   createVoucherWithEntries,
   isVoucherNumberConflictError,
@@ -9,6 +16,7 @@ import {
   updateVoucherWithEntries,
   type VoucherEntryInput
 } from '../services/voucherLifecycle'
+import { withIpcTelemetry } from '../services/runtimeLogger'
 import {
   assertVoucherSwapAllowed,
   normalizeEmergencyReversalPayload
@@ -36,7 +44,6 @@ interface SwapVoucherPositionsInput {
   voucherIds: number[]
 }
 
-type VoucherListStatusFilter = 'all' | 0 | 1 | 2 | 3
 export { resolveVoucherCashFlowEntries }
 
 export function registerVoucherHandlers(): void {
@@ -70,20 +77,24 @@ export function registerVoucherHandlers(): void {
     return { ok: true, period }
   }
 
-  ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) => {
-    requirePermission(event, 'voucher_entry')
-    requireLedgerAccess(event, db, ledgerId)
-    const periodCheck = ensureVoucherPeriod(ledgerId, period, 'period')
-    if (!periodCheck.ok) {
-      throw new Error(periodCheck.error)
-    }
-    const row = db
-      .prepare(
-        'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ?'
-      )
-      .get(ledgerId, periodCheck.period) as { max_num: number }
-    return row.max_num + 1
-  })
+  ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) =>
+    withIpcTelemetry(
+      {
+        channel: 'voucher:getNextNumber',
+        baseDir: app.getPath('userData'),
+        context: { ledgerId, period }
+      },
+      () => {
+        requirePermission(event, 'voucher_entry')
+        requireLedgerAccess(event, db, ledgerId)
+        const periodCheck = ensureVoucherPeriod(ledgerId, period, 'period')
+        if (!periodCheck.ok) {
+          throw new Error(periodCheck.error)
+        }
+        return getNextVoucherNumber(db, ledgerId, periodCheck.period)
+      }
+    )
+  )
 
   ipcMain.handle('voucher:save', (event, payload: SaveVoucherInput) => {
     try {
@@ -212,117 +223,47 @@ export function registerVoucherHandlers(): void {
         keyword?: string
         status?: VoucherListStatusFilter
       }
-    ) => {
-      requireAuth(event)
-      requireLedgerAccess(event, db, query.ledgerId)
-
-      const whereClauses = ['v.ledger_id = ?']
-      const params: Array<string | number> = [query.ledgerId]
-
-      if (typeof query.voucherId === 'number') {
-        whereClauses.push('v.id = ?')
-        params.push(query.voucherId)
-      }
-
-      if (query.status === 'all') {
-        // Explicitly include all voucher states, including deleted.
-      } else if (typeof query.status === 'number') {
-        whereClauses.push('v.status = ?')
-        params.push(query.status)
-      } else {
-        whereClauses.push('v.status IN (0, 1, 2)')
-      }
-
-      if (query.period) {
-        whereClauses.push('v.period = ?')
-        params.push(query.period)
-      }
-      if (query.dateFrom) {
-        whereClauses.push('v.voucher_date >= ?')
-        params.push(query.dateFrom)
-      }
-      if (query.dateTo) {
-        whereClauses.push('v.voucher_date <= ?')
-        params.push(query.dateTo)
-      }
-      if (query.keyword) {
-        whereClauses.push(
-          `EXISTS (
-                        SELECT 1 FROM voucher_entries ve
-                        WHERE ve.voucher_id = v.id AND ve.summary LIKE ?
-                    )`
-        )
-        params.push(`%${query.keyword}%`)
-      }
-
-      const sql = `
-                SELECT
-                    v.id,
-                    v.ledger_id,
-                    v.period,
-                    v.voucher_date,
-                    v.voucher_number,
-                    v.voucher_word,
-                    v.status,
-                    COALESCE(
-                      (
-                        SELECT ve_first.summary
-                        FROM voucher_entries ve_first
-                        WHERE ve_first.voucher_id = v.id
-                        ORDER BY ve_first.row_order ASC, ve_first.id ASC
-                        LIMIT 1
-                      ),
-                      ''
-                    ) AS first_summary,
-                    v.creator_id,
-                    v.auditor_id,
-                    v.bookkeeper_id,
-                    COALESCE(uc.real_name, uc.username) AS creator_name,
-                    COALESCE(ua.real_name, ua.username) AS auditor_name,
-                    COALESCE(ub.real_name, ub.username) AS bookkeeper_name,
-                    SUM(ve.debit_amount) AS total_debit,
-                    SUM(ve.credit_amount) AS total_credit
-                FROM vouchers v
-                INNER JOIN voucher_entries ve ON ve.voucher_id = v.id
-                LEFT JOIN users uc ON uc.id = v.creator_id
-                LEFT JOIN users ua ON ua.id = v.auditor_id
-                LEFT JOIN users ub ON ub.id = v.bookkeeper_id
-                WHERE ${whereClauses.join(' AND ')}
-                GROUP BY v.id
-                ORDER BY v.voucher_date DESC, v.voucher_number DESC
-            `
-
-      return db.prepare(sql).all(...params)
-    }
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'voucher:list',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: query.ledgerId,
+            hasVoucherId: typeof query.voucherId === 'number',
+            hasPeriod: Boolean(query.period),
+            hasDateFrom: Boolean(query.dateFrom),
+            hasDateTo: Boolean(query.dateTo),
+            hasKeyword: Boolean(query.keyword),
+            status: query.status ?? null
+          }
+        },
+        () => {
+          requireAuth(event)
+          requireLedgerAccess(event, db, query.ledgerId)
+          return listVoucherSummaries(db, query)
+        }
+      )
   )
 
-  ipcMain.handle('voucher:getEntries', (event, voucherId: number) => {
-    requireAuth(event)
-    const voucher = db.prepare('SELECT ledger_id FROM vouchers WHERE id = ?').get(voucherId) as
-      | { ledger_id: number }
-      | undefined
-    if (!voucher) {
-      throw new Error('凭证不存在')
-    }
-    requireLedgerAccess(event, db, voucher.ledger_id)
-    return db
-      .prepare(
-        `SELECT
-                    ve.*,
-                    s.name AS subject_name,
-                    cfi.code AS cash_flow_code,
-                    cfi.name AS cash_flow_name
-                 FROM voucher_entries ve
-                 LEFT JOIN subjects s
-                    ON s.code = ve.subject_code
-                   AND s.ledger_id = (SELECT ledger_id FROM vouchers WHERE id = ve.voucher_id)
-                 LEFT JOIN cash_flow_items cfi
-                    ON cfi.id = ve.cash_flow_item_id
-                 WHERE ve.voucher_id = ?
-                 ORDER BY ve.row_order ASC`
-      )
-      .all(voucherId)
-  })
+  ipcMain.handle('voucher:getEntries', (event, voucherId: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'voucher:getEntries',
+        baseDir: app.getPath('userData'),
+        context: { voucherId }
+      },
+      () => {
+        requireAuth(event)
+        const ledgerId = getVoucherLedgerId(db, voucherId)
+        if (ledgerId === null) {
+          throw new Error('凭证不存在')
+        }
+        requireLedgerAccess(event, db, ledgerId)
+        return listVoucherEntries(db, voucherId)
+      }
+    )
+  )
 
   ipcMain.handle('voucher:swapPositions', (event, payload: SwapVoucherPositionsInput) => {
     try {

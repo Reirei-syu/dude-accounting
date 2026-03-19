@@ -176,6 +176,7 @@ Current Constraint:
 - 凭证展示与导航顺序统一为：`记` 字号在前、`结` 字号在后，各自按凭证号升序排列。
 - 即使当前期间已结账，凭证管理仍应支持双击凭证进入只读查看模式；但不得放开修改权限。
 - 凭证保存/更新的分录校验、现金流匹配和写库流程已收口到 `voucherLifecycle` service，`voucher.ts` 中该链路主要负责权限、期间校验和 IPC 返回结构。
+- 凭证列表、取号、分录明细查询已收口到 `voucherCatalog` service，`voucher.ts` 中对应读路径主要负责鉴权与 telemetry 包装。
 
 Key Channels:
 
