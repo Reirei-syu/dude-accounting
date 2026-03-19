@@ -3,7 +3,7 @@ import TabBar from '../components/TabBar'
 import Workspace from '../components/Workspace'
 import SuspendedOverlay from '../components/SuspendedOverlay'
 import { getHomeTabPreset, hasPermissionAccess, useUIStore } from '../stores/uiStore'
-import { pickInitialLedger, useLedgerStore } from '../stores/ledgerStore'
+import { resolveCurrentLedger, useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
 import { useWallpaperStore } from '../stores/wallpaperStore'
 import { useEffect, useLayoutEffect, useRef, useState, type JSX } from 'react'
@@ -226,8 +226,9 @@ export default function MainLayout(): JSX.Element {
         ])
         setLedgers(finalLedgers)
         const preferredLedgerId = Number(preferences.default_ledger_id || 0)
-        const nextLedger = pickInitialLedger(
+        const nextLedger = resolveCurrentLedger(
           finalLedgers,
+          currentLedger?.id ?? null,
           Number.isInteger(preferredLedgerId) && preferredLedgerId > 0 ? preferredLedgerId : null
         )
         if (nextLedger?.id !== currentLedger?.id || (nextLedger === null && currentLedger !== null)) {

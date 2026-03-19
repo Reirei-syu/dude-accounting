@@ -25,6 +25,25 @@ export function pickInitialLedger(
   return ledgers[0]
 }
 
+export function resolveCurrentLedger(
+  ledgers: Ledger[],
+  currentLedgerId?: number | null,
+  preferredLedgerId?: number | null
+): Ledger | null {
+  if (ledgers.length === 0) {
+    return null
+  }
+
+  if (typeof currentLedgerId === 'number') {
+    const matchedCurrent = ledgers.find((ledger) => ledger.id === currentLedgerId)
+    if (matchedCurrent) {
+      return matchedCurrent
+    }
+  }
+
+  return pickInitialLedger(ledgers, preferredLedgerId)
+}
+
 interface LedgerState {
   ledgers: Ledger[]
   currentLedger: Ledger | null

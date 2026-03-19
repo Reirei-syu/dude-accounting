@@ -155,10 +155,10 @@ npm run build:linux
 dude-app-<version>-setup.exe
 ```
 
-例如当前版本为 `1.0.3` 时，通常输出为：
+例如当前版本为 `1.0.4` 时，通常输出为：
 
 ```text
-D:\coding\completed\dude-app\dude-app-1.0.3-setup.exe
+D:\coding\completed\dude-app\dude-app-1.0.4-setup.exe
 ```
 
 ### macOS 安装包
@@ -169,10 +169,10 @@ D:\coding\completed\dude-app\dude-app-1.0.3-setup.exe
 dude-app-<version>.dmg
 ```
 
-例如当前版本为 `1.0.3` 时，通常输出为：
+例如当前版本为 `1.0.4` 时，通常输出为：
 
 ```text
-D:\coding\completed\dude-app\dude-app-1.0.3.dmg
+D:\coding\completed\dude-app\dude-app-1.0.4.dmg
 ```
 
 ## 常见问题
