@@ -1,0 +1,170 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import ExcelJS from 'exceljs'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  buildDefaultReportExportFileName,
+  buildReportSnapshotHtml,
+  writeReportSnapshotExcel,
+  writeReportSnapshotHtml
+} from './reportSnapshotOutput'
+import type { ReportSnapshotDetail } from './reporting'
+
+function createCrossYearDetail(): ReportSnapshotDetail {
+  return {
+    id: 1,
+    ledger_id: 1,
+    report_type: 'income_statement',
+    report_name: '2025.12-2026.03 利润表（含未记账凭证）',
+    period: '2025.12-2026.03',
+    start_period: '2025-12',
+    end_period: '2026-03',
+    as_of_date: null,
+    include_unposted_vouchers: 1,
+    generated_by: 1,
+    generated_at: '2026-03-19T12:00:00.000Z',
+    ledger_name: '演示账套',
+    standard_type: 'enterprise',
+    content: {
+      title: '利润表',
+      reportType: 'income_statement',
+      period: '2025.12-2026.03',
+      ledgerName: '演示账套',
+      standardType: 'enterprise',
+      generatedAt: '2026-03-19T12:00:00.000Z',
+      scope: {
+        mode: 'range',
+        startPeriod: '2025-12',
+        endPeriod: '2026-03',
+        periodLabel: '2025.12-2026.03',
+        startDate: '2025-12-01',
+        endDate: '2026-03-31',
+        asOfDate: null,
+        includeUnpostedVouchers: true
+      },
+      tables: [
+        {
+          key: 'enterprise-income-statement',
+          columns: [
+            { key: 'item', label: '项目' },
+            { key: 'current', label: '本期金额' },
+            { key: 'previous', label: '上期金额' }
+          ],
+          rows: [
+            {
+              key: 'operating-revenue',
+              cells: [
+                { value: '一、营业收入' },
+                { value: 57_000, isAmount: true },
+                { value: 1_000, isAmount: true }
+              ]
+            }
+          ]
+        }
+      ],
+      sections: [],
+      totals: []
+    }
+  }
+}
+
+function createSameYearRangeDetail(): ReportSnapshotDetail {
+  return {
+    ...createCrossYearDetail(),
+    content: {
+      ...createCrossYearDetail().content,
+      scope: {
+        mode: 'range',
+        startPeriod: '2026-01',
+        endPeriod: '2026-03',
+        periodLabel: '2026.01-2026.03',
+        startDate: '2026-01-01',
+        endDate: '2026-03-31',
+        asOfDate: null,
+        includeUnpostedVouchers: true
+      }
+    }
+  }
+}
+
+function createMonthDetail(): ReportSnapshotDetail {
+  return {
+    ...createCrossYearDetail(),
+    report_type: 'balance_sheet',
+    report_name: '2026.03 资产负债表',
+    period: '2026.03',
+    start_period: '2026-03',
+    end_period: '2026-03',
+    as_of_date: '2026-03-31',
+    include_unposted_vouchers: 0,
+    content: {
+      ...createCrossYearDetail().content,
+      title: '资产负债表',
+      reportType: 'balance_sheet',
+      period: '2026.03',
+      scope: {
+        mode: 'month',
+        startPeriod: '2026-03',
+        endPeriod: '2026-03',
+        periodLabel: '2026.03',
+        startDate: '2026-03-01',
+        endDate: '2026-03-31',
+        asOfDate: '2026-03-31',
+        includeUnpostedVouchers: false
+      }
+    }
+  }
+}
+
+describe('reportSnapshotOutput service', () => {
+  let tempDir = ''
+
+  afterEach(() => {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+      tempDir = ''
+    }
+  })
+
+  it('formats month, same-year range and cross-year range labels in html output', () => {
+    const monthHtml = buildReportSnapshotHtml(createMonthDetail())
+    const sameYearHtml = buildReportSnapshotHtml(createSameYearRangeDetail())
+    const crossYearHtml = buildReportSnapshotHtml(createCrossYearDetail())
+
+    expect(monthHtml).toContain('会计期间：2026年3月31日')
+    expect(sameYearHtml).toContain('会计期间：2026年1-3月')
+    expect(crossYearHtml).toContain('会计期间：2025年12月-2026年3月')
+  })
+
+  it('sanitizes cross-year export file names', () => {
+    const detail = {
+      ...createCrossYearDetail(),
+      report_name: '2025.12-2026.03 利润表:含未记账凭证'
+    }
+
+    expect(buildDefaultReportExportFileName(detail, 'pdf')).toBe(
+      '2025.12-2026.03 利润表_含未记账凭证.pdf'
+    )
+  })
+
+  it('writes cross-year excel and html exports with stable title metadata', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail = createCrossYearDetail()
+    const xlsxPath = path.join(tempDir, 'report.xlsx')
+    const htmlPath = writeReportSnapshotHtml(tempDir, detail, new Date(2026, 2, 19, 12, 34, 56))
+
+    await writeReportSnapshotExcel(xlsxPath, detail)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(xlsxPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(worksheet?.getCell(1, 1).value).toBe('利润表')
+    expect(worksheet?.getCell(3, 1).value).toBe('会计期间：2025年12月-2026年3月')
+    expect(path.basename(htmlPath)).toBe(
+      '2025.12-2026.03 利润表（含未记账凭证）-20260319-123456.html'
+    )
+    expect(fs.readFileSync(htmlPath, 'utf8')).toContain('会计期间：2025年12月-2026年3月')
+  })
+})

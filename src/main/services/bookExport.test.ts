@@ -52,6 +52,20 @@ describe('bookExport service', () => {
     )
   })
 
+  it('falls back to subject and cross-year period labels when subtitle is absent', () => {
+    const payload = {
+      ...createPayload(),
+      title: '序时账',
+      subtitle: undefined,
+      subjectLabel: '科目：库存现金',
+      periodLabel: '期间：2025-12-01 至 2026-01-31'
+    }
+
+    expect(buildDefaultBookExportFileName(payload, 'xlsx')).toBe(
+      '序时账-科目：库存现金-期间：2025-12-01 至 2026-01-31.xlsx'
+    )
+  })
+
   it('writes excel and pdf exports for save-as flow', async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
     const payload = createPayload()
@@ -74,5 +88,28 @@ describe('bookExport service', () => {
     expect(worksheet.getCell(6, 3).value).toBe(1200.5)
     expect(fs.existsSync(pdfPath)).toBe(true)
     expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+  })
+
+  it('splits subject and cross-year period metadata into separate excel header cells', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
+    const payload = {
+      ...createPayload(),
+      title: '序时账',
+      subtitle: undefined,
+      subjectLabel: '科目：库存现金',
+      periodLabel: '期间：2025-12-01 至 2026-01-31'
+    }
+    const excelPath = path.join(tempDir, '序时账.xlsx')
+
+    await writeBookExportExcel(excelPath, payload)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(excelPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(worksheet.getCell(1, 1).value).toBe('序时账')
+    expect(worksheet.getCell(3, 1).value).toBe('科目：库存现金')
+    expect(worksheet.getCell(3, 2).value).toBe('期间：2025-12-01 至 2026-01-31')
+    expect(worksheet.getCell(3, 2).alignment?.horizontal).toBe('right')
   })
 })
