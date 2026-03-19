@@ -22,6 +22,7 @@ import {
   type JournalQuery,
   type SubjectBalanceQuery
 } from '../services/bookQuery'
+import { withIpcTelemetry } from '../services/runtimeLogger'
 import { requireAuth, requireLedgerAccess } from './session'
 
 const BOOK_QUERY_EXPORT_LAST_DIR_KEY = 'book_query_export_last_dir'
@@ -72,35 +73,104 @@ async function exportBookQueryToPath(
 export function registerBookQueryHandlers(): void {
   const db = getDatabase()
 
-  ipcMain.handle('bookQuery:listSubjectBalances', (event, query: SubjectBalanceQuery) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, query.ledgerId)
-    return listSubjectBalances(db, query)
-  })
+  ipcMain.handle('bookQuery:listSubjectBalances', (event, query: SubjectBalanceQuery) =>
+    withIpcTelemetry(
+      {
+        channel: 'bookQuery:listSubjectBalances',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: query.ledgerId,
+          hasKeyword: Boolean(query.keyword),
+          includeUnpostedVouchers: query.includeUnpostedVouchers === true,
+          includeZeroBalance: query.includeZeroBalance === true
+        }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, db, query.ledgerId)
+        return listSubjectBalances(db, query)
+      }
+    )
+  )
 
-  ipcMain.handle('bookQuery:getDetailLedger', (event, query: DetailLedgerQuery) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, query.ledgerId)
-    return getDetailLedger(db, query)
-  })
+  ipcMain.handle('bookQuery:getDetailLedger', (event, query: DetailLedgerQuery) =>
+    withIpcTelemetry(
+      {
+        channel: 'bookQuery:getDetailLedger',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: query.ledgerId,
+          subjectCode: query.subjectCode,
+          includeUnpostedVouchers: query.includeUnpostedVouchers === true
+        }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, db, query.ledgerId)
+        return getDetailLedger(db, query)
+      }
+    )
+  )
 
-  ipcMain.handle('bookQuery:getJournal', (event, query: JournalQuery) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, query.ledgerId)
-    return getJournal(db, query)
-  })
+  ipcMain.handle('bookQuery:getJournal', (event, query: JournalQuery) =>
+    withIpcTelemetry(
+      {
+        channel: 'bookQuery:getJournal',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: query.ledgerId,
+          hasSubjectCodeStart: Boolean(query.subjectCodeStart),
+          hasSubjectCodeEnd: Boolean(query.subjectCodeEnd),
+          includeUnpostedVouchers: query.includeUnpostedVouchers === true
+        }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, db, query.ledgerId)
+        return getJournal(db, query)
+      }
+    )
+  )
 
-  ipcMain.handle('bookQuery:getAuxiliaryBalances', (event, query: AuxiliaryBalanceQuery) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, query.ledgerId)
-    return getAuxiliaryBalances(db, query)
-  })
+  ipcMain.handle('bookQuery:getAuxiliaryBalances', (event, query: AuxiliaryBalanceQuery) =>
+    withIpcTelemetry(
+      {
+        channel: 'bookQuery:getAuxiliaryBalances',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: query.ledgerId,
+          hasSubjectCodeStart: Boolean(query.subjectCodeStart),
+          hasSubjectCodeEnd: Boolean(query.subjectCodeEnd),
+          includeUnpostedVouchers: query.includeUnpostedVouchers === true
+        }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, db, query.ledgerId)
+        return getAuxiliaryBalances(db, query)
+      }
+    )
+  )
 
-  ipcMain.handle('bookQuery:getAuxiliaryDetail', (event, query: AuxiliaryDetailQuery) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, query.ledgerId)
-    return getAuxiliaryDetail(db, query)
-  })
+  ipcMain.handle('bookQuery:getAuxiliaryDetail', (event, query: AuxiliaryDetailQuery) =>
+    withIpcTelemetry(
+      {
+        channel: 'bookQuery:getAuxiliaryDetail',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: query.ledgerId,
+          subjectCode: query.subjectCode,
+          auxiliaryItemId: query.auxiliaryItemId,
+          includeUnpostedVouchers: query.includeUnpostedVouchers === true
+        }
+      },
+      () => {
+        requireAuth(event)
+        requireLedgerAccess(event, db, query.ledgerId)
+        return getAuxiliaryDetail(db, query)
+      }
+    )
+  )
 
   ipcMain.handle('bookQuery:export', async (event, payload: BookQueryExportPayload) => {
     try {

@@ -227,6 +227,7 @@ Status:
 - 当前已覆盖报表导出/生成、备份创建/校验/恢复、归档导出/校验/删除、电子凭证导入/校验/解析/转换等关键 IPC。
 - 当前已额外覆盖首页和高频读路径，包括 `ledger:getAll`、`ledger:getPeriods`、`backup:list`、`archive:list`、`reporting:list`、`reporting:getDetail`。
 - 当前也已覆盖账套写路径，包括 `ledger:create`、`ledger:update`、`ledger:delete`、`ledger:applyStandardTemplate`。
+- 当前也已覆盖账簿高频读路径，包括 `bookQuery:listSubjectBalances`、`bookQuery:getDetailLedger`、`bookQuery:getJournal`、`bookQuery:getAuxiliaryBalances`、`bookQuery:getAuxiliaryDetail`。
 
 ### ElectronicVoucherModule
 
@@ -303,6 +304,7 @@ Status:
 - 企业账套报表子模块正在升级为与系统级 `qiye-cas-report-templates` Skill 一致的四表官方制式；当前已有资产负债表、利润表、现金流量表，所有者权益变动表正在补齐接入。
 - 报表导出的目录偏好、默认路径、单个/批量导出编排已收口到 `reportExport` service，IPC 仅保留鉴权、弹窗与操作日志。
 - 报表快照查询/明细/删除已收口到 `reportSnapshotCatalog` service，HTML/Excel/PDF 输出辅助已收口到 `reportSnapshotOutput` service；`reporting.ts` 当前主要保留报表计算与快照生成主链路。
+- 账簿查询的数据读取层已收口到 `bookQueryData` service，`bookQuery.ts` 当前主要保留结果组装与账簿口径计算。
 
 Current Channels:
 
