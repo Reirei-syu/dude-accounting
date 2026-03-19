@@ -1,10 +1,17 @@
 !include "LogicLib.nsh"
 
 !macro preInit
-  SetRegView 64
-  WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$LOCALAPPDATA\${APP_FILENAME}"
-  SetRegView 32
-  WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$LOCALAPPDATA\${APP_FILENAME}"
+  ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $0 == ""
+    ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${EndIf}
+
+  ${If} $0 == ""
+    SetRegView 64
+    WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$LOCALAPPDATA\${APP_FILENAME}"
+    SetRegView 32
+    WriteRegExpandStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$LOCALAPPDATA\${APP_FILENAME}"
+  ${EndIf}
 !macroend
 
 !macro customInstallMode

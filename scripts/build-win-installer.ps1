@@ -25,7 +25,14 @@ Get-ChildItem -Path (Join-Path $releaseOutput 'win-unpacked') -ErrorAction Silen
   Remove-Item -Recurse -Force
 
 npm run build
+if ($LASTEXITCODE -ne 0) {
+  throw "Build step failed with exit code $LASTEXITCODE."
+}
+
 npx electron-builder --win nsis --publish never
+if ($LASTEXITCODE -ne 0) {
+  throw "Windows installer build failed with exit code $LASTEXITCODE."
+}
 
 $installer = Get-ChildItem -Path $releaseOutput -Filter '*-setup.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $installer) {
