@@ -282,7 +282,7 @@ export function registerVoucherHandlers(): void {
         channel: 'voucher:swapPositions',
         baseDir: app.getPath('userData'),
         context: {
-          requestedCount: payload.voucherIds.length
+          requestedCount: Array.isArray(payload.voucherIds) ? payload.voucherIds.length : 0
         }
       },
       () => {
@@ -396,7 +396,7 @@ export function registerVoucherHandlers(): void {
           baseDir: app.getPath('userData'),
           context: {
             action: payload.action,
-            requestedCount: payload.voucherIds.length
+            requestedCount: Array.isArray(payload.voucherIds) ? payload.voucherIds.length : 0
           }
         },
         () => {

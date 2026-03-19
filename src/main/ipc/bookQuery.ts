@@ -136,8 +136,8 @@ export function registerBookQueryHandlers(): void {
           ledgerId: payload.ledgerId,
           bookType: payload.bookType,
           format: payload.format,
-          columnCount: payload.columns.length,
-          rowCount: payload.rows.length,
+          columnCount: Array.isArray(payload.columns) ? payload.columns.length : 0,
+          rowCount: Array.isArray(payload.rows) ? payload.rows.length : 0,
           hasFilePath: Boolean(payload.filePath)
         }
       },
@@ -150,7 +150,7 @@ export function registerBookQueryHandlers(): void {
           }
           requireLedgerAccess(event, db, payload.ledgerId)
 
-          if (!payload.title.trim()) {
+          if (typeof payload.title !== 'string' || !payload.title.trim()) {
             return { success: false, error: '导出标题不能为空' }
           }
 

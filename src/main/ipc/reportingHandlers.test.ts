@@ -197,6 +197,23 @@ describe('reporting IPC handlers', () => {
     expect(reportingMocks.showOpenDialog).not.toHaveBeenCalled()
   })
 
+  it('returns a validation error for malformed batch export payloads', async () => {
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:exportBatch')
+
+    const result = await handler?.(event, {
+      snapshotIds: undefined,
+      ledgerId: 1,
+      format: 'pdf'
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: '请先选择至少一张报表'
+    })
+    expect(reportingMocks.showOpenDialog).not.toHaveBeenCalled()
+  })
+
   it('returns a cancelled result when the batch export directory dialog is dismissed', async () => {
     reportingMocks.showOpenDialog.mockResolvedValue({
       canceled: true,

@@ -199,7 +199,7 @@ export function registerReportingHandlers(): void {
           baseDir: app.getPath('userData'),
           context: {
             ledgerId: payload.ledgerId ?? null,
-            snapshotCount: payload.snapshotIds.length,
+            snapshotCount: Array.isArray(payload.snapshotIds) ? payload.snapshotIds.length : 0,
             format: payload.format
           }
         },

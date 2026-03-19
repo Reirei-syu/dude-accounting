@@ -214,4 +214,50 @@ describe('bookQuery IPC handlers', () => {
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
     expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
   })
+
+  it('returns a validation error when the export columns payload is malformed', async () => {
+    const event = { sender: { id: 1 } }
+    const handler = bookQueryMocks.handlers.get('bookQuery:export')
+
+    const result = await handler?.(event, {
+      ledgerId: 1,
+      bookType: 'detail_ledger',
+      title: '明细账',
+      subtitle: '',
+      ledgerName: '测试账套',
+      format: 'pdf',
+      columns: undefined,
+      rows: undefined
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: '导出列不能为空'
+    })
+    expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
+    expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
+  })
+
+  it('returns a validation error when the export title payload is malformed', async () => {
+    const event = { sender: { id: 1 } }
+    const handler = bookQueryMocks.handlers.get('bookQuery:export')
+
+    const result = await handler?.(event, {
+      ledgerId: 1,
+      bookType: 'detail_ledger',
+      title: undefined,
+      subtitle: '',
+      ledgerName: '测试账套',
+      format: 'pdf',
+      columns: [{ key: 'date', label: '日期', align: 'left' }],
+      rows: [{ key: 'row-1', cells: [{ value: '2025-12-01' }] }]
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: '导出标题不能为空'
+    })
+    expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
+    expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
+  })
 })
