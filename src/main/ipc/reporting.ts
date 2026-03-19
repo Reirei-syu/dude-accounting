@@ -3,51 +3,24 @@ import path from 'node:path'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
 import {
-  buildDefaultReportExportFileName,
-  buildReportSnapshotHtml,
+  buildReportExportDefaultPath,
+  exportReportSnapshotToFile,
+  exportReportSnapshotsBatch,
+  getPreferredReportExportDir,
+  getReportExportFilters,
+  rememberReportExportDir
+} from '../services/reportExport'
+import {
   deleteReportSnapshot,
   generateReportSnapshot,
   getReportSnapshotDetail,
   listReportSnapshots,
-  writeReportSnapshotExcel,
   type ReportExportFormat,
   type GenerateReportSnapshotParams,
   type ReportListFilters
 } from '../services/reporting'
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import { requireAuth, requireLedgerAccess } from './session'
-
-const REPORT_EXPORT_LAST_DIR_KEY = 'report_export_last_dir'
-
-function getReportExportDir(): string {
-  return path.join(app.getPath('documents'), 'Dude Accounting', '报表导出')
-}
-
-function getLastReportExportDir(db: ReturnType<typeof getDatabase>): string | null {
-  const row = db
-    .prepare('SELECT value FROM system_settings WHERE key = ?')
-    .get(REPORT_EXPORT_LAST_DIR_KEY) as { value: string } | undefined
-  return row?.value ?? null
-}
-
-function rememberReportExportDir(db: ReturnType<typeof getDatabase>, targetPath: string): void {
-  const directoryPath = path.extname(targetPath) ? path.dirname(targetPath) : targetPath
-  db.prepare(
-    `INSERT INTO system_settings (key, value, updated_at)
-     VALUES (?, ?, datetime('now'))
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-  ).run(REPORT_EXPORT_LAST_DIR_KEY, directoryPath)
-}
-
-async function exportReportSnapshotToPath(
-  detail: ReturnType<typeof getReportSnapshotDetail>,
-  format: ReportExportFormat,
-  filePath: string
-): Promise<string> {
-  return format === 'xlsx'
-    ? writeReportSnapshotExcel(filePath, detail)
-    : printReportHtmlToPdf(filePath, buildReportSnapshotHtml(detail))
-}
 
 async function printReportHtmlToPdf(filePath: string, html: string): Promise<string> {
   const window = new BrowserWindow({
@@ -124,30 +97,19 @@ export function registerReportingHandlers(): void {
             const db = getDatabase()
             const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
             requireLedgerAccess(event, db, detail.ledger_id)
-            const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
-            const defaultPath = path.join(
-              preferredDir,
-              buildDefaultReportExportFileName(detail, payload.format)
-            )
+            const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
+            const defaultPath = buildReportExportDefaultPath(preferredDir, detail, payload.format)
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const saveResult = payload.filePath
               ? { canceled: false, filePath: payload.filePath }
               : browserWindow
                 ? await dialog.showSaveDialog(browserWindow, {
                     defaultPath,
-                    filters: [
-                      payload.format === 'xlsx'
-                        ? { name: 'Excel 工作簿', extensions: ['xlsx'] }
-                        : { name: 'PDF 文档', extensions: ['pdf'] }
-                    ]
+                    filters: getReportExportFilters(payload.format)
                   })
                 : await dialog.showSaveDialog({
                     defaultPath,
-                    filters: [
-                      payload.format === 'xlsx'
-                        ? { name: 'Excel 工作簿', extensions: ['xlsx'] }
-                        : { name: 'PDF 文档', extensions: ['pdf'] }
-                    ]
+                    filters: getReportExportFilters(payload.format)
                   })
 
             if (saveResult.canceled || !saveResult.filePath) {
@@ -157,10 +119,11 @@ export function registerReportingHandlers(): void {
               }
             }
 
-            const exportPath = await exportReportSnapshotToPath(
+            const exportPath = await exportReportSnapshotToFile(
               detail,
               payload.format,
-              saveResult.filePath
+              saveResult.filePath,
+              printReportHtmlToPdf
             )
             rememberReportExportDir(db, exportPath)
 
@@ -231,7 +194,7 @@ export function registerReportingHandlers(): void {
             for (const detail of details) {
               requireLedgerAccess(event, db, detail.ledger_id)
             }
-            const preferredDir = getLastReportExportDir(db) ?? getReportExportDir()
+            const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const openResult = payload.directoryPath
               ? { canceled: false, filePaths: [payload.directoryPath] }
@@ -250,14 +213,13 @@ export function registerReportingHandlers(): void {
             }
 
             const directoryPath = openResult.filePaths[0]
-            const filePaths: string[] = []
-            for (const detail of details) {
-              const filePath = path.join(
-                directoryPath,
-                buildDefaultReportExportFileName(detail, payload.format)
-              )
-              filePaths.push(await exportReportSnapshotToPath(detail, payload.format, filePath))
-            }
+            const filePaths = await exportReportSnapshotsBatch(
+              details,
+              payload.format,
+              directoryPath,
+              (detail, filePath) =>
+                exportReportSnapshotToFile(detail, payload.format, filePath, printReportHtmlToPdf)
+            )
             rememberReportExportDir(db, directoryPath)
 
             appendOperationLog(db, {
