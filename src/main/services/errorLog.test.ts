@@ -118,6 +118,28 @@ describe('errorLog service', () => {
     })
   })
 
+  it('prunes diagnostics logs older than one month when a new error log is written', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-error-log-'))
+    const logDirectory = path.join(tempDir, 'logs')
+    fs.mkdirSync(logDirectory, { recursive: true })
+    fs.writeFileSync(path.join(logDirectory, 'runtime-2026-02-18.jsonl'), 'old', 'utf8')
+    fs.writeFileSync(path.join(logDirectory, 'error-2026-02-19.jsonl'), 'keep', 'utf8')
+
+    writeErrorLog(
+      tempDir,
+      {
+        source: 'main',
+        event: 'retention-test',
+        errorMessage: 'boom'
+      },
+      new Date('2026-03-19T10:20:30')
+    )
+
+    expect(fs.existsSync(path.join(logDirectory, 'runtime-2026-02-18.jsonl'))).toBe(false)
+    expect(fs.existsSync(path.join(logDirectory, 'error-2026-02-19.jsonl'))).toBe(true)
+    expect(fs.existsSync(path.join(logDirectory, 'error-2026-03-19.jsonl'))).toBe(true)
+  })
+
   it('lists and exports runtime and error logs into a timestamped directory', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-error-log-'))
     const now = new Date('2026-03-19T10:20:30')

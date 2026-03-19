@@ -1,6 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { resolveDiagnosticsLogDirectory } from './diagnosticsLogPath'
+import {
+  pruneExpiredDiagnosticsLogs,
+  resolveDiagnosticsLogDirectory
+} from './diagnosticsLogPath'
 import { ensureDirectory } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
 
@@ -89,7 +92,9 @@ export function writeRuntimeLog(
   now: Date = new Date()
 ): string {
   const filePath = getRuntimeLogFilePath(baseDir, now)
-  ensureDirectory(path.dirname(filePath))
+  const directoryPath = path.dirname(filePath)
+  ensureDirectory(directoryPath)
+  pruneExpiredDiagnosticsLogs(directoryPath, now)
   const record: RuntimeLogEntry = {
     timestamp: entry.timestamp ?? formatLocalDateTime(now),
     level: entry.level,

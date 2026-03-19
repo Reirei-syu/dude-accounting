@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { app, type WebContents } from 'electron'
-import { getDiagnosticsLogPathState, resolveDiagnosticsLogDirectory } from './diagnosticsLogPath'
+import {
+  getDiagnosticsLogPathState,
+  pruneExpiredDiagnosticsLogs,
+  resolveDiagnosticsLogDirectory
+} from './diagnosticsLogPath'
 import { buildTimestampToken, ensureDirectory } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
 import { getRuntimeLogFilePath } from './runtimeLogger'
@@ -94,7 +98,9 @@ export function writeErrorLog(
   now: Date = new Date()
 ): string {
   const filePath = getErrorLogFilePath(baseDir, now)
-  ensureDirectory(path.dirname(filePath))
+  const directoryPath = path.dirname(filePath)
+  ensureDirectory(directoryPath)
+  pruneExpiredDiagnosticsLogs(directoryPath, now)
   const record: ErrorLogEntry = {
     timestamp: entry.timestamp ?? formatLocalDateTime(now),
     source: entry.source,

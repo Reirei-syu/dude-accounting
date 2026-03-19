@@ -2,8 +2,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { ensureDirectory } from './fileIntegrity'
 
+const DIAGNOSTIC_LOG_FILE_PATTERN = /^(runtime|error)-(\d{4})-(\d{2})-(\d{2})\.jsonl$/i
+
 interface DiagnosticsLogPathConfigPayload {
   directoryPath?: string
+}
+
+interface DiagnosticsLogPathOptions {
+  executablePath?: string
+  installDirectory?: string
+  useInstallDirectoryAsDefault?: boolean
 }
 
 export interface DiagnosticsLogPathState {
@@ -17,8 +25,16 @@ function getDiagnosticsLogPathConfigFile(baseDir: string): string {
   return path.join(baseDir, 'config', 'diagnostics-log-path.json')
 }
 
-export function getDefaultDiagnosticsLogDirectory(baseDir: string): string {
-  return path.join(baseDir, 'logs')
+function shouldUseInstallDirectoryAsDefault(): boolean {
+  return Boolean(process.versions.electron) && process.defaultApp !== true
+}
+
+function resolveInstallDirectory(options: DiagnosticsLogPathOptions = {}): string | null {
+  const candidate = options.installDirectory ?? options.executablePath ?? process.execPath
+  if (!candidate || candidate.trim() === '') {
+    return null
+  }
+  return path.dirname(path.resolve(candidate))
 }
 
 function normalizeDiagnosticsLogDirectory(directoryPath: string): string {
@@ -42,7 +58,9 @@ function readDiagnosticsLogPathConfig(baseDir: string): string | null {
   }
 
   try {
-    const payload = JSON.parse(fs.readFileSync(configFilePath, 'utf8')) as DiagnosticsLogPathConfigPayload
+    const payload = JSON.parse(
+      fs.readFileSync(configFilePath, 'utf8')
+    ) as DiagnosticsLogPathConfigPayload
     if (!payload || typeof payload.directoryPath !== 'string') {
       return null
     }
@@ -68,8 +86,47 @@ function writeDiagnosticsLogPathConfig(baseDir: string, directoryPath: string): 
   )
 }
 
-export function getDiagnosticsLogPathState(baseDir: string): DiagnosticsLogPathState {
-  const defaultDirectory = getDefaultDiagnosticsLogDirectory(baseDir)
+function parseDiagnosticLogDate(fileName: string): Date | null {
+  const matched = fileName.match(DIAGNOSTIC_LOG_FILE_PATTERN)
+  if (!matched) {
+    return null
+  }
+
+  const year = Number(matched[2])
+  const month = Number(matched[3])
+  const day = Number(matched[4])
+
+  return new Date(year, month - 1, day)
+}
+
+function getRetentionCutoff(now: Date): Date {
+  const previousMonthDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate()
+  const targetDay = Math.min(now.getDate(), previousMonthDays)
+  return new Date(now.getFullYear(), now.getMonth() - 1, targetDay)
+}
+
+export function getDefaultDiagnosticsLogDirectory(
+  baseDir: string,
+  options: DiagnosticsLogPathOptions = {}
+): string {
+  const useInstallDirectory =
+    options.useInstallDirectoryAsDefault ?? shouldUseInstallDirectoryAsDefault()
+
+  if (useInstallDirectory) {
+    const installDirectory = resolveInstallDirectory(options)
+    if (installDirectory) {
+      return path.join(installDirectory, 'logs')
+    }
+  }
+
+  return path.join(baseDir, 'logs')
+}
+
+export function getDiagnosticsLogPathState(
+  baseDir: string,
+  options: DiagnosticsLogPathOptions = {}
+): DiagnosticsLogPathState {
+  const defaultDirectory = getDefaultDiagnosticsLogDirectory(baseDir, options)
   const customDirectory = readDiagnosticsLogPathConfig(baseDir)
 
   return {
@@ -80,11 +137,42 @@ export function getDiagnosticsLogPathState(baseDir: string): DiagnosticsLogPathS
   }
 }
 
-export function resolveDiagnosticsLogDirectory(baseDir: string): string {
-  return getDiagnosticsLogPathState(baseDir).activeDirectory
+export function resolveDiagnosticsLogDirectory(
+  baseDir: string,
+  options: DiagnosticsLogPathOptions = {}
+): string {
+  return getDiagnosticsLogPathState(baseDir, options).activeDirectory
 }
 
-export function setDiagnosticsLogDirectory(baseDir: string, directoryPath: string): DiagnosticsLogPathState {
+export function pruneExpiredDiagnosticsLogs(
+  directoryPath: string,
+  now: Date = new Date()
+): string[] {
+  if (!fs.existsSync(directoryPath)) {
+    return []
+  }
+
+  const cutoff = getRetentionCutoff(now)
+  const deletedPaths: string[] = []
+
+  for (const fileName of fs.readdirSync(directoryPath)) {
+    const fileDate = parseDiagnosticLogDate(fileName)
+    if (!fileDate || fileDate >= cutoff) {
+      continue
+    }
+
+    const targetPath = path.join(directoryPath, fileName)
+    fs.rmSync(targetPath, { force: true })
+    deletedPaths.push(targetPath)
+  }
+
+  return deletedPaths
+}
+
+export function setDiagnosticsLogDirectory(
+  baseDir: string,
+  directoryPath: string
+): DiagnosticsLogPathState {
   const normalizedDirectory = normalizeDiagnosticsLogDirectory(directoryPath)
   ensureDirectory(normalizedDirectory)
   writeDiagnosticsLogPathConfig(baseDir, normalizedDirectory)

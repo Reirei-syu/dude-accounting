@@ -235,7 +235,8 @@ Responsibility:
 Status:
 
 - 已支持按天写入本地 JSONL 日志文件，路径为应用 `userData/logs/runtime-YYYY-MM-DD.jsonl`。
-- 已补充独立错误日志，默认路径为应用 `userData/logs/error-YYYY-MM-DD.jsonl`，并支持在系统参数页切换到自定义日志目录，用于记录主进程未捕获异常、未处理 Promise 拒绝、渲染进程脚本错误和进程异常退出。
+- 已补充独立错误日志：开发环境默认路径为 `userData/logs/error-YYYY-MM-DD.jsonl`，打包后默认路径为安装目录下的 `logs/error-YYYY-MM-DD.jsonl`；同时支持在系统参数页切换到自定义日志目录，用于记录主进程未捕获异常、未处理 Promise 拒绝、渲染进程脚本错误和进程异常退出。
+- 自动生成的运行日志与错误日志默认仅保留最近 1 个月，超过 1 个月的 `runtime/error` 日志文件会在新日志写入时自动清理。
 - 运行日志与业务操作日志分离：`operation_logs` 用于业务留痕，`runtime-*.jsonl` 用于排查性能与异常。
 - 渲染进程通过 preload 自动上报 `window.error` 与 `unhandledrejection`；主进程补充记录 `uncaughtExceptionMonitor`、`unhandledRejection`、`render-process-gone`、`child-process-gone`。
 - 系统参数页支持查看日志目录、今日日志文件状态，并可直接更改日志保存路径、恢复默认日志路径、打开日志目录或导出当前日志文件到用户指定目录。
