@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'path'
+import { normalizeLedgerStartPeriods } from '../services/ledgerStartPeriod'
 import { seedAdminUser, seedSubjects, seedCashFlowItems, seedPLCarryForwardRules } from './seed'
 import { ALL_SUBJECT_CATEGORIES } from './subjectCategoryRules'
 
@@ -381,6 +382,7 @@ export function initializeDatabase(): void {
   ensureArchiveSchema(db)
   ensureBackupSchema(db)
   ensureReportingSchema(db)
+  normalizeLedgerStartPeriods(db)
 
   // Seed default data
   seedAdminUser(db)
@@ -397,9 +399,9 @@ export function initializeDatabase(): void {
 }
 
 export function ensureUserLedgerAccessSchema(db: Database.Database): void {
-  const columns = db
-    .prepare("PRAGMA table_info('user_ledger_permissions')")
-    .all() as Array<{ name: string }>
+  const columns = db.prepare("PRAGMA table_info('user_ledger_permissions')").all() as Array<{
+    name: string
+  }>
   const isNewTable = columns.length === 0
 
   db.exec(`
@@ -432,7 +434,9 @@ export function ensureUserLedgerAccessSchema(db: Database.Database): void {
 }
 
 export function ensureUserPreferenceSchema(db: Database.Database): void {
-  const columns = db.prepare("PRAGMA table_info('user_preferences')").all() as Array<{ name: string }>
+  const columns = db.prepare("PRAGMA table_info('user_preferences')").all() as Array<{
+    name: string
+  }>
   if (columns.length === 0) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS user_preferences (
@@ -690,7 +694,9 @@ export function ensureVoucherSchema(db: Database.Database): void {
     }
   }
 
-  db.prepare('CREATE INDEX IF NOT EXISTS idx_vouchers_ledger_period ON vouchers(ledger_id, period)').run()
+  db.prepare(
+    'CREATE INDEX IF NOT EXISTS idx_vouchers_ledger_period ON vouchers(ledger_id, period)'
+  ).run()
   db.prepare(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_number ON vouchers(ledger_id, period, voucher_word, voucher_number)'
   ).run()
@@ -698,7 +704,9 @@ export function ensureVoucherSchema(db: Database.Database): void {
 }
 
 export function ensureComplianceSchema(db: Database.Database): void {
-  const voucherColumns = db.prepare("PRAGMA table_info('vouchers')").all() as Array<{ name: string }>
+  const voucherColumns = db.prepare("PRAGMA table_info('vouchers')").all() as Array<{
+    name: string
+  }>
   if (voucherColumns.length === 0) return
 
   const addColumnIfMissing = (name: string, sql: string): void => {
@@ -715,24 +723,28 @@ export function ensureComplianceSchema(db: Database.Database): void {
 }
 
 export function ensureBackupSchema(db: Database.Database): void {
-  const columns = db.prepare("PRAGMA table_info('backup_packages')").all() as Array<{ name: string }>
+  const columns = db.prepare("PRAGMA table_info('backup_packages')").all() as Array<{
+    name: string
+  }>
   if (columns.length === 0) return
 
   if (!columns.some((column) => column.name === 'manifest_path')) {
-    db.exec("ALTER TABLE backup_packages ADD COLUMN manifest_path TEXT DEFAULT NULL")
+    db.exec('ALTER TABLE backup_packages ADD COLUMN manifest_path TEXT DEFAULT NULL')
   }
 
   if (!columns.some((column) => column.name === 'backup_period')) {
-    db.exec("ALTER TABLE backup_packages ADD COLUMN backup_period TEXT DEFAULT NULL")
+    db.exec('ALTER TABLE backup_packages ADD COLUMN backup_period TEXT DEFAULT NULL')
   }
 }
 
 export function ensureArchiveSchema(db: Database.Database): void {
-  const columns = db.prepare("PRAGMA table_info('archive_exports')").all() as Array<{ name: string }>
+  const columns = db.prepare("PRAGMA table_info('archive_exports')").all() as Array<{
+    name: string
+  }>
   if (columns.length === 0) return
 
   if (!columns.some((column) => column.name === 'validated_at')) {
-    db.exec("ALTER TABLE archive_exports ADD COLUMN validated_at TEXT DEFAULT NULL")
+    db.exec('ALTER TABLE archive_exports ADD COLUMN validated_at TEXT DEFAULT NULL')
   }
 }
 
@@ -798,7 +810,9 @@ export function ensureReportingSchema(db: Database.Database): void {
     );
   `)
 
-  const columns = db.prepare("PRAGMA table_info('report_snapshots')").all() as Array<{ name: string }>
+  const columns = db.prepare("PRAGMA table_info('report_snapshots')").all() as Array<{
+    name: string
+  }>
   const reportSnapshotTableSql = db
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'report_snapshots'")
     .get() as { sql: string } | undefined
@@ -809,7 +823,7 @@ export function ensureReportingSchema(db: Database.Database): void {
     db.exec("ALTER TABLE report_snapshots ADD COLUMN end_period TEXT NOT NULL DEFAULT ''")
   }
   if (!columns.some((column) => column.name === 'as_of_date')) {
-    db.exec("ALTER TABLE report_snapshots ADD COLUMN as_of_date TEXT DEFAULT NULL")
+    db.exec('ALTER TABLE report_snapshots ADD COLUMN as_of_date TEXT DEFAULT NULL')
   }
   if (!columns.some((column) => column.name === 'include_unposted_vouchers')) {
     db.exec(

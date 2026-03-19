@@ -75,9 +75,9 @@ export function registerInitialBalanceHandlers(): void {
           return { success: false, error: '期初期间格式应为 YYYY-MM' }
         }
 
-        const ledger = db
-          .prepare('SELECT start_period FROM ledgers WHERE id = ?')
-          .get(ledgerId) as { start_period: string } | undefined
+        const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(ledgerId) as
+          | { start_period: string }
+          | undefined
         if (!ledger) {
           return { success: false, error: '账套不存在' }
         }
@@ -129,6 +129,11 @@ export function registerInitialBalanceHandlers(): void {
           const deleteStmt = db.prepare(
             'DELETE FROM initial_balances WHERE ledger_id = ? AND period = ? AND subject_code = ?'
           )
+          const ensurePeriodStmt = db.prepare(
+            'INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)'
+          )
+
+          ensurePeriodStmt.run(ledgerId, period)
 
           for (const entry of normalized) {
             if (entry.debitCents === 0 && entry.creditCents === 0) {

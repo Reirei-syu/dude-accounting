@@ -14,54 +14,11 @@ import { applyCustomTopLevelSubjectTemplate } from '../services/subjectTemplate'
 import { grantUserLedgerAccess } from '../services/userLedgerAccess'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
-function normalizeLedgerStartPeriods(db: ReturnType<typeof getDatabase>): void {
-  const ledgers = db.prepare('SELECT id, start_period, current_period FROM ledgers').all() as Array<{
-    id: number
-    start_period: string
-    current_period: string
-  }>
-
-  const selectEarliestPeriodStmt = db.prepare(
-    `SELECT MIN(period) AS period
-     FROM (
-       SELECT period FROM periods WHERE ledger_id = ?
-       UNION ALL
-       SELECT period FROM vouchers WHERE ledger_id = ?
-       UNION ALL
-       SELECT period FROM initial_balances WHERE ledger_id = ?
-     )`
-  )
-  const updateStartPeriodStmt = db.prepare('UPDATE ledgers SET start_period = ? WHERE id = ?')
-
-  const normalize = db.transaction(() => {
-    for (const ledger of ledgers) {
-      const earliestRow = selectEarliestPeriodStmt.get(ledger.id, ledger.id, ledger.id) as
-        | { period: string | null }
-        | undefined
-      const candidates = [ledger.start_period, ledger.current_period, earliestRow?.period ?? ''].filter(
-        (period) => /^\d{4}-(0[1-9]|1[0-2])$/.test(period)
-      )
-
-      if (candidates.length === 0) {
-        continue
-      }
-
-      const normalizedStartPeriod = candidates.sort()[0]
-      if (normalizedStartPeriod < ledger.start_period) {
-        updateStartPeriodStmt.run(normalizedStartPeriod, ledger.id)
-      }
-    }
-  })
-
-  normalize()
-}
-
 export function registerLedgerHandlers(): void {
   const db = getDatabase()
 
   ipcMain.handle('ledger:getAll', (event) => {
     const user = requireAuth(event)
-    normalizeLedgerStartPeriods(db)
     if (user.isAdmin) {
       return db.prepare('SELECT * FROM ledgers ORDER BY created_at DESC').all()
     }
@@ -99,7 +56,11 @@ export function registerLedgerHandlers(): void {
 
         const ledgerId = Number(result.lastInsertRowid)
         seedSubjectsForLedger(db, ledgerId, data.standardType)
-        const customSubjectCount = applyCustomTopLevelSubjectTemplate(db, ledgerId, data.standardType)
+        const customSubjectCount = applyCustomTopLevelSubjectTemplate(
+          db,
+          ledgerId,
+          data.standardType
+        )
         seedCashFlowItemsForLedger(db, ledgerId)
         seedCashFlowMappingsForLedger(db, ledgerId, data.standardType)
         seedPLCarryForwardRulesForLedger(db, ledgerId, data.standardType)
@@ -145,9 +106,9 @@ export function registerLedgerHandlers(): void {
           db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(normalizedName, data.id)
         }
         if (data.currentPeriod !== undefined) {
-          const ledger = db.prepare('SELECT start_period FROM ledgers WHERE id = ?').get(data.id) as
-            | { start_period: string }
-            | undefined
+          const ledger = db
+            .prepare('SELECT start_period FROM ledgers WHERE id = ?')
+            .get(data.id) as { start_period: string } | undefined
 
           if (!ledger) {
             throw new Error('账套不存在')
@@ -283,7 +244,11 @@ export function registerLedgerHandlers(): void {
           )
 
           seedSubjectsForLedger(db, data.ledgerId, data.standardType)
-          customSubjectCount = applyCustomTopLevelSubjectTemplate(db, data.ledgerId, data.standardType)
+          customSubjectCount = applyCustomTopLevelSubjectTemplate(
+            db,
+            data.ledgerId,
+            data.standardType
+          )
           seedCashFlowItemsForLedger(db, data.ledgerId)
           seedCashFlowMappingsForLedger(db, data.ledgerId, data.standardType)
           seedPLCarryForwardRulesForLedger(db, data.ledgerId, data.standardType)

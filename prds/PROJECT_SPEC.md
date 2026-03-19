@@ -113,6 +113,11 @@ Key Channels:
 Responsibility:
 账套生命周期管理、模板应用、会计期间切换。
 
+Current Constraint:
+
+- 账套 `start_period` 的历史兼容归一化改为应用启动时执行一次，不再在 `ledger:getAll` 首页读取链路中每次全量扫描 `periods`、`vouchers`、`initial_balances`。
+- `initialBalance:save` 在保存期初余额时会同步补齐 `periods` 记录，避免后续期间列表与期初数据脱节。
+
 Key Channels:
 
 - `ledger:getAll/create/update/delete/getPeriods`
