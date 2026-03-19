@@ -17,8 +17,10 @@
     "build": "npm run typecheck && electron-vite build",
     "postinstall": "electron-builder install-app-deps",
     "prepare:self-env": "powershell -ExecutionPolicy Bypass -File scripts/prepare-local-env.ps1",
+    "prepare:mac-env": "sh scripts/prepare-mac-env.sh",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-win-installer.ps1",
+    "build:mac:installer": "sh scripts/build-mac-installer.sh",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux"

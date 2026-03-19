@@ -29,7 +29,8 @@ npm run build:win
 git clone <your-public-repo-url>
 cd dude-app
 npm install
-npm run build:mac
+npm run prepare:mac-env
+npm run build:mac:installer
 ```
 
 成立前提：
@@ -112,13 +113,14 @@ npm run build:win
 ## macOS 打包
 
 ```bash
-npm run build:mac
+npm run prepare:mac-env
+npm run build:mac:installer
 ```
 
 实际会执行：
 
 1. `npm run build`
-2. `electron-builder --mac`
+2. `electron-builder --mac dmg zip --publish never`
 
 注意：
 
