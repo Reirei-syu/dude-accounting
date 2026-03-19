@@ -14,6 +14,7 @@ asarUnpack:
   - resources/**
 win:
   executableName: dude-app
+  signAndEditExecutable: false
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   oneClick: false

@@ -13,4 +13,9 @@ Write-Host "Installer output: $releaseOutput"
 npm run build
 npx electron-builder --win nsis --publish never
 
-Write-Host 'Windows installer build completed.'
+$installer = Get-ChildItem -Path $releaseOutput -Filter '*-setup.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $installer) {
+  throw 'Windows installer was not generated.'
+}
+
+Write-Host "Windows installer build completed: $($installer.FullName)"
