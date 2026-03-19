@@ -305,6 +305,7 @@ Status:
 - 报表导出的目录偏好、默认路径、单个/批量导出编排已收口到 `reportExport` service，IPC 仅保留鉴权、弹窗与操作日志。
 - 报表快照查询/明细/删除已收口到 `reportSnapshotCatalog` service，HTML/Excel/PDF 输出辅助已收口到 `reportSnapshotOutput` service；`reporting.ts` 当前主要保留报表计算与快照生成主链路。
 - 账簿查询的数据读取层已收口到 `bookQueryData` service，`bookQuery.ts` 当前主要保留结果组装与账簿口径计算。
+- 账簿导出的目录偏好、默认路径、导出编排已收口到 `bookQueryExport` service，`ipc/bookQuery.ts` 中的导出链路主要负责鉴权、弹窗、telemetry 与操作日志。
 
 Current Channels:
 
