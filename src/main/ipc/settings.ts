@@ -100,7 +100,7 @@ export function registerSettingsHandlers(): void {
   })
 
   ipcMain.handle('settings:getErrorLogStatus', (event) => {
-    requireAuth(event)
+    requirePermission(event, 'system_settings')
     return getErrorLogStatus(app.getPath('userData'))
   })
 
@@ -185,7 +185,7 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:openErrorLogDirectory', async (event) => {
     try {
-      requireAuth(event)
+      requirePermission(event, 'system_settings')
       const { logDirectory } = getErrorLogStatus(app.getPath('userData'))
       await fs.promises.mkdir(logDirectory, { recursive: true })
       const error = await shell.openPath(logDirectory)
@@ -212,7 +212,7 @@ export function registerSettingsHandlers(): void {
     'settings:exportDiagnosticsLogs',
     async (event, payload?: { directoryPath?: string }) => {
       try {
-        requireAuth(event)
+        requirePermission(event, 'system_settings')
         const browserWindow = BrowserWindow.fromWebContents(event.sender)
         const openResult = payload?.directoryPath
           ? { canceled: false, filePaths: [payload.directoryPath] }

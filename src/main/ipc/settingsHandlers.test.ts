@@ -179,7 +179,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
-    expect(settingsMocks.requireAuth).toHaveBeenCalledTimes(1)
+    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
     expect(settingsMocks.getErrorLogStatus).toHaveBeenCalledWith(tempDir)
     expect(result).toMatchObject({
       mode: 'default',
@@ -330,6 +330,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
+    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
     expect(fs.existsSync(logDirectory)).toBe(true)
     expect(settingsMocks.shellOpenPath).toHaveBeenCalledWith(logDirectory)
     expect(result).toEqual({
@@ -345,6 +346,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
+    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
     expect(result).toEqual({
       success: false,
       error: 'failed to open directory'
@@ -361,6 +363,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
+    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
     expect(settingsMocks.showOpenDialog).toHaveBeenCalledTimes(1)
     expect(settingsMocks.showOpenDialog.mock.calls[0]?.[0]).toMatchObject({
       defaultPath: path.join('D:/Documents', 'Dude Accounting', '日志导出'),

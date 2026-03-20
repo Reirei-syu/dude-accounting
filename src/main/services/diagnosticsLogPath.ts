@@ -30,11 +30,20 @@ function shouldUseInstallDirectoryAsDefault(): boolean {
 }
 
 function resolveInstallDirectory(options: DiagnosticsLogPathOptions = {}): string | null {
-  const candidate = options.installDirectory ?? options.executablePath ?? process.execPath
-  if (!candidate || candidate.trim() === '') {
+  if (options.installDirectory) {
+    const normalizedInstallDirectory = options.installDirectory.trim()
+    if (normalizedInstallDirectory === '') {
+      return null
+    }
+    return path.resolve(normalizedInstallDirectory)
+  }
+
+  const executablePath = options.executablePath ?? process.execPath
+  if (!executablePath || executablePath.trim() === '') {
     return null
   }
-  return path.dirname(path.resolve(candidate))
+
+  return path.dirname(path.resolve(executablePath))
 }
 
 function normalizeDiagnosticsLogDirectory(directoryPath: string): string {
