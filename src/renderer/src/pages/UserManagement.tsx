@@ -61,7 +61,9 @@ export default function UserManagement(): JSX.Element {
     {}
   )
   const [ledgerDrafts, setLedgerDrafts] = useState<Record<number, number[]>>({})
+  const [passwordDrafts, setPasswordDrafts] = useState<Record<number, string>>({})
   const [savingUserId, setSavingUserId] = useState<number | null>(null)
+  const [savingPasswordUserId, setSavingPasswordUserId] = useState<number | null>(null)
   const [form, setForm] = useState({
     username: '',
     realName: '',
@@ -86,6 +88,7 @@ export default function UserManagement(): JSX.Element {
 
       const nextUsers = userRows as UserRow[]
       const nextLedgers = ledgerRows as LedgerRow[]
+
       setUsers(nextUsers)
       setLedgers(nextLedgers)
       setPermissionDrafts(
@@ -100,6 +103,7 @@ export default function UserManagement(): JSX.Element {
           nextUsers.filter((user) => !user.isAdmin).map((user) => [user.id, [...user.ledgerIds]])
         )
       )
+      setPasswordDrafts({})
     } catch (error) {
       setUsers([])
       setLedgers([])
@@ -230,6 +234,48 @@ export default function UserManagement(): JSX.Element {
       setMessage({ type: 'error', text: error instanceof Error ? error.message : '保存权限失败' })
     } finally {
       setSavingUserId(null)
+    }
+  }
+
+  const handlePasswordDraftChange = (userId: number, password: string): void => {
+    setPasswordDrafts((prev) => ({
+      ...prev,
+      [userId]: password
+    }))
+  }
+
+  const clearPasswordDraft = (userId: number): void => {
+    setPasswordDrafts((prev) => {
+      const next = { ...prev }
+      delete next[userId]
+      return next
+    })
+  }
+
+  const handleSavePassword = async (userId: number, password: string): Promise<void> => {
+    if (!window.electron) return
+
+    setMessage(null)
+    setSavingPasswordUserId(userId)
+    try {
+      const result = await window.api.auth.updateUser({
+        id: userId,
+        password
+      })
+      if (!result.success) {
+        setMessage({ type: 'error', text: result.error || '密码修改失败' })
+        return
+      }
+
+      clearPasswordDraft(userId)
+      setMessage({
+        type: 'success',
+        text: password === '' ? '密码已设为空' : '密码修改成功'
+      })
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : '密码修改失败' })
+    } finally {
+      setSavingPasswordUserId(null)
     }
   }
 
@@ -421,18 +467,50 @@ export default function UserManagement(): JSX.Element {
                       </div>
                     )}
                   </div>
-                  <div className="col-span-2 text-right">
-                    {!user.isAdmin && (
-                      <div className="flex justify-end gap-2">
+                  <div className="col-span-2">
+                    <div className="flex flex-col items-end gap-2">
+                      <input
+                        className="glass-input text-xs w-full"
+                        type="password"
+                        placeholder="新密码"
+                        value={passwordDrafts[user.id] ?? ''}
+                        onChange={(event) =>
+                          handlePasswordDraftChange(user.id, event.target.value)
+                        }
+                        autoComplete="new-password"
+                      />
+                      <div className="flex justify-end gap-2 flex-wrap">
                         <button
                           className="glass-btn-secondary px-3 py-1 text-xs"
-                          onClick={() => void handleDelete(user.id)}
-                          disabled={savingUserId === user.id}
+                          onClick={() =>
+                            void handleSavePassword(user.id, passwordDrafts[user.id] ?? '')
+                          }
+                          disabled={
+                            savingPasswordUserId === user.id ||
+                            !Object.prototype.hasOwnProperty.call(passwordDrafts, user.id) ||
+                            (passwordDrafts[user.id] ?? '') === ''
+                          }
                         >
-                          删除
+                          {savingPasswordUserId === user.id ? '保存中...' : '保存密码'}
                         </button>
+                        <button
+                          className="glass-btn-secondary px-3 py-1 text-xs"
+                          onClick={() => void handleSavePassword(user.id, '')}
+                          disabled={savingPasswordUserId === user.id}
+                        >
+                          设为空密码
+                        </button>
+                        {!user.isAdmin && (
+                          <button
+                            className="glass-btn-secondary px-3 py-1 text-xs"
+                            onClick={() => void handleDelete(user.id)}
+                            disabled={savingUserId === user.id || savingPasswordUserId === user.id}
+                          >
+                            删除
+                          </button>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </div>
                 </div>
               ))}
