@@ -170,6 +170,12 @@ dude-app-<version>-setup.exe
 D:\coding\completed\dude-app\dude-app-1.0.8-setup.exe
 ```
 
+同时会额外生成一个固定文件名别名，便于发布稳定下载链接：
+
+```text
+D:\coding\completed\dude-app\dude-app-latest-setup.exe
+```
+
 ### macOS 安装包
 
 当前配置下 DMG 命名规则为：

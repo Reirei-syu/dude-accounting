@@ -39,4 +39,8 @@ if (-not $installer) {
   throw 'Windows installer was not generated.'
 }
 
+$latestInstallerAlias = Join-Path $releaseOutput 'dude-app-latest-setup.exe'
+Copy-Item -Path $installer.FullName -Destination $latestInstallerAlias -Force
+
 Write-Host "Windows installer build completed: $($installer.FullName)"
+Write-Host "Latest installer alias updated: $latestInstallerAlias"
