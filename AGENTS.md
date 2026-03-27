@@ -32,6 +32,7 @@
 数据与接口约束：
 
 - 涉及合规模块开发时，优先复用或维护以下模块：`AuditLogModule`、`BackupRecoveryModule`、`ElectronicVoucherModule`、`ArchiveExportModule`、`ReportingOutputModule`。
+- 打包版升级、重装或变更安装目录时，禁止将主数据库、用户设置、用户偏好、壁纸和默认日志等用户数据绑定到安装目录；默认应落在稳定的 `userData` 范围内，并对历史错误路径提供兼容迁移。
 - 新增或修改 IPC 时，必须同步更新 preload 暴露与类型声明，确保 `src/main`、`src/preload`、`src/renderer` 三层接口一致。
 - 涉及数据库结构调整时，除修改建表 SQL 外，还必须考虑旧库兼容迁移与补字段逻辑。
 - 与电子凭证相关的改动，应保持“接收 -> 验签/验真 -> 解析 -> 去重 -> 入账/预填 -> 留痕”的链路完整性，不要跳过校验与留痕直接入账。

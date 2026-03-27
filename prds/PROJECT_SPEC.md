@@ -75,7 +75,8 @@ Infrastructure:
 - Windows 安装器：NSIS，支持用户选择安装目录
 - 安装包输出目录：`D:\coding\completed\dude-app`
 - 开发模式与安装版使用隔离的 `userData` 目录，避免共享同一份 SQLite 账套数据与日志
-- 打包安装版的主数据库默认存放在安装目录下的 `data/dude-accounting.db`；若检测到旧版仍将数据库保存在 legacy `userData` 目录，则首次启动自动迁移到安装目录 `data`
+- 打包安装版的主数据库必须默认存放在稳定的 `userData/data/dude-accounting.db`；升级安装、重装或变更安装目录时，不得改变既有用户数据路径
+- 若检测到历史错误版本曾将数据库保存在旧安装目录 `data` 或 legacy `userData` 目录，则仅在 `userData/data` 尚不存在数据库时执行一次性兼容迁移
 - 发布脚本在生成新安装包前会自动清理输出目录中的旧版安装包产物，避免 `completed` 目录持续堆积历史安装包
 - Windows 安装器默认使用当前用户可写安装目录，并禁止选择 `Program Files`、`Windows` 等受保护目录；应用启动时会再次校验安装目录 `data` 的写权限，不可写则阻断启动
 - Windows 安装器在检测到本机已存在旧安装记录时，默认安装路径优先回填历史安装目录；仅在没有历史安装记录时才回退到当前用户可写目录
@@ -244,7 +245,7 @@ Responsibility:
 Status:
 
 - 已支持按天写入本地 JSONL 日志文件，路径为应用 `userData/logs/runtime-YYYY-MM-DD.jsonl`。
-- 已补充独立错误日志：开发环境默认路径为 `userData/logs/error-YYYY-MM-DD.jsonl`，打包后默认路径为安装目录下的 `logs/error-YYYY-MM-DD.jsonl`；同时支持在系统参数页切换到自定义日志目录，用于记录主进程未捕获异常、未处理 Promise 拒绝、渲染进程脚本错误和进程异常退出。
+- 已补充独立错误日志：开发环境与打包环境默认路径均为 `userData/logs/error-YYYY-MM-DD.jsonl`；同时支持在系统参数页切换到自定义日志目录，用于记录主进程未捕获异常、未处理 Promise 拒绝、渲染进程脚本错误和进程异常退出。
 - 自动生成的运行日志与错误日志默认仅保留最近 1 个月，超过 1 个月的 `runtime/error` 日志文件会在新日志写入时自动清理。
 - 运行日志与业务操作日志分离：`operation_logs` 用于业务留痕，`runtime-*.jsonl` 用于排查性能与异常。
 - 渲染进程通过 preload 自动上报 `window.error` 与 `unhandledrejection`；主进程补充记录 `uncaughtExceptionMonitor`、`unhandledRejection`、`render-process-gone`、`child-process-gone`。

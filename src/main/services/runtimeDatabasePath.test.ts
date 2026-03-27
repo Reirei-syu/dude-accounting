@@ -36,10 +36,10 @@ describe('runtimeDatabasePath service', () => {
         isDevelopment: false,
         executablePath: 'D:/DudeAcc/dude-app/dude-app.exe'
       })
-    ).toBe(path.join('D:/DudeAcc/dude-app', RUNTIME_DATABASE_DIRECTORY_NAME))
+    ).toBe(path.join('C:/Users/test/AppData/Roaming/dude-app', RUNTIME_DATABASE_DIRECTORY_NAME))
   })
 
-  it('migrates the legacy packaged database from userData on first launch', () => {
+  it('migrates the legacy packaged database from userData root into userData/data on first launch', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-db-'))
     const userDataPath = path.join(tempDir, 'userData')
     const installDirectory = path.join(tempDir, 'install')
@@ -58,7 +58,7 @@ describe('runtimeDatabasePath service', () => {
     })
 
     expect(state.targetPath).toBe(
-      path.join(installDirectory, RUNTIME_DATABASE_DIRECTORY_NAME, PRIMARY_DATABASE_FILE_NAME)
+      path.join(userDataPath, RUNTIME_DATABASE_DIRECTORY_NAME, PRIMARY_DATABASE_FILE_NAME)
     )
     expect(state.legacyPath).toBe(legacyDbPath)
     expect(state.migrated).toBe(true)
@@ -66,18 +66,45 @@ describe('runtimeDatabasePath service', () => {
     expect(fs.readFileSync(`${state.targetPath}-wal`, 'utf8')).toBe('legacy-wal')
   })
 
-  it('throws a clear error when the packaged data directory is not writable', () => {
+  it('migrates the packaged database from the old install-directory data folder into userData/data', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-db-'))
     const userDataPath = path.join(tempDir, 'userData')
-    const installDirectoryAsFile = path.join(tempDir, 'install-root-file')
+    const installDirectory = path.join(tempDir, 'install')
+    const installDataDirectory = path.join(installDirectory, RUNTIME_DATABASE_DIRECTORY_NAME)
     fs.mkdirSync(userDataPath, { recursive: true })
-    fs.writeFileSync(installDirectoryAsFile, 'not-a-directory', 'utf8')
+    fs.mkdirSync(installDataDirectory, { recursive: true })
+
+    const installDbPath = path.join(installDataDirectory, PRIMARY_DATABASE_FILE_NAME)
+    const installWalPath = `${installDbPath}-wal`
+    fs.writeFileSync(installDbPath, 'install-db', 'utf8')
+    fs.writeFileSync(installWalPath, 'install-wal', 'utf8')
+
+    const state = ensurePrimaryDatabasePath({
+      userDataPath,
+      isDevelopment: false,
+      installDirectory
+    })
+
+    expect(state.targetPath).toBe(
+      path.join(userDataPath, RUNTIME_DATABASE_DIRECTORY_NAME, PRIMARY_DATABASE_FILE_NAME)
+    )
+    expect(state.migrated).toBe(true)
+    expect(fs.readFileSync(state.targetPath, 'utf8')).toBe('install-db')
+    expect(fs.readFileSync(`${state.targetPath}-wal`, 'utf8')).toBe('install-wal')
+  })
+
+  it('throws a clear error when the packaged data directory is not writable', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-db-'))
+    const userDataPath = path.join(tempDir, 'userData-root-file')
+    const installDirectory = path.join(tempDir, 'install')
+    fs.mkdirSync(installDirectory, { recursive: true })
+    fs.writeFileSync(userDataPath, 'not-a-directory', 'utf8')
 
     expect(() =>
       ensurePrimaryDatabasePath({
         userDataPath,
         isDevelopment: false,
-        installDirectory: installDirectoryAsFile
+        installDirectory
       })
     ).toThrow('数据库目录不可写')
   })

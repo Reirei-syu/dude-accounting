@@ -5,6 +5,22 @@
 
 ## 任务列表
 
+### [x] 安装升级数据路径保护
+- 类型：修复
+- 模块：core / service
+- 描述：将打包版数据库与默认日志路径从安装目录切回稳定的 userData，并兼容从旧安装目录自动迁移数据库。
+- 完成时间：2026-03-27
+- 修改文件：`src/main/services/runtimeDatabasePath.ts`、`src/main/services/runtimeDatabasePath.test.ts`、`src/main/services/diagnosticsLogPath.ts`、`src/main/services/diagnosticsLogPath.test.ts`
+- 影响范围：打包版主数据库路径、旧安装目录数据库迁移、默认日志路径
+
+### [x] 安装器文案与升级验证
+- 类型：修复
+- 模块：config / docs
+- 描述：移除安装器中“数据库写入安装目录”的错误前提，补齐规范文档、验证与重新打包。
+- 完成时间：2026-03-27
+- 修改文件：`build/installer.nsh`、`docs/plans/2026-03-27_runtime_data_path_protection_plan.md`、`AGENTS.md`、`prds/PROJECT_SPEC.md`、`prds/prd.md`、`prds/开发日志.md`
+- 影响范围：安装器提示文案、运行规范文档、升级验证记录
+
 ### [x] 会计科目现金流量父子继承规则
 - 类型：开发
 - 模块：service / core

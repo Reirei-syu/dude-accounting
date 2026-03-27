@@ -23,7 +23,7 @@
     StrLen $1 "${protectedDir}"
     StrCpy $2 $0 $1
     ${If} $2 == "${protectedDir}"
-      MessageBox MB_OK|MB_ICONSTOP "当前安装路径位于受保护目录：${protectedDir}$\r$\n$\r$\n为保证账套数据库始终写入安装目录\\data，请安装到当前用户可写目录，例如：$LOCALAPPDATA\${APP_FILENAME}"
+      MessageBox MB_OK|MB_ICONSTOP "当前安装路径位于受保护目录：${protectedDir}$\r$\n$\r$\n请安装到当前用户可写目录，例如：$LOCALAPPDATA\${APP_FILENAME}"
       Abort
     ${EndIf}
   ${EndIf}

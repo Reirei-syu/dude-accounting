@@ -24,7 +24,7 @@ export interface RuntimeDatabasePathState {
 
 function buildUnwritableDatabaseDirectoryError(targetDirectory: string): Error {
   return new Error(
-    `数据库目录不可写：${targetDirectory}。请将软件安装到当前用户可写目录，例如 %LOCALAPPDATA%\\dude-app。`
+    `数据库目录不可写：${targetDirectory}。请检查当前用户数据目录权限，例如 %APPDATA%\\dude-app。`
   )
 }
 
@@ -69,16 +69,9 @@ function resolveInstallDirectory(options: RuntimeDatabasePathOptions): string | 
 }
 
 export function getRuntimeDatabaseDirectory(options: RuntimeDatabasePathOptions): string {
-  if (options.isDevelopment) {
-    return options.userDataPath
-  }
-
-  const installDirectory = resolveInstallDirectory(options)
-  if (!installDirectory) {
-    return path.join(options.userDataPath, RUNTIME_DATABASE_DIRECTORY_NAME)
-  }
-
-  return path.join(installDirectory, RUNTIME_DATABASE_DIRECTORY_NAME)
+  return options.isDevelopment
+    ? options.userDataPath
+    : path.join(options.userDataPath, RUNTIME_DATABASE_DIRECTORY_NAME)
 }
 
 export function getLegacyDatabasePath(
@@ -93,21 +86,65 @@ export function getLegacyDatabasePath(
   return path.join(userDataPath, fileName)
 }
 
+function getLegacyInstallDatabasePath(
+  fileName: string,
+  options: RuntimeDatabasePathOptions
+): string | null {
+  if (options.isDevelopment) {
+    return null
+  }
+
+  const installDirectory = resolveInstallDirectory(options)
+  if (!installDirectory) {
+    return null
+  }
+
+  return path.join(installDirectory, RUNTIME_DATABASE_DIRECTORY_NAME, fileName)
+}
+
+function getLegacyDatabaseCandidates(
+  fileName: string,
+  options: RuntimeDatabasePathOptions,
+  targetPath: string
+): string[] {
+  return [
+    getLegacyDatabasePath(fileName, options.userDataPath, options.isDevelopment),
+    getLegacyInstallDatabasePath(fileName, options)
+  ].filter(
+    (candidate): candidate is string =>
+      Boolean(candidate && path.resolve(candidate) !== path.resolve(targetPath))
+  )
+}
+
 export function ensureRuntimeDatabasePath(
   fileName: string,
   options: RuntimeDatabasePathOptions
 ): RuntimeDatabasePathState {
   const targetDirectory = getRuntimeDatabaseDirectory(options)
   const targetPath = path.join(targetDirectory, fileName)
-  const legacyPath = getLegacyDatabasePath(fileName, options.userDataPath, options.isDevelopment)
 
   ensureWritableDirectory(targetDirectory)
 
-  if (options.isDevelopment || fs.existsSync(targetPath) || !legacyPath || !fs.existsSync(legacyPath)) {
+  if (options.isDevelopment || fs.existsSync(targetPath)) {
     return {
       targetPath,
       targetDirectory,
-      legacyPath,
+      legacyPath: null,
+      migrated: false,
+      migratedFiles: []
+    }
+  }
+
+  const legacyPath =
+    getLegacyDatabaseCandidates(fileName, options, targetPath).find((candidate) =>
+      fs.existsSync(candidate)
+    ) ?? null
+
+  if (!legacyPath) {
+    return {
+      targetPath,
+      targetDirectory,
+      legacyPath: null,
       migrated: false,
       migratedFiles: []
     }

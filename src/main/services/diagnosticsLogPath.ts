@@ -25,27 +25,6 @@ function getDiagnosticsLogPathConfigFile(baseDir: string): string {
   return path.join(baseDir, 'config', 'diagnostics-log-path.json')
 }
 
-function shouldUseInstallDirectoryAsDefault(): boolean {
-  return Boolean(process.versions.electron) && process.defaultApp !== true
-}
-
-function resolveInstallDirectory(options: DiagnosticsLogPathOptions = {}): string | null {
-  if (options.installDirectory) {
-    const normalizedInstallDirectory = options.installDirectory.trim()
-    if (normalizedInstallDirectory === '') {
-      return null
-    }
-    return path.resolve(normalizedInstallDirectory)
-  }
-
-  const executablePath = options.executablePath ?? process.execPath
-  if (!executablePath || executablePath.trim() === '') {
-    return null
-  }
-
-  return path.dirname(path.resolve(executablePath))
-}
-
 function normalizeDiagnosticsLogDirectory(directoryPath: string): string {
   const trimmed = directoryPath.trim()
   if (trimmed === '') {
@@ -116,18 +95,8 @@ function getRetentionCutoff(now: Date): Date {
 
 export function getDefaultDiagnosticsLogDirectory(
   baseDir: string,
-  options: DiagnosticsLogPathOptions = {}
+  _options: DiagnosticsLogPathOptions = {}
 ): string {
-  const useInstallDirectory =
-    options.useInstallDirectoryAsDefault ?? shouldUseInstallDirectoryAsDefault()
-
-  if (useInstallDirectory) {
-    const installDirectory = resolveInstallDirectory(options)
-    if (installDirectory) {
-      return path.join(installDirectory, 'logs')
-    }
-  }
-
   return path.join(baseDir, 'logs')
 }
 

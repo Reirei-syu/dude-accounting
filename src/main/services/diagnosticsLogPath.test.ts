@@ -35,7 +35,7 @@ describe('diagnosticsLogPath service', () => {
     )
   })
 
-  it('uses install-directory logs by default in packaged environments', () => {
+  it('still uses userData logs by default in packaged environments', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-diagnostics-path-'))
 
     expect(
@@ -43,10 +43,10 @@ describe('diagnosticsLogPath service', () => {
         useInstallDirectoryAsDefault: true,
         executablePath: 'D:/Program Files/Dude Accounting/Dude Accounting.exe'
       })
-    ).toBe(path.join('D:/Program Files/Dude Accounting', 'logs'))
+    ).toBe(path.join(tempDir, 'logs'))
   })
 
-  it('treats installDirectory as a directory when resolving packaged log paths', () => {
+  it('ignores installDirectory when resolving packaged default log paths', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-diagnostics-path-'))
 
     expect(
@@ -54,7 +54,7 @@ describe('diagnosticsLogPath service', () => {
         useInstallDirectoryAsDefault: true,
         installDirectory: 'D:/Program Files/Dude Accounting'
       })
-    ).toBe(path.join('D:/Program Files/Dude Accounting', 'logs'))
+    ).toBe(path.join(tempDir, 'logs'))
   })
 
   it('persists a custom diagnostics log directory', () => {
