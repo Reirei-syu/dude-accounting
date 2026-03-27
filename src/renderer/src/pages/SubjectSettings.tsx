@@ -287,6 +287,7 @@ export default function SubjectSettings(): JSX.Element {
 
   const currentParent = form.parentCode ? (subjectByCode.get(form.parentCode) ?? null) : null
   const customAuxiliaryAvailable = customAuxiliaryItems.length > 0
+  const isCashFlowForcedByParent = dialogMode !== null && currentParent?.is_cash_flow === 1
 
   function toggleExpanded(code: string): void {
     setExpandedCodes((current) => {
@@ -370,13 +371,16 @@ export default function SubjectSettings(): JSX.Element {
       return
     }
 
+    const defaultParentCode = selectedSubject?.code ?? rows[0].code
+    const defaultParent = subjectByCode.get(defaultParentCode) ?? null
+
     setForm({
-      parentCode: selectedSubject?.code ?? rows[0].code,
+      parentCode: defaultParentCode,
       code: '',
       name: '',
       auxiliaryCategories: [],
       customAuxiliaryItemIds: [],
-      isCashFlow: false
+      isCashFlow: defaultParent?.is_cash_flow === 1
     })
     setDialogMode('create')
     setMessage(null)
@@ -388,13 +392,17 @@ export default function SubjectSettings(): JSX.Element {
       return
     }
 
+    const parentSubject = selectedSubject.parent_code
+      ? (subjectByCode.get(selectedSubject.parent_code) ?? null)
+      : null
+
     setForm({
       parentCode: selectedSubject.parent_code ?? '',
       code: selectedSubject.code,
       name: selectedSubject.name,
       auxiliaryCategories: [...selectedSubject.auxiliary_categories],
       customAuxiliaryItemIds: selectedSubject.auxiliary_custom_items.map((item) => item.id),
-      isCashFlow: selectedSubject.is_cash_flow === 1
+      isCashFlow: selectedSubject.is_cash_flow === 1 || parentSubject?.is_cash_flow === 1
     })
     setDialogMode('edit')
     setMessage(null)
@@ -459,7 +467,7 @@ export default function SubjectSettings(): JSX.Element {
           name: form.name.trim(),
           auxiliaryCategories: form.auxiliaryCategories,
           customAuxiliaryItemIds: form.customAuxiliaryItemIds,
-          isCashFlow: form.isCashFlow
+          isCashFlow: isCashFlowForcedByParent ? true : form.isCashFlow
         })
 
         if (!result.success) {
@@ -479,7 +487,7 @@ export default function SubjectSettings(): JSX.Element {
           name: selectedSubject.is_system === 1 ? undefined : form.name.trim(),
           auxiliaryCategories: form.auxiliaryCategories,
           customAuxiliaryItemIds: form.customAuxiliaryItemIds,
-          isCashFlow: form.isCashFlow
+          isCashFlow: isCashFlowForcedByParent ? true : form.isCashFlow
         })
 
         if (!result.success) {
@@ -542,7 +550,7 @@ export default function SubjectSettings(): JSX.Element {
       <div className="flex-1 overflow-hidden">
         <div className="glass-panel overflow-hidden flex flex-col h-full">
           <div
-            className="grid grid-cols-[140px_minmax(0,1fr)_110px_90px_88px] gap-3 px-4 py-3 text-sm font-semibold border-b"
+            className="grid grid-cols-[140px_minmax(0,1fr)_110px_90px_84px_88px] gap-3 px-4 py-3 text-sm font-semibold border-b"
             style={{
               borderColor: 'var(--color-glass-border-light)',
               color: 'var(--color-text-primary)'
@@ -552,6 +560,7 @@ export default function SubjectSettings(): JSX.Element {
             <div>科目名称</div>
             <div>类别</div>
             <div>方向</div>
+            <div className="text-center">现金流量</div>
             <div className="text-right">属性</div>
           </div>
 
@@ -572,7 +581,7 @@ export default function SubjectSettings(): JSX.Element {
                 return (
                   <div
                     key={row.id}
-                    className={`grid grid-cols-[140px_minmax(0,1fr)_110px_90px_88px] gap-3 px-2 py-2 rounded-lg text-sm items-center transition-colors ${
+                    className={`grid grid-cols-[140px_minmax(0,1fr)_110px_90px_84px_88px] gap-3 px-2 py-2 rounded-lg text-sm items-center transition-colors ${
                       isSelected ? 'bg-slate-900/8' : ''
                     }`}
                     style={{
@@ -619,6 +628,7 @@ export default function SubjectSettings(): JSX.Element {
                     <div>
                       {isCategory ? '' : getBalanceDirectionLabel(row.row.balance_direction)}
                     </div>
+                    <div className="text-center">{isCategory ? '' : row.row.is_cash_flow === 1 ? '是' : ''}</div>
                     <div className="text-right">
                       {isCategory ? '' : row.row.is_system === 1 ? '系统' : '自定义'}
                     </div>
@@ -793,9 +803,15 @@ export default function SubjectSettings(): JSX.Element {
                     <select
                       className="glass-input"
                       value={form.parentCode}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, parentCode: event.target.value }))
-                      }
+                      onChange={(event) => {
+                        const nextParentCode = event.target.value
+                        const nextParent = subjectByCode.get(nextParentCode) ?? null
+                        setForm((current) => ({
+                          ...current,
+                          parentCode: nextParentCode,
+                          isCashFlow: nextParent?.is_cash_flow === 1 ? true : current.isCashFlow
+                        }))
+                      }}
                     >
                       <option value="">请选择上级科目</option>
                       {groupedParentSubjects.map((group) => (
@@ -910,6 +926,7 @@ export default function SubjectSettings(): JSX.Element {
                     <input
                       type="checkbox"
                       checked={form.isCashFlow}
+                      disabled={isCashFlowForcedByParent}
                       onChange={(event) =>
                         setForm((current) => ({ ...current, isCashFlow: event.target.checked }))
                       }
@@ -917,6 +934,12 @@ export default function SubjectSettings(): JSX.Element {
                     现金流量科目
                   </label>
                 </div>
+
+                {isCashFlowForcedByParent && (
+                  <div className="text-xs mt-3" style={{ color: 'var(--color-text-muted)' }}>
+                    上级科目已标记为现金流量科目，当前科目必须同步标记为现金流量科目。
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
                   {AUXILIARY_CATEGORY_OPTIONS.map((item) => {

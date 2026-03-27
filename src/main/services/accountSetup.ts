@@ -232,6 +232,24 @@ function inheritPLCarryForwardRule(
   ).run(ledgerId, subjectCode, inheritedTargetCode)
 }
 
+function shouldForceCashFlowFromParent(
+  parent?: Pick<SubjectRecord, 'is_cash_flow'> | null
+): boolean {
+  return parent?.is_cash_flow === 1
+}
+
+function markDescendantSubjectsAsCashFlow(
+  db: Database.Database,
+  ledgerId: number,
+  subjectCode: string
+): void {
+  db.prepare(
+    `UPDATE subjects
+     SET is_cash_flow = 1
+     WHERE ledger_id = ? AND code LIKE ? AND code <> ?`
+  ).run(ledgerId, `${subjectCode}%`, subjectCode)
+}
+
 export function listSubjects(
   db: Database.Database,
   ledgerId: number
@@ -330,6 +348,7 @@ export function createSubject(
   const customAuxiliaryItemIds = auxiliaryCategories.includes('custom')
     ? normalizeCustomAuxiliaryItemIds(db, data.ledgerId, data.customAuxiliaryItemIds ?? [])
     : []
+  const nextIsCashFlow = shouldForceCashFlowFromParent(parent) ? true : data.isCashFlow
 
   if (auxiliaryCategories.includes('custom') && customAuxiliaryItemIds.length === 0) {
     throw new Error('自定义辅助项至少选择一个明细')
@@ -354,7 +373,7 @@ export function createSubject(
         parent.category,
         parent.balance_direction,
         auxiliaryCategories.length > 0 ? 1 : 0,
-        data.isCashFlow ? 1 : 0,
+        nextIsCashFlow ? 1 : 0,
         parent.level + 1
       )
 
@@ -380,6 +399,12 @@ export function updateSubject(
 ): void {
   const subject = requireSubjectById(db, data.subjectId)
   const nextName = data.name !== undefined ? normalizeText(data.name, '科目名称') : subject.name
+  const parent = subject.parent_code
+    ? ((db.prepare(`SELECT * FROM subjects WHERE ledger_id = ? AND code = ?`).get(
+        subject.ledger_id,
+        subject.parent_code
+      ) as SubjectRecord | undefined) ?? null)
+    : null
 
   if (subject.is_system === 1 && nextName !== subject.name) {
     throw new Error('系统科目不允许修改名称')
@@ -400,6 +425,12 @@ export function updateSubject(
     throw new Error('自定义辅助项至少选择一个明细')
   }
 
+  const nextIsCashFlow = shouldForceCashFlowFromParent(parent)
+    ? true
+    : data.isCashFlow !== undefined
+      ? data.isCashFlow
+      : subject.is_cash_flow === 1
+
   const update = db.transaction(() => {
     db.prepare(
       `UPDATE subjects
@@ -408,13 +439,17 @@ export function updateSubject(
     ).run(
       nextName,
       normalizedCategories ? (normalizedCategories.length > 0 ? 1 : 0) : subject.has_auxiliary,
-      data.isCashFlow !== undefined ? (data.isCashFlow ? 1 : 0) : subject.is_cash_flow,
+      nextIsCashFlow ? 1 : 0,
       data.subjectId
     )
 
     if (normalizedCategories !== undefined) {
       replaceSubjectAuxiliaryCategories(db, data.subjectId, normalizedCategories)
       replaceSubjectAuxiliaryCustomItems(db, data.subjectId, normalizedCustomItemIds ?? [])
+    }
+
+    if (nextIsCashFlow) {
+      markDescendantSubjectsAsCashFlow(db, subject.ledger_id, subject.code)
     }
   })
 

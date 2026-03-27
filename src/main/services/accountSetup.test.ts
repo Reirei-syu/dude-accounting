@@ -366,6 +366,29 @@ class FakeDatabase {
 
     if (
       normalized ===
+      'UPDATE subjects SET is_cash_flow = 1 WHERE ledger_id = ? AND code LIKE ? AND code <> ?'
+    ) {
+      return {
+        get: () => undefined,
+        all: () => [],
+        run: (ledgerId, codePattern, subjectCode) => {
+          const prefix = String(codePattern).replace(/%$/u, '')
+          for (const row of this.subjects) {
+            if (
+              row.ledger_id === Number(ledgerId) &&
+              row.code !== String(subjectCode) &&
+              row.code.startsWith(prefix)
+            ) {
+              row.is_cash_flow = 1
+            }
+          }
+          return {}
+        }
+      }
+    }
+
+    if (
+      normalized ===
       'INSERT INTO auxiliary_items (ledger_id, category, code, name) VALUES (?, ?, ?, ?)'
     ) {
       return {
@@ -679,6 +702,70 @@ describe('account setup service', () => {
       .map((item) => item.category)
       .sort()
     expect(categories).toEqual(['customer', 'project'])
+  })
+
+  it('forces a child subject to inherit cash flow when the parent subject is cash flow', () => {
+    const parent = db.subjects.find((item) => item.id === 1)
+    if (!parent) {
+      throw new Error('missing parent subject')
+    }
+    parent.is_cash_flow = 1
+
+    const createdId = createSubject(db as never, {
+      ledgerId: 1,
+      parentCode: '1122',
+      code: '112203',
+      name: '华北应收',
+      auxiliaryCategories: [],
+      isCashFlow: false
+    })
+
+    const created = db.subjects.find((item) => item.id === createdId)
+    expect(created?.is_cash_flow).toBe(1)
+  })
+
+  it('cascades cash flow flag to descendants when a parent subject is marked as cash flow', () => {
+    db.subjects.push({
+      id: 4,
+      ledger_id: 1,
+      code: '11220101',
+      name: '华东应收-零售',
+      parent_code: '112201',
+      category: 'asset',
+      balance_direction: 1,
+      has_auxiliary: 0,
+      is_cash_flow: 0,
+      level: 3,
+      is_system: 0
+    })
+
+    updateSubject(db as never, {
+      subjectId: 1,
+      auxiliaryCategories: [],
+      isCashFlow: true
+    })
+
+    expect(db.subjects.find((item) => item.id === 1)?.is_cash_flow).toBe(1)
+    expect(db.subjects.find((item) => item.id === 3)?.is_cash_flow).toBe(1)
+    expect(db.subjects.find((item) => item.id === 4)?.is_cash_flow).toBe(1)
+  })
+
+  it('keeps a child subject as cash flow when its parent subject is already cash flow', () => {
+    const parent = db.subjects.find((item) => item.id === 1)
+    const child = db.subjects.find((item) => item.id === 3)
+    if (!parent || !child) {
+      throw new Error('missing subject row')
+    }
+    parent.is_cash_flow = 1
+    child.is_cash_flow = 1
+
+    updateSubject(db as never, {
+      subjectId: 3,
+      auxiliaryCategories: [],
+      isCashFlow: false
+    })
+
+    expect(db.subjects.find((item) => item.id === 3)?.is_cash_flow).toBe(1)
   })
 
   it('allows system subjects to configure auxiliary categories without renaming the official subject', () => {
