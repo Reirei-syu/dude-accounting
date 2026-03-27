@@ -116,6 +116,24 @@ function getLegacyDatabaseCandidates(
   )
 }
 
+function getDatabaseArtifactMtimeMs(basePath: string): number {
+  let latest = 0
+
+  for (const suffix of SQLITE_SIDECAR_SUFFIXES) {
+    const candidatePath = `${basePath}${suffix}`
+    if (!fs.existsSync(candidatePath)) {
+      continue
+    }
+
+    const stat = fs.statSync(candidatePath)
+    if (stat.mtimeMs > latest) {
+      latest = stat.mtimeMs
+    }
+  }
+
+  return latest
+}
+
 export function ensureRuntimeDatabasePath(
   fileName: string,
   options: RuntimeDatabasePathOptions
@@ -136,9 +154,10 @@ export function ensureRuntimeDatabasePath(
   }
 
   const legacyPath =
-    getLegacyDatabaseCandidates(fileName, options, targetPath).find((candidate) =>
-      fs.existsSync(candidate)
-    ) ?? null
+    getLegacyDatabaseCandidates(fileName, options, targetPath)
+      .filter((candidate) => fs.existsSync(candidate))
+      .sort((left, right) => getDatabaseArtifactMtimeMs(right) - getDatabaseArtifactMtimeMs(left))[0] ??
+    null
 
   if (!legacyPath) {
     return {

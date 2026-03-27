@@ -93,6 +93,34 @@ describe('runtimeDatabasePath service', () => {
     expect(fs.readFileSync(`${state.targetPath}-wal`, 'utf8')).toBe('install-wal')
   })
 
+  it('prefers the newer install-directory database when both legacy sources exist', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-db-'))
+    const userDataPath = path.join(tempDir, 'userData')
+    const installDirectory = path.join(tempDir, 'install')
+    const installDataDirectory = path.join(installDirectory, RUNTIME_DATABASE_DIRECTORY_NAME)
+    fs.mkdirSync(userDataPath, { recursive: true })
+    fs.mkdirSync(installDataDirectory, { recursive: true })
+
+    const legacyRootDbPath = path.join(userDataPath, PRIMARY_DATABASE_FILE_NAME)
+    fs.writeFileSync(legacyRootDbPath, 'legacy-root-db', 'utf8')
+    const olderTime = new Date('2026-03-28T00:07:30')
+    fs.utimesSync(legacyRootDbPath, olderTime, olderTime)
+
+    const installDbPath = path.join(installDataDirectory, PRIMARY_DATABASE_FILE_NAME)
+    fs.writeFileSync(installDbPath, 'install-db-newer', 'utf8')
+    const newerTime = new Date('2026-03-28T00:08:30')
+    fs.utimesSync(installDbPath, newerTime, newerTime)
+
+    const state = ensurePrimaryDatabasePath({
+      userDataPath,
+      isDevelopment: false,
+      installDirectory
+    })
+
+    expect(state.legacyPath).toBe(installDbPath)
+    expect(fs.readFileSync(state.targetPath, 'utf8')).toBe('install-db-newer')
+  })
+
   it('throws a clear error when the packaged data directory is not writable', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-runtime-db-'))
     const userDataPath = path.join(tempDir, 'userData-root-file')
