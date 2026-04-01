@@ -19,6 +19,12 @@ import {
 import { requireAuth, requireLedgerAccess } from './session'
 
 type PrintJobStatus = 'preparing' | 'ready' | 'failed'
+type PrintCommandPayload =
+  | string
+  | {
+      jobId: string
+      orientation?: 'portrait' | 'landscape'
+    }
 
 type PrintPreparePayload =
   | {
@@ -70,6 +76,19 @@ interface PrintJobRecord {
 
 const printJobs = new Map<string, PrintJobRecord>()
 const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
+
+function resolvePrintCommandPayload(payload: PrintCommandPayload): {
+  jobId: string
+  orientation?: 'portrait' | 'landscape'
+} {
+  if (typeof payload === 'string') {
+    return { jobId: payload }
+  }
+  return {
+    jobId: payload.jobId,
+    orientation: payload.orientation
+  }
+}
 
 function pruneExpiredPrintJobs(now: number = Date.now()): void {
   for (const [jobId, job] of printJobs) {
@@ -156,10 +175,6 @@ function getReportSegment(detail: ReportSnapshotDetail): PrintTableSegment {
     ledgerName: detail.ledger_name,
     periodLabel: detail.period,
     unitLabel: '元',
-    metaLines: [
-      `取数范围：${detail.content.scope.startDate} 至 ${detail.content.scope.endDate}`,
-      `口径：${detail.content.scope.includeUnpostedVouchers ? '含未记账凭证' : '仅已记账凭证'}`
-    ],
     columns: headers,
     rows
   }
@@ -589,10 +604,11 @@ export function registerPrintHandlers(): void {
     return { success: true }
   })
 
-  ipcMain.handle('print:print', async (event, jobId: string) => {
+  ipcMain.handle('print:print', async (event, payload: PrintCommandPayload) => {
+    const command = resolvePrintCommandPayload(payload)
     const job = (() => {
       try {
-        return getAccessiblePrintJob(event, jobId)
+        return getAccessiblePrintJob(event, command.jobId)
       } catch {
         return null
       }
@@ -601,7 +617,7 @@ export function registerPrintHandlers(): void {
       return { success: false, error: '打印任务不存在' }
     }
 
-    const previewWindow = getPreviewWindow(jobId)
+    const previewWindow = getPreviewWindow(command.jobId)
     if (!previewWindow) {
       return { success: false, error: '请先打开打印预览' }
     }
@@ -610,7 +626,7 @@ export function registerPrintHandlers(): void {
       previewWindow.webContents.print(
         {
           printBackground: true,
-          landscape: job.orientation === 'landscape'
+          landscape: (command.orientation ?? job.orientation) === 'landscape'
         },
         (success, failureReason) => {
           resolve(success ? { success: true } : { success: false, error: failureReason })
@@ -619,10 +635,11 @@ export function registerPrintHandlers(): void {
     })
   })
 
-  ipcMain.handle('print:exportPdf', async (event, jobId: string) => {
+  ipcMain.handle('print:exportPdf', async (event, payload: PrintCommandPayload) => {
+    const command = resolvePrintCommandPayload(payload)
     const job = (() => {
       try {
-        return getAccessiblePrintJob(event, jobId)
+        return getAccessiblePrintJob(event, command.jobId)
       } catch {
         return null
       }
@@ -631,7 +648,7 @@ export function registerPrintHandlers(): void {
       return { success: false, error: '打印任务不存在' }
     }
 
-    const previewWindow = getPreviewWindow(jobId)
+    const previewWindow = getPreviewWindow(command.jobId)
     if (!previewWindow) {
       return { success: false, error: '请先打开打印预览' }
     }
@@ -655,7 +672,7 @@ export function registerPrintHandlers(): void {
     const pdfBuffer = await previewWindow.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
-      landscape: job.orientation === 'landscape',
+      landscape: (command.orientation ?? job.orientation) === 'landscape',
       margins: {
         top: 0,
         bottom: 0,

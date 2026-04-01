@@ -636,6 +636,9 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
         <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
           支持区间查询、未记账凭证和零余额科目显示开关。右键科目行可展开账簿导航菜单。
         </p>
+        <p className="text-xs leading-5" style={{ color: 'var(--color-text-muted)' }}>
+          全屏查看用于大表预览；如需继续打印，不必先退出到原页面，现在可在全屏查看弹层内直接进入打印预览。
+        </p>
       </div>
 
       <form className="glass-panel-light flex flex-col gap-3 p-3" onSubmit={handleSubmit}>
@@ -922,17 +925,30 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
                 >
                   科目余额表
                 </Dialog.Title>
+                <Dialog.Description className="sr-only">
+                  科目余额表全屏查看弹层，可直接继续进入打印预览或关闭返回原页面。
+                </Dialog.Description>
                 <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
                   {dateFrom} 至 {dateTo}
                 </p>
               </div>
-              <button
-                type="button"
-                className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
-                onClick={() => setIsPreviewOpen(false)}
-              >
-                关闭
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                  disabled={loading || rows.length === 0}
+                  onClick={() => void handlePrintPreview()}
+                >
+                  打印预览
+                </button>
+                <button
+                  type="button"
+                  className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+                  onClick={() => setIsPreviewOpen(false)}
+                >
+                  关闭
+                </button>
+              </div>
             </div>
 
             {contextMenu && isPreviewOpen && renderInteractiveContextMenu()}

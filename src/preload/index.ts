@@ -364,8 +364,10 @@ const api = {
     prepare: (payload: Record<string, unknown>) => ipcRenderer.invoke('print:prepare', payload),
     getJobStatus: (jobId: string) => ipcRenderer.invoke('print:getJobStatus', jobId),
     openPreview: (jobId: string) => ipcRenderer.invoke('print:openPreview', jobId),
-    print: (jobId: string) => ipcRenderer.invoke('print:print', jobId),
-    exportPdf: (jobId: string) => ipcRenderer.invoke('print:exportPdf', jobId),
+    print: (payload: string | { jobId: string; orientation?: 'portrait' | 'landscape' }) =>
+      ipcRenderer.invoke('print:print', payload),
+    exportPdf: (payload: string | { jobId: string; orientation?: 'portrait' | 'landscape' }) =>
+      ipcRenderer.invoke('print:exportPdf', payload),
     dispose: (jobId: string) => ipcRenderer.invoke('print:dispose', jobId)
   },
   bookQuery: {

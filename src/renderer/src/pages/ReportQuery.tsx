@@ -8,7 +8,12 @@ import {
   type SetStateAction
 } from 'react'
 import { useLedgerStore } from '../stores/ledgerStore'
-import { buildReportFilterOptions, filterReportSnapshots } from './reportingQueryUtils'
+import {
+  areNumberArraysEqual,
+  buildReportFilterOptions,
+  filterReportSnapshots,
+  filterSnapshotSelection
+} from './reportingQueryUtils'
 import {
   ReportSnapshotViewer,
   formatGeneratedAt,
@@ -100,12 +105,16 @@ export default function ReportQuery(): JSX.Element {
 
   const selectedStartDate = toDateString(startDateParts)
   const selectedEndDate = toDateString(endDateParts)
-  const filteredRows = filterReportSnapshots(rows, {
-    reportTypes: selectedReportTypes,
-    startDate: selectedStartDate,
-    endDate: selectedEndDate
-  })
-  const filterOptions = buildReportFilterOptions(rows)
+  const filteredRows = useMemo(
+    () =>
+      filterReportSnapshots(rows, {
+        reportTypes: selectedReportTypes,
+        startDate: selectedStartDate,
+        endDate: selectedEndDate
+      }),
+    [rows, selectedEndDate, selectedReportTypes, selectedStartDate]
+  )
+  const filterOptions = useMemo(() => buildReportFilterOptions(rows), [rows])
   const yearOptions = buildYearOptions(filterOptions.minDate, filterOptions.maxDate, currentYear)
   const monthOptions = Array.from({ length: 12 }, (_, index) => pad2(index + 1))
   const startDayOptions = Array.from(
@@ -485,7 +494,10 @@ export default function ReportQuery(): JSX.Element {
 
   useEffect(() => {
     setSelectedSnapshotIds((current) =>
-      current.filter((snapshotId) => filteredRows.some((row) => row.id === snapshotId))
+      {
+        const next = filterSnapshotSelection(current, filteredRows)
+        return areNumberArraysEqual(current, next) ? current : next
+      }
     )
   }, [filteredRows])
 

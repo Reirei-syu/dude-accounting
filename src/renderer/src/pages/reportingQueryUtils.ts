@@ -22,6 +22,21 @@ export interface ReportFilterState {
   endDate: string | null
 }
 
+export function filterSnapshotSelection<T extends { id: number }>(
+  selectedIds: number[],
+  rows: T[]
+): number[] {
+  const visibleIdSet = new Set(rows.map((row) => row.id))
+  return selectedIds.filter((snapshotId) => visibleIdSet.has(snapshotId))
+}
+
+export function areNumberArraysEqual(left: number[], right: number[]): boolean {
+  if (left.length !== right.length) {
+    return false
+  }
+  return left.every((value, index) => value === right[index])
+}
+
 function getPeriodStartDate(period: string): string {
   return `${period}-01`
 }

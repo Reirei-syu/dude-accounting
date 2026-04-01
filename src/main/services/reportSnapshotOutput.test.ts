@@ -135,6 +135,10 @@ describe('reportSnapshotOutput service', () => {
     expect(monthHtml).toContain('会计期间：2026年3月31日')
     expect(sameYearHtml).toContain('会计期间：2026年1-3月')
     expect(crossYearHtml).toContain('会计期间：2025年12月-2026年3月')
+    expect(crossYearHtml).not.toContain('取数范围')
+    expect(crossYearHtml).not.toContain('口径')
+    expect(crossYearHtml).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto')
+    expect(crossYearHtml).toContain('white-space: nowrap')
   })
 
   it('sanitizes cross-year export file names', () => {

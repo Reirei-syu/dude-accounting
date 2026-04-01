@@ -406,6 +406,11 @@ export function buildPrintPreviewHtml(
       :root {
         color-scheme: light;
         --voucher-table-gap: ${VOUCHER_TABLE_GAP_PX}px;
+        --preview-scale: 1;
+        --preview-padding-y: 16mm;
+        --preview-padding-x: 14mm;
+        --preview-cell-padding-y: 6px;
+        --preview-cell-padding-x: 8px;
       }
       * { box-sizing: border-box; }
       body {
@@ -420,6 +425,7 @@ export function buildPrintPreviewHtml(
         z-index: 20;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 8px;
         padding: 12px 16px;
         border-bottom: 1px solid #cbd5e1;
@@ -439,12 +445,35 @@ export function buildPrintPreviewHtml(
         background: #ffffff;
         cursor: pointer;
       }
+      .preview-toolbar button[aria-pressed="true"] {
+        background: #e2e8f0;
+        border-color: #64748b;
+      }
+      .preview-toolbar select {
+        min-height: 36px;
+        padding: 0 10px;
+        border: 1px solid #94a3b8;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+      .preview-control {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: #475569;
+      }
+      .preview-control--orientation {
+        min-width: 140px;
+      }
       .preview-status {
         font-size: 12px;
         color: #475569;
       }
       .preview-canvas {
         padding: 18px;
+        zoom: var(--preview-scale);
+        transform-origin: top center;
       }
       .preview-canvas.orientation-portrait .print-segment {
         width: 210mm;
@@ -456,7 +485,7 @@ export function buildPrintPreviewHtml(
       }
       .print-segment {
         margin: 0 auto 16px;
-        padding: 16mm 14mm;
+        padding: var(--preview-padding-y) var(--preview-padding-x);
         background: #ffffff;
         box-shadow: 0 12px 30px rgba(15, 23, 42, 0.16);
       }
@@ -511,13 +540,24 @@ export function buildPrintPreviewHtml(
       .print-meta,
       .voucher-meta,
       .voucher-sheet-footer {
-        display: flex;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+        align-items: center;
         gap: 12px;
-        font-size: 12px;
+        font-size: 11px;
       }
       .print-meta {
         margin-bottom: 10px;
+      }
+      .print-meta span,
+      .voucher-meta span,
+      .voucher-sheet-footer span {
+        white-space: nowrap;
+      }
+      .print-meta span:first-child,
+      .print-meta span:nth-child(2) {
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .print-meta-book .print-meta-left {
         text-align: left;
@@ -551,7 +591,7 @@ export function buildPrintPreviewHtml(
       .voucher-table th,
       .voucher-table td {
         border: 1px solid #111827;
-        padding: 6px 8px;
+        padding: var(--preview-cell-padding-y) var(--preview-cell-padding-x);
         vertical-align: middle;
       }
       .print-fit-cell {
@@ -647,6 +687,31 @@ export function buildPrintPreviewHtml(
     <div class="preview-toolbar">
       <h1>${escapeHtml(title)}</h1>
       <span id="preview-status" class="preview-status"></span>
+      <label class="preview-control preview-control--orientation" for="preview-orientation-select">
+        纸张方向
+        <select id="preview-orientation-select" onchange="applyOrientation(this.value)">
+          <option value="portrait"${orientation === 'portrait' ? ' selected' : ''}>竖向</option>
+          <option value="landscape"${orientation === 'landscape' ? ' selected' : ''}>横向</option>
+        </select>
+      </label>
+      <label class="preview-control" for="preview-scale-select">
+        缩放
+        <select id="preview-scale-select" onchange="applyScale(this.value)">
+          <option value="100">100%</option>
+          <option value="95">95%</option>
+          <option value="90">90%</option>
+          <option value="85">85%</option>
+          <option value="80">80%</option>
+        </select>
+      </label>
+      <button
+        type="button"
+        id="preview-compact-toggle"
+        aria-pressed="false"
+        onclick="toggleCompactMode()"
+      >
+        紧凑模式：关
+      </button>
       <button type="button" onclick="triggerPrint('${jobId}')">打印</button>
       <button type="button" onclick="triggerExportPdf('${jobId}')">导出 PDF</button>
       <button type="button" onclick="window.close()">关闭</button>
@@ -654,7 +719,10 @@ export function buildPrintPreviewHtml(
     <main class="preview-canvas orientation-${orientation}">${contentHtml}</main>
     <script>
       const statusNode = document.getElementById('preview-status');
-      const overflowWarningText = '提示：当前打印内容已超出纸张范围，请减小两联间距或调整内容后重试。';
+      const compactToggleButton = document.getElementById('preview-compact-toggle');
+      const orientationSelect = document.getElementById('preview-orientation-select');
+      const rootStyle = document.documentElement.style;
+      const overflowWarningText = '提示：当前打印内容已超出纸张范围，请调整缩放、紧凑模式或内容后重试。';
       function isBlankAmountText(value) {
         return value.replace(/[\\s\\u00A0]/g, '') === '';
       }
@@ -663,6 +731,19 @@ export function buildPrintPreviewHtml(
         return canvas instanceof HTMLElement && canvas.classList.contains('orientation-landscape')
           ? 'landscape'
           : 'portrait';
+      }
+      function applyOrientation(value) {
+        const canvas = document.querySelector('.preview-canvas');
+        if (!(canvas instanceof HTMLElement)) {
+          return;
+        }
+        const nextOrientation = value === 'landscape' ? 'landscape' : 'portrait';
+        canvas.classList.toggle('orientation-landscape', nextOrientation === 'landscape');
+        canvas.classList.toggle('orientation-portrait', nextOrientation === 'portrait');
+        if (orientationSelect instanceof HTMLSelectElement && orientationSelect.value !== nextOrientation) {
+          orientationSelect.value = nextOrientation;
+        }
+        void refreshLayoutStatus();
       }
       function hasPrintOverflow() {
         const orientation = getPreviewOrientation();
@@ -725,6 +806,38 @@ export function buildPrintPreviewHtml(
         }
         return true;
       }
+      async function refreshLayoutStatus() {
+        await settleVoucherAmountLayout();
+        if (!statusNode) {
+          return;
+        }
+        statusNode.textContent = hasPrintOverflow() ? overflowWarningText : '';
+      }
+      function applyScale(value) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric) || numeric <= 0) {
+          return;
+        }
+        rootStyle.setProperty('--preview-scale', String(numeric / 100));
+        void refreshLayoutStatus();
+      }
+      function setCompactMode(enabled) {
+        rootStyle.setProperty('--preview-padding-y', enabled ? '10mm' : '16mm');
+        rootStyle.setProperty('--preview-padding-x', enabled ? '8mm' : '14mm');
+        rootStyle.setProperty('--preview-cell-padding-y', enabled ? '4px' : '6px');
+        rootStyle.setProperty('--preview-cell-padding-x', enabled ? '6px' : '8px');
+        if (compactToggleButton instanceof HTMLButtonElement) {
+          compactToggleButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+          compactToggleButton.textContent = enabled ? '紧凑模式：开' : '紧凑模式：关';
+        }
+        void refreshLayoutStatus();
+      }
+      function toggleCompactMode() {
+        const enabled = compactToggleButton instanceof HTMLButtonElement
+          ? compactToggleButton.getAttribute('aria-pressed') === 'true'
+          : false;
+        setCompactMode(!enabled);
+      }
       async function run(action, successText, failureText) {
         if (!statusNode) return;
         statusNode.textContent = '处理中...';
@@ -745,7 +858,7 @@ export function buildPrintPreviewHtml(
           if (!printable) {
             return { success: false, error: overflowWarningText };
           }
-          return window.api.print.print(targetJobId);
+          return window.api.print.print({ jobId: targetJobId, orientation: getPreviewOrientation() });
         }, '已提交系统打印。', '打印失败。');
       window.triggerExportPdf = (targetJobId) =>
         run(async () => {
@@ -753,33 +866,23 @@ export function buildPrintPreviewHtml(
           if (!printable) {
             return { success: false, error: overflowWarningText };
           }
-          return window.api.print.exportPdf(targetJobId);
+          return window.api.print.exportPdf({ jobId: targetJobId, orientation: getPreviewOrientation() });
         }, '打印版 PDF 已导出。', '导出 PDF 失败。');
       window.addEventListener('load', () => {
         fitVoucherAmountCells();
         fitVoucherTextCells();
         fitBookCells();
+        applyOrientation('${orientation}');
+        applyScale('100');
         requestAnimationFrame(() => {
-          fitVoucherAmountCells();
-          fitVoucherTextCells();
-          fitBookCells();
-          if (hasPrintOverflow() && statusNode) {
-            statusNode.textContent = overflowWarningText;
-          }
+          void refreshLayoutStatus();
         });
       });
       window.addEventListener('resize', () => {
-        fitVoucherAmountCells();
-        fitVoucherTextCells();
-        fitBookCells();
-        if (hasPrintOverflow() && statusNode) {
-          statusNode.textContent = overflowWarningText;
-        }
+        void refreshLayoutStatus();
       });
       window.addEventListener('beforeprint', () => {
-        fitVoucherAmountCells();
-        fitVoucherTextCells();
-        fitBookCells();
+        void refreshLayoutStatus();
       });
     </script>
   </body>

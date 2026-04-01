@@ -12,6 +12,7 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "vitest run",
+    "qa:electron-breakpoint": "py -3 scripts/electron_breakpoint_audit.py",
     "start": "node scripts/run-with-utf8.mjs electron-vite preview",
     "dev": "node scripts/run-with-utf8.mjs electron-vite dev",
     "build": "npm run typecheck && electron-vite build",

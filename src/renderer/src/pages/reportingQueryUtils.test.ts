@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  areNumberArraysEqual,
   buildReportFilterOptions,
+  filterSnapshotSelection,
   filterReportSnapshots,
   type ReportSnapshotSummaryLike
 } from './reportingQueryUtils'
@@ -74,5 +76,15 @@ describe('reportingQueryUtils', () => {
       'equity_statement',
       'income_statement'
     ])
+  })
+
+  it('filters selected snapshot ids against current visible rows', () => {
+    expect(filterSnapshotSelection([1, 2, 5], rows)).toEqual([1, 2])
+  })
+
+  it('compares number arrays by value and order', () => {
+    expect(areNumberArraysEqual([1, 2], [1, 2])).toBe(true)
+    expect(areNumberArraysEqual([1, 2], [2, 1])).toBe(false)
+    expect(areNumberArraysEqual([1, 2], [1, 2, 3])).toBe(false)
   })
 })

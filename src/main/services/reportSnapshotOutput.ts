@@ -271,13 +271,26 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
       }
       .meta {
         margin-bottom: 12px;
-        display: flex;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
         align-items: center;
         gap: 12px;
+        font-size: 11px;
       }
       .meta-label {
         color: #374151;
+        white-space: nowrap;
+      }
+      .meta-label:first-child,
+      .meta-label:nth-child(2) {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .meta-label:nth-child(2) {
+        text-align: center;
+      }
+      .meta-label:nth-child(3) {
+        text-align: right;
       }
       .report-section {
         margin-top: 12px;

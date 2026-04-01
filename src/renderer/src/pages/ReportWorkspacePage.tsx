@@ -88,7 +88,11 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
 
       setDetail(result.snapshot)
       setIsDetailOpen(true)
-      setSuccessMessage(`已生成并保存 ${result.snapshot.report_name}`)
+      setSuccessMessage(
+        includeUnposted
+          ? `已生成并保存 ${result.snapshot.report_name}`
+          : `已生成并保存 ${result.snapshot.report_name}。默认口径仅统计已记账凭证；如需立即查看刚保存但未记账的凭证影响，请勾选“未记账凭证”。`
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : '生成报表失败')
     } finally {
@@ -208,6 +212,9 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
             />
             <span>未记账凭证</span>
           </label>
+          <p className="text-xs leading-5" style={{ color: 'var(--color-text-muted)' }}>
+            默认仅统计已记账凭证。刚保存但未记账的凭证如果需要立即体现在报表里，请勾选“未记账凭证”，或先去“凭证管理”完成记账。
+          </p>
 
           <button
             type="button"
