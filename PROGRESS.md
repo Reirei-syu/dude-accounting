@@ -72,3 +72,22 @@
 - 高风险流程一旦改变主语义，必须先修正文档和任务面，否则实现过程会持续与最高优先级规则冲突。
 - 对账套级备份包的附件校验不能盲信源库 `sha256` 字段，打包时必须以实际复制后的附件实体重新计算摘要。
 - 账套级备份的业务价值不应依附于“已结账”前提；会计科目、辅助项与期初余额这类基础资料同样需要在未结账阶段可被备份。
+## 2026-04-02 Review Fix
+- 当前阶段：Execution
+- 当前任务：修复账套备份导入遗漏 `periods.closed_at` 与 `operation_logs.reason/approval_tag` 的回归问题。
+- 本次修改：
+  - `src/main/services/backupRecovery.ts` 导入 periods 时补回 `closed_at`。
+  - `src/main/services/backupRecovery.ts` 导入 operation logs 时补回 `reason`、`approval_tag`。
+  - `src/main/services/ledgerBackupImport.test.ts` 补充期间关闭时间与审批留痕保留断言。
+- 影响范围：账套备份包导入后的期间状态展示、操作日志查询与导出留痕。
+- 任务进度百分比：100%
+- 方案路径：`docs/plans/2026-04-02_ledger_backup_refactor_plan.md`
+- 验证结果：
+  - `npx vitest run src/main/services/ledgerBackupImport.test.ts`：通过
+  - `npx vitest run src/main/services/backupRecovery.test.ts`：通过
+  - `npm run typecheck`：通过
+  - `npm test`：通过（69 个文件，334 个测试）
+- 风险备注：本次仅补回已在生产 schema 与既有查询链路中使用的字段，未扩展导入范围，也未触碰 UI / IPC 契约。
+- Lessons Learned：
+  - 账套级导入不能只验证“记录数量还在”，还要验证合规字段与状态字段的保真。
+  - 导入测试 fixture 若简化过头，会把真实 schema 上的静默丢字段问题掩盖掉；后续此类测试应优先贴近生产表结构。

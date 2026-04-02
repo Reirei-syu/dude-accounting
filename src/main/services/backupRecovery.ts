@@ -590,14 +590,14 @@ export function importLedgerBackupArtifact(input: {
     }
 
     const insertPeriod = targetDb.prepare(
-      `INSERT INTO periods (ledger_id, period, is_closed)
-       VALUES (?, ?, ?)`
+      `INSERT INTO periods (ledger_id, period, is_closed, closed_at)
+       VALUES (?, ?, ?, ?)`
     )
     const sourcePeriods = packageDb
-      .prepare('SELECT period, is_closed FROM periods ORDER BY id ASC')
-      .all() as Array<{ period: string; is_closed: number }>
+      .prepare('SELECT period, is_closed, closed_at FROM periods ORDER BY id ASC')
+      .all() as Array<{ period: string; is_closed: number; closed_at: string | null }>
     for (const row of sourcePeriods) {
-      insertPeriod.run(importedLedgerId, row.period, row.is_closed)
+      insertPeriod.run(importedLedgerId, row.period, row.is_closed, row.closed_at)
     }
 
     const sourceSubjects = packageDb
@@ -1073,7 +1073,7 @@ export function importLedgerBackupArtifact(input: {
 
     const sourceLogs = packageDb
       .prepare(
-        `SELECT user_id, username, module, action, target_type, target_id, details_json, created_at
+        `SELECT user_id, username, module, action, target_type, target_id, reason, approval_tag, details_json, created_at
            FROM operation_logs
           ORDER BY id ASC`
       )
@@ -1084,13 +1084,15 @@ export function importLedgerBackupArtifact(input: {
       action: string
       target_type: string | null
       target_id: string | null
+      reason: string | null
+      approval_tag: string | null
       details_json: string
       created_at: string
     }>
     const insertLog = targetDb.prepare(
       `INSERT INTO operation_logs (
-         ledger_id, user_id, username, module, action, target_type, target_id, details_json, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         ledger_id, user_id, username, module, action, target_type, target_id, reason, approval_tag, details_json, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     for (const row of sourceLogs) {
       insertLog.run(
@@ -1101,6 +1103,8 @@ export function importLedgerBackupArtifact(input: {
         row.action,
         row.target_type,
         row.target_id,
+        row.reason,
+        row.approval_tag,
         row.details_json,
         row.created_at
       )

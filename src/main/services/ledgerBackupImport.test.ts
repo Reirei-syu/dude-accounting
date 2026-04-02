@@ -35,7 +35,8 @@ function createLedgerSchema(db: DatabaseSync): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ledger_id INTEGER NOT NULL,
       period TEXT NOT NULL,
-      is_closed INTEGER NOT NULL DEFAULT 0
+      is_closed INTEGER NOT NULL DEFAULT 0,
+      closed_at TEXT DEFAULT NULL
     );
     CREATE TABLE subjects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -193,6 +194,8 @@ function createLedgerSchema(db: DatabaseSync): void {
       action TEXT NOT NULL,
       target_type TEXT DEFAULT NULL,
       target_id TEXT DEFAULT NULL,
+      reason TEXT DEFAULT NULL,
+      approval_tag TEXT DEFAULT NULL,
       details_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT ''
     );
@@ -248,7 +251,7 @@ describe('ledger backup import', () => {
         (2, 'maker', '制单员', '', '{}', 0, '2026-04-02 09:00:00');
       INSERT INTO ledgers (id, name, standard_type, start_period, current_period, created_at)
       VALUES (8, '华北客户', 'enterprise', '2026-01', '2026-03', '2026-04-02 09:00:00');
-      INSERT INTO periods (ledger_id, period, is_closed) VALUES (8, '2026-03', 1);
+      INSERT INTO periods (ledger_id, period, is_closed, closed_at) VALUES (8, '2026-03', 1, '2026-03-31 23:59:59');
       INSERT INTO subjects (id, ledger_id, code, name, category, balance_direction) VALUES
         (81, 8, '1001', '库存现金', 'asset', 'debit');
       INSERT INTO cash_flow_items (id, ledger_id, code, name, category, direction, is_system) VALUES
@@ -267,8 +270,8 @@ describe('ledger backup import', () => {
       ) VALUES (811, 8, 810, 'digital_invoice', 'INV-1', '2026-03-01', 'fp-1', 'verified');
       INSERT INTO electronic_voucher_verifications (record_id, verification_status) VALUES (811, 'verified');
       INSERT INTO voucher_source_links (voucher_id, source_type, source_record_id) VALUES (801, 'electronic_voucher', 811);
-      INSERT INTO operation_logs (ledger_id, user_id, username, module, action, target_type, target_id, details_json, created_at)
-      VALUES (8, 2, 'maker', 'voucher', 'create', 'voucher', '801', '{}', '2026-03-01 09:30:00');
+      INSERT INTO operation_logs (ledger_id, user_id, username, module, action, target_type, target_id, reason, approval_tag, details_json, created_at)
+      VALUES (8, 2, 'maker', 'voucher', 'create', 'voucher', '801', '紧急逆转补录', 'APR-2026-03', '{}', '2026-03-01 09:30:00');
     `)
     sourceDb.close()
 
@@ -321,6 +324,19 @@ describe('ledger backup import', () => {
     ).toEqual({ count: 1 })
     expect(
       importedDb
+        .prepare('SELECT period, is_closed, closed_at FROM periods WHERE ledger_id = ?')
+        .get(result.importedLedgerId) as {
+        period: string
+        is_closed: number
+        closed_at: string | null
+      }
+    ).toEqual({
+      period: '2026-03',
+      is_closed: 1,
+      closed_at: '2026-03-31 23:59:59'
+    })
+    expect(
+      importedDb
         .prepare('SELECT COUNT(1) AS count FROM users WHERE username = ?')
         .get('admin') as { count: number }
     ).toEqual({ count: 1 })
@@ -339,6 +355,19 @@ describe('ledger backup import', () => {
       .get(result.importedLedgerId) as { stored_path: string; imported_by: number; ledger_id: number }
     expect(fileRow.imported_by).not.toBeNull()
     expect(fileRow.stored_path).toContain(`ledger-${result.importedLedgerId}`)
+    expect(
+      importedDb
+        .prepare(
+          'SELECT reason, approval_tag FROM operation_logs WHERE ledger_id = ? AND module = ? AND action = ?'
+        )
+        .get(result.importedLedgerId, 'voucher', 'create') as {
+        reason: string | null
+        approval_tag: string | null
+      }
+    ).toEqual({
+      reason: '紧急逆转补录',
+      approval_tag: 'APR-2026-03'
+    })
     importedDb.close()
 
     expect(fs.existsSync(fileRow.stored_path)).toBe(true)
