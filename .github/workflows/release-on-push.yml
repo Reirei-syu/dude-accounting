@@ -102,11 +102,21 @@ jobs:
         shell: pwsh
         run: |
           $outputDir = Join-Path $PWD 'release-dist'
+          $configPath = Join-Path $PWD 'electron-builder.ci.yml'
           if (Test-Path $outputDir) {
             Remove-Item -LiteralPath $outputDir -Recurse -Force
           }
+          if (Test-Path $configPath) {
+            Remove-Item -LiteralPath $configPath -Force
+          }
 
-          npx electron-builder --win nsis --publish never --config.directories.output=$outputDir
+          $ciConfig = @"
+directories:
+  output: release-dist
+"@
+          Set-Content -LiteralPath $configPath -Value $ciConfig -Encoding UTF8
+
+          npx electron-builder --win nsis --publish never --config electron-builder.yml --config $configPath
           if ($LASTEXITCODE -ne 0) {
             throw "electron-builder failed with exit code $LASTEXITCODE"
           }
