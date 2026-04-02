@@ -5,6 +5,8 @@ on:
     branches:
       - master
       - main
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -35,11 +37,19 @@ jobs:
         run: |
           $package = Get-Content package.json | ConvertFrom-Json
           $currentVersion = [string]$package.version
+          $ref = "${{ github.ref }}"
+          $isTagPush = $ref.StartsWith('refs/tags/v')
+          $tagVersion = if ($isTagPush) { $ref.Replace('refs/tags/v', '') } else { '' }
           $beforeSha = "${{ github.event.before }}"
           $previousVersion = ''
           $changed = $false
 
-          if ($beforeSha -and $beforeSha -ne '0000000000000000000000000000000000000000') {
+          if ($isTagPush) {
+            if ($tagVersion -ne $currentVersion) {
+              throw "Tag version $tagVersion does not match package.json version $currentVersion"
+            }
+            $changed = $true
+          } elseif ($beforeSha -and $beforeSha -ne '0000000000000000000000000000000000000000') {
             $previousPackage = git show "${beforeSha}:package.json" 2>$null
             if ($LASTEXITCODE -eq 0 -and $previousPackage) {
               $previousVersion = [string](($previousPackage | ConvertFrom-Json).version)
@@ -52,10 +62,13 @@ jobs:
 
           "current=$currentVersion" >> $env:GITHUB_OUTPUT
           "previous=$previousVersion" >> $env:GITHUB_OUTPUT
+          "is_tag=$($isTagPush.ToString().ToLower())" >> $env:GITHUB_OUTPUT
           "changed=$($changed.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
           if (-not $changed) {
             Write-Host "No package version bump detected. Current version: $currentVersion"
+          } elseif ($isTagPush) {
+            Write-Host "Tag push detected for version $currentVersion"
           } else {
             Write-Host "Detected version bump: $previousVersion -> $currentVersion"
           }
