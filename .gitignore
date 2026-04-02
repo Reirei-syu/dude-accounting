@@ -4,3 +4,8 @@ out
 .DS_Store
 .eslintcache
 *.log*
+
+# Local-only planning / audit docs
+PROGRESS.md
+docs/
+prds/

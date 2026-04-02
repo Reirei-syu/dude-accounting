@@ -1,0 +1,134 @@
+name: release-on-push
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-on-push-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Detect version bump
+        id: version
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $currentVersion = [string]$package.version
+          $beforeSha = "${{ github.event.before }}"
+          $previousVersion = ''
+          $changed = $false
+
+          if ($beforeSha -and $beforeSha -ne '0000000000000000000000000000000000000000') {
+            $previousPackage = git show "${beforeSha}:package.json" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $previousPackage) {
+              $previousVersion = [string](($previousPackage | ConvertFrom-Json).version)
+            }
+          }
+
+          if ($previousVersion -and $previousVersion -ne $currentVersion) {
+            $changed = $true
+          }
+
+          "current=$currentVersion" >> $env:GITHUB_OUTPUT
+          "previous=$previousVersion" >> $env:GITHUB_OUTPUT
+          "changed=$($changed.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+          if (-not $changed) {
+            Write-Host "No package version bump detected. Current version: $currentVersion"
+          } else {
+            Write-Host "Detected version bump: $previousVersion -> $currentVersion"
+          }
+
+      - name: Install dependencies
+        if: steps.version.outputs.changed == 'true'
+        shell: pwsh
+        run: npm ci
+
+      - name: Resolve release metadata
+        id: meta
+        if: steps.version.outputs.changed == 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.current }}"
+          $tag = "v$version"
+          $name = "Release v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Verify project
+        if: steps.version.outputs.changed == 'true'
+        shell: pwsh
+        run: |
+          npm run typecheck
+          npm test
+
+      - name: Build Windows installer
+        if: steps.version.outputs.changed == 'true'
+        shell: pwsh
+        run: |
+          $outputDir = Join-Path $PWD 'release-dist'
+          if (Test-Path $outputDir) {
+            Remove-Item -LiteralPath $outputDir -Recurse -Force
+          }
+
+          npx electron-builder --win nsis --publish never --config.directories.output=$outputDir
+          if ($LASTEXITCODE -ne 0) {
+            throw "electron-builder failed with exit code $LASTEXITCODE"
+          }
+
+          $installer = Get-ChildItem -Path $outputDir -Filter '*-setup.exe' -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw 'Windows installer was not generated.'
+          }
+
+          Copy-Item -LiteralPath $installer.FullName `
+            -Destination (Join-Path $outputDir 'dude-app-latest-setup.exe') `
+            -Force
+
+      - name: Upload workflow artifacts
+        if: steps.version.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dude-app-windows-installer
+          path: |
+            release-dist/*.exe
+            release-dist/*.blockmap
+            release-dist/latest*.yml
+
+      - name: Create GitHub release
+        if: steps.version.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            release-dist/*.exe
+            release-dist/*.blockmap
+            release-dist/latest*.yml
