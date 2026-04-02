@@ -101,36 +101,7 @@ jobs:
         if: steps.version.outputs.changed == 'true'
         shell: pwsh
         run: |
-          $outputDir = Join-Path $PWD 'release-dist'
-          $configPath = Join-Path $PWD 'electron-builder.ci.yml'
-          $baseConfigPath = Join-Path $PWD 'electron-builder.yml'
-          if (Test-Path $outputDir) {
-            Remove-Item -LiteralPath $outputDir -Recurse -Force
-          }
-          if (Test-Path $configPath) {
-            Remove-Item -LiteralPath $configPath -Force
-          }
-
-          $baseConfig = Get-Content -LiteralPath $baseConfigPath -Raw
-          $ciConfig = $baseConfig -replace '(?m)^(\s*output:\s*).+$', '${1}release-dist'
-          Set-Content -LiteralPath $configPath -Value $ciConfig -Encoding UTF8
-
-          npx electron-builder --win nsis --publish never --config $configPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "electron-builder failed with exit code $LASTEXITCODE"
-          }
-
-          $installer = Get-ChildItem -Path $outputDir -Filter '*-setup.exe' -File |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-
-          if (-not $installer) {
-            throw 'Windows installer was not generated.'
-          }
-
-          Copy-Item -LiteralPath $installer.FullName `
-            -Destination (Join-Path $outputDir 'dude-app-latest-setup.exe') `
-            -Force
+          powershell -ExecutionPolicy Bypass -File scripts/build-win-installer.ps1
 
       - name: Upload workflow artifacts
         if: steps.version.outputs.changed == 'true'
@@ -138,9 +109,9 @@ jobs:
         with:
           name: dude-app-windows-installer
           path: |
-            release-dist/*.exe
-            release-dist/*.blockmap
-            release-dist/latest*.yml
+            D:/coding/completed/dude-app/*.exe
+            D:/coding/completed/dude-app/*.blockmap
+            D:/coding/completed/dude-app/latest*.yml
 
       - name: Create GitHub release
         if: steps.version.outputs.changed == 'true'
@@ -151,6 +122,6 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            release-dist/*.exe
-            release-dist/*.blockmap
-            release-dist/latest*.yml
+            D:/coding/completed/dude-app/*.exe
+            D:/coding/completed/dude-app/*.blockmap
+            D:/coding/completed/dude-app/latest*.yml
