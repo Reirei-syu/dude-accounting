@@ -85,3 +85,18 @@
 - 下一步计划：
   - 如继续推进，优先处理“清理自动测试账套”。
   - 如继续增强打印链路，再单独规划系统级打印参数扩展，不在本轮继续堆改。
+
+## 2026-04-02 清理测试账套与重新打包快照
+- 当前阶段：Execution
+- 当前任务：已清理开发库中的自动测试账套，并重新完成 Windows 安装包构建。
+- 剩余任务：
+  - 当前无新的项目级阻塞待办；如需继续推进，可从新的功能或运维任务开始。
+- 关键决策：
+  - 清理动作只针对 `%APPDATA%\dude-app-dev\dude-accounting.db` 中的 `自动测试-*` 账套，不触碰安装包或正式用户数据目录。
+  - 删除前先保留数据库快照备份，确保本轮数据清理可回退。
+  - 打包继续沿用现有 `scripts/build-win-installer.ps1`，不在本轮调整构建配置。
+- 当前问题：
+  - 当前 `dude-app-dev` 开发库账套数为 0，后续若还要继续做 UI 或真实链路验证，需要重新准备测试账套。
+- 下一步计划：
+  - 如需恢复调试环境，可从 `out/ledger-cleanup-backups/dude-accounting-before-cleanup-20260402-214938.db` 回滚。
+  - 如需继续交付安装包，可直接使用 `D:\coding\completed\dude-app\dude-app-1.0.10-setup.exe` 或 `D:\coding\completed\dude-app\dude-app-latest-setup.exe`。

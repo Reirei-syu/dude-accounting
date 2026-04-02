@@ -163,3 +163,25 @@
   - 只给测量逻辑加 fallback 不够，必须先验证测量结果是否覆盖全部行，否则“看起来成功”的空分页会污染主链路。
   - 真实 Chromium 布局测量时，克隆节点所在宿主如果丢失版式约束类名，分页算法会在错误尺寸上得出错误但稳定的结果。
   - 审计脚本写汇总时要避免“先写局部字段，再整体覆盖对象”的模式，否则很容易把关键诊断结果静默抹掉。
+
+## 2026-04-02 Cleanup And Package
+- 当前阶段：Execution
+- 当前任务：清理开发库中的自动测试账套，并重新构建 Windows 安装包。
+- 本次修改：
+  - 盘点并清理 `%APPDATA%\dude-app-dev\dude-accounting.db` 中全部 `自动测试-*` 账套，共删除 73 套。
+  - 删除前创建数据库快照备份：`out/ledger-cleanup-backups/dude-accounting-before-cleanup-20260402-214938.db` 及对应 `-wal/-shm`。
+  - 删除时补写 `operation_logs` 留痕，原因标记为“清理自动测试账套”，审批标记为 `AUTO-TEST-CLEANUP`。
+  - 重新执行 `scripts/build-win-installer.ps1`，生成新的 Windows 安装包与 latest 别名。
+- 影响范围：开发库账套数据、安装包产物目录 `D:\coding\completed\dude-app`。
+- 任务进度百分比：100%
+- 方案路径：无新增方案；沿用现有执行任务。
+- 验证结果：
+  - 开发库校验：`remainingLedgerCount = 0`、`remainingAutoTestCount = 0`
+  - `powershell -ExecutionPolicy Bypass -File scripts/build-win-installer.ps1`：通过
+  - `npm test`：通过（72 个文件，347 个测试）
+- 风险备注：
+  - 当前 `dude-app-dev` 开发库已无任何账套；如需恢复测试前状态，可使用 `out/ledger-cleanup-backups/dude-accounting-before-cleanup-20260402-214938.db` 快照回滚。
+  - 本轮清理的是开发环境账套数据，不影响安装包代码内容与交付产物。
+- Lessons Learned：
+  - 清理带中文前缀的测试数据时，不应依赖控制台编码环境里的 SQL `LIKE` 条件，使用 Unicode 转义或应用层前缀判断更稳妥。
+  - 运维类数据清理也应保留可回退快照，否则一旦误删就只能依赖整库恢复。

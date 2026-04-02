@@ -93,12 +93,13 @@
 - 修改文件：`docs/plans/2026-04-02_print_preview_rearchitecture_plan.md`、`src/main/services/printLayout.ts`、`src/main/services/printMeasurement.ts`、`src/main/services/printPreviewShell.ts`、`src/main/ipc/print.ts`、`src/preload/index.ts`、`src/preload/index.d.ts`、`src/main/services/printLayout.test.ts`、`src/main/services/printPreviewShell.test.ts`、`src/main/ipc/print.test.ts`、`scripts/electron_breakpoint_audit.py`
 - 影响范围：打印任务结构、账簿/报表/凭证预览页分页展示、预览设置重排、打印与 PDF 导出事实源、真实 Electron 审计脚本
 
-### [ ] 清理断链测试账套
+### [x] 清理断链测试账套并重新打包
 - 类型：运维
-- 模块：ui / docs
-- 描述：清理本次调试与正式审计过程中留在当前开发库中的多组 `自动测试-*` 账套，必要时先备份再删除。
-- 依赖：账套级备份与删除强提示重构
-- 风险：需在新删除强提示流程下执行，避免误删测试账套
+- 模块：core / config / docs
+- 描述：清理当前开发库中的全部 `自动测试-*` 账套，并在清理后重新构建 Windows 安装包，确认交付产物与当前代码一致。
+- 完成时间：2026-04-02
+- 修改文件：`PROGRESS.md`、`docs/context/latest_context.md`、`docs/tasks.md`、`prds/开发日志.md`
+- 影响范围：开发库账套数据、Windows 安装产物、项目运维上下文
 
 ### [x] 安装升级数据路径保护
 - 类型：修复
