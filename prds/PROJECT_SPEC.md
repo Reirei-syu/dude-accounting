@@ -30,6 +30,8 @@ Current Stage:
 - 已识别的重点改造方向为：已记账不可逆、关键操作日志、电子凭证处理底座、账套级备份与电子档案导出、账簿报表输出。
 - 已落地基础财务报表快照生成、报表查询与删除能力，支持按月份/跨月区间生成并可选纳入未记账凭证，但账簿查询、打印、版式输出与标准数据导出仍未完成。
 - 打印能力进入统一改造阶段：采用统一 HTML 打印文档管线，预览、系统打印与打印版 PDF 导出同版同源；第一阶段覆盖财务报表与现有全部账簿，第二阶段覆盖记账凭证打印。
+- 打印预览现已统一为“纸张方向、缩放比例、页边距预设、内容密度预设、恢复默认”五项设置；账簿打印预览按 `bookType` 记住最近一次设置。
+- 打印链路当前已切到 page model 驱动：主进程先构造 `PrintDocument`，再生成 `PrintLayoutResult` 与显式页列表，预览页按页渲染白纸卡片，打印与 PDF 导出以当前 job 的分页结果为事实来源。
 - 企业账套报表输出正在从临时科目直列版升级为严格对齐系统级 Skill 的企业会计准则四表制式，范围包括资产负债表、利润表、现金流量表和所有者权益变动表。
 
 ---
@@ -348,11 +350,21 @@ Current Channels:
 Responsibility:
 统一打印任务生成、打印预览、系统打印、打印版 PDF 导出，要求三者同版同源。
 
+Current Status:
+
+- 打印预览统一提供纸张方向、缩放、页边距、内容密度与恢复默认五项设置。
+- 仅账簿打印预览按 `bookType` 记住最近一次设置，并继续复用 `user_preferences` 存储 JSON 化预设。
+- `PrintJobRecord` 当前保存 `settings`、`sourceDocument`、`layoutResult` 与 `layoutVersion`，不再只保存单份长 HTML。
+- 预览窗口改为按页渲染 `PrintPageModel[]`，第 2 页开始继续显示完整页眉与列头；预览设置变更通过主进程 `print:updatePreviewSettings` 触发重排。
+- 预览窗口不再直接读写 `settings:getUserPreferences / settings:setUserPreferences`，账簿偏好持久化改由主进程打印 job 统一处理。
+
 Planned Channels:
 
 - `print:prepare`
 - `print:getJobStatus`
+- `print:getPreviewModel`
 - `print:openPreview`
+- `print:updatePreviewSettings`
 - `print:print`
 - `print:exportPdf`
 - `print:dispose`
@@ -467,6 +479,7 @@ User Preference Keys:
 - `custom_wallpaper_relative_path`
 - `voucher_print_layout`
 - `voucher_print_double_gap`
+- `book_print_settings_<bookType>`
 
 In-flight:
 
@@ -486,8 +499,12 @@ In-flight:
 - 系统参数仅承载系统级规则；个人偏好必须与系统规则分层，且个人偏好只能在系统允许范围内生效。
 - 个人偏好中的默认账套必须限制在当前用户被授权的账套集合内；若偏好中的账套失效，应自动回退到首个可访问账套或空状态。
 - 打印预览、系统打印与打印版 PDF 导出必须使用同一份 HTML 打印文档，不允许按输出方式分别维护多套模板。
+- 打印 job 必须以主进程生成的分页结果为事实来源；预览页不得再自行决定最终分页断点。
 - 大体量打印任务允许先进入“生成中”状态，再打开预览窗口；稳定性优先于即时秒开预览。
 - 第一阶段账簿打印按当前页面筛选结果生成单个打印文档，不支持跨账簿类型混合批量。
+- 账簿打印预览必须统一提供“纸张方向 / 缩放 / 页边距 / 内容密度 / 恢复默认”设置；仅账簿类型设置允许记忆到 `user_preferences`，不得写入 `system_settings`。
+- 预览设置变更必须经由主进程重排，独立预览窗口不得直接读写用户偏好或私自覆盖最终打印参数。
+- 账簿打印内容超过 1 页时，第 2 页开始必须继续显示完整页眉与列头，不得只保留裸列头。
 - 第二阶段记账凭证打印必须支持单张整页与 A4 一页两张（上下结构）两种版式；两联版式的上下间距按当前用户记住上次设置。
 - 普通用户不得对已记账凭证执行反记账。
 - 管理员紧急逆转必须强制记录原因并写入操作日志。

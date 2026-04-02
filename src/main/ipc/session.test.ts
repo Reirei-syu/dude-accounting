@@ -6,6 +6,7 @@ import {
   requireAuth,
   requireLedgerAccess,
   requirePermission,
+  setSessionBySender,
   setSessionByEvent,
   type SessionUser
 } from './session'
@@ -81,6 +82,29 @@ describe('ipc session', () => {
 
     event.destroy()
     expect(getSessionByEvent(event as never)).toBeNull()
+  })
+
+  it('can attach an existing session to another sender such as print preview webContents', () => {
+    const previewSender = createMockEvent(19)
+    const previewEvent = createMockEvent(20)
+    const user: SessionUser = {
+      id: 19,
+      username: 'preview-user',
+      permissions: { voucher_entry: true, system_settings: true },
+      isAdmin: false
+    }
+
+    setSessionBySender(previewSender.sender, user)
+
+    expect(getSessionByEvent({ sender: previewSender.sender } as never)?.username).toBe(
+      'preview-user'
+    )
+
+    previewSender.destroy()
+    expect(getSessionByEvent({ sender: previewSender.sender } as never)).toBeNull()
+
+    setSessionByEvent(previewEvent as never, user)
+    expect(getSessionByEvent(previewEvent as never)?.username).toBe('preview-user')
   })
 
   it('enforces auth and permission checks', () => {

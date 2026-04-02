@@ -90,6 +90,35 @@ describe('bookExport service', () => {
     expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
   })
 
+  it('writes multi-page pdf exports for long books without breaking header redraw path', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
+    const payload = {
+      ...createPayload(),
+      title: 'Ledger Detail',
+      ledgerName: 'Demo Ledger',
+      subjectLabel: 'Subject: Cash on Hand',
+      periodLabel: 'Period: 2026-01-01 to 2026-12-31',
+      rows: Array.from({ length: 160 }, (_, index) => ({
+        key: `row-${index + 1}`,
+        cells: [
+          { value: `100${index}` },
+          { value: `Line ${index + 1}` },
+          { value: Number(index) + 0.5, isAmount: true }
+        ]
+      }))
+    }
+    const pdfPath = path.join(tempDir, 'ledger-detail.pdf')
+
+    await writeBookExportPdf(pdfPath, payload)
+
+    const pdfContent = fs.readFileSync(pdfPath)
+    const pageCount = (pdfContent.toString('latin1').match(/\/Type \/Page\b/g) ?? []).length
+
+    expect(fs.existsSync(pdfPath)).toBe(true)
+    expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+    expect(pageCount).toBeGreaterThan(1)
+  })
+
   it('splits subject and cross-year period metadata into separate excel header cells', async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
     const payload = {

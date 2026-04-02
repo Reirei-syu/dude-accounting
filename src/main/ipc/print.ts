@@ -6,16 +6,25 @@ import { getDatabase } from '../database/init'
 import { sanitizePathSegment } from '../services/fileIntegrity'
 import { getReportSnapshotDetail, type ReportSnapshotDetail } from '../services/reporting'
 import {
-  buildPrintDocumentHtml,
-  buildPrintPreviewHtml,
   resolveBookPrintOrientation,
+  normalizePrintPreviewSettings,
+  type PrintLayoutResult,
   type PrintDocument,
   type PrintJobType,
   type PrintTableSegment,
   type PrintTableColumn,
   type PrintTableRow,
+  type PrintPreviewSettings,
+  type PrintVoucherSegment,
   type PrintVoucherRecord
 } from '../services/print'
+import {
+  buildTableLayoutResult,
+  buildVoucherLayoutResult,
+  estimateTableRowGroups
+} from '../services/printLayout'
+import { buildTableMeasurementHtml } from '../services/printMeasurement'
+import { buildPagedPrintPreviewHtml } from '../services/printPreviewShell'
 import { requireAuth, requireLedgerAccess } from './session'
 
 type PrintJobStatus = 'preparing' | 'ready' | 'failed'
@@ -23,7 +32,6 @@ type PrintCommandPayload =
   | string
   | {
       jobId: string
-      orientation?: 'portrait' | 'landscape'
     }
 
 type PrintPreparePayload =
@@ -62,6 +70,8 @@ type PrintPreparePayload =
 interface PrintJobRecord {
   id: string
   type: PrintJobType
+  bookType: string | null
+  preferenceKey: string | null
   title: string
   ledgerId: number | null
   createdBy: number
@@ -69,7 +79,10 @@ interface PrintJobRecord {
   lastAccessAt: number
   status: PrintJobStatus
   orientation: 'portrait' | 'landscape'
-  html: string | null
+  settings: PrintPreviewSettings
+  sourceDocument: PrintDocument | null
+  layoutResult: PrintLayoutResult | null
+  layoutVersion: number
   error: string | null
   previewWebContentsId: number | null
 }
@@ -77,16 +90,14 @@ interface PrintJobRecord {
 const printJobs = new Map<string, PrintJobRecord>()
 const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
 
-function resolvePrintCommandPayload(payload: PrintCommandPayload): {
+export function resolvePrintCommandPayload(payload: PrintCommandPayload): {
   jobId: string
-  orientation?: 'portrait' | 'landscape'
 } {
   if (typeof payload === 'string') {
     return { jobId: payload }
   }
   return {
-    jobId: payload.jobId,
-    orientation: payload.orientation
+    jobId: payload.jobId
   }
 }
 
@@ -111,8 +122,386 @@ function sanitizeFileName(value: string): string {
   return sanitizePathSegment(value, '打印预览')
 }
 
+export function buildDefaultPreviewSettings(
+  orientation: 'portrait' | 'landscape'
+): PrintPreviewSettings {
+  return {
+    orientation,
+    scalePercent: 100,
+    marginPreset: 'default',
+    densityPreset: 'default'
+  }
+}
+
+function getPreviewPreferenceKey(bookType: string | null): string | null {
+  return bookType ? `book_print_settings_${bookType}` : null
+}
+
+export function loadPersistedPreviewSettings(
+  db: ReturnType<typeof getDatabase>,
+  userId: number,
+  preferenceKey: string | null,
+  fallbackOrientation: 'portrait' | 'landscape'
+): PrintPreviewSettings {
+  if (!preferenceKey) {
+    return buildDefaultPreviewSettings(fallbackOrientation)
+  }
+
+  const row = db
+    .prepare('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?')
+    .get(userId, preferenceKey) as { value?: string } | undefined
+
+  if (!row?.value) {
+    return buildDefaultPreviewSettings(fallbackOrientation)
+  }
+
+  try {
+    return normalizePrintPreviewSettings(JSON.parse(row.value), fallbackOrientation)
+  } catch {
+    return buildDefaultPreviewSettings(fallbackOrientation)
+  }
+}
+
+export function persistPreviewSettings(
+  db: ReturnType<typeof getDatabase>,
+  userId: number,
+  preferenceKey: string | null,
+  settings: PrintPreviewSettings
+): void {
+  if (!preferenceKey) {
+    return
+  }
+
+  db.prepare(
+    `INSERT INTO user_preferences (user_id, key, value, updated_at)
+     VALUES (?, ?, ?, datetime('now'))
+     ON CONFLICT(user_id, key)
+     DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(userId, preferenceKey, JSON.stringify(settings))
+}
+
+type TableRowGroupMeasurement = {
+  rowKeyGroups: string[][]
+  oversizeRowKeys: string[]
+}
+
+export function resolveMeasuredTableRowGroups(
+  segment: PrintTableSegment,
+  fallback: TableRowGroupMeasurement,
+  measured: TableRowGroupMeasurement | null
+): TableRowGroupMeasurement {
+  if (!measured) {
+    return fallback
+  }
+
+  const expectedRowKeys = segment.rows.map((row) => row.key)
+  const measuredGroups = Array.isArray(measured.rowKeyGroups) ? measured.rowKeyGroups : []
+
+  if (expectedRowKeys.length === 0) {
+    return measuredGroups.length === 1 && measuredGroups[0]?.length === 0 ? measured : fallback
+  }
+
+  if (
+    measuredGroups.length === 0 ||
+    measuredGroups.some((group) => !Array.isArray(group) || group.length === 0)
+  ) {
+    return fallback
+  }
+
+  const flattenedKeys = measuredGroups.flat()
+  if (flattenedKeys.length !== expectedRowKeys.length) {
+    return fallback
+  }
+
+  for (let index = 0; index < expectedRowKeys.length; index += 1) {
+    if (flattenedKeys[index] !== expectedRowKeys[index]) {
+      return fallback
+    }
+  }
+
+  return {
+    rowKeyGroups: measuredGroups,
+    oversizeRowKeys: Array.isArray(measured.oversizeRowKeys) ? measured.oversizeRowKeys : []
+  }
+}
+
+function buildPreviewModel(job: PrintJobRecord): (PrintLayoutResult & { layoutVersion: number }) | null {
+  if (!job.layoutResult) {
+    return null
+  }
+
+  return {
+    ...job.layoutResult,
+    layoutVersion: job.layoutVersion
+  }
+}
+
 function getPrintExportDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '打印导出')
+}
+
+export async function measureTableRowGroups(
+  segment: PrintTableSegment,
+  settings: PrintPreviewSettings
+): Promise<{
+  rowKeyGroups: string[][]
+  oversizeRowKeys: string[]
+}> {
+  const measurementWindow = new BrowserWindow({
+    width: 1440,
+    height: 1200,
+    x: -10000,
+    y: -10000,
+    show: true,
+    focusable: false,
+    skipTaskbar: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      sandbox: false
+    }
+  })
+
+  try {
+    const measurementHtml = buildTableMeasurementHtml(segment, settings)
+    await measurementWindow.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(measurementHtml)}`
+    )
+
+    const result = (await measurementWindow.webContents.executeJavaScript(`
+      new Promise((resolve) => {
+        const settle = () =>
+          new Promise((done) => setTimeout(done, 0));
+        const fitTextNodes = (selector) => {
+          const nodes = document.querySelectorAll(selector);
+          nodes.forEach((node) => {
+            if (!(node instanceof HTMLElement)) return;
+            const container = node.parentElement;
+            if (!(container instanceof HTMLElement)) return;
+            const baseFontSize = Number(node.dataset.baseFontSize || '12');
+            const minFontSize = Number(node.dataset.minFontSize || '8');
+            node.style.fontSize = baseFontSize + 'px';
+            let fontSize = baseFontSize;
+            while (
+              fontSize > minFontSize &&
+              (node.scrollWidth > container.clientWidth + 1 || node.scrollHeight > container.clientHeight + 1)
+            ) {
+              fontSize -= 0.5;
+              node.style.fontSize = fontSize + 'px';
+            }
+          });
+        };
+        const fitAllText = async () => {
+          fitTextNodes('.print-fit-text');
+          await settle();
+        };
+        const collect = async () => {
+          try {
+            await fitAllText();
+            const canvas = document.querySelector('.preview-canvas');
+            const section = document.querySelector('.print-segment');
+            const documentNode = section?.querySelector('.print-document');
+            const table = section?.querySelector('.print-table');
+            const thead = table?.querySelector('thead');
+            const colgroup = table?.querySelector('colgroup');
+            const tbody = table?.querySelector('tbody');
+            if (
+              !(canvas instanceof HTMLElement) ||
+              !(section instanceof HTMLElement) ||
+              !(documentNode instanceof HTMLElement) ||
+              !(table instanceof HTMLTableElement) ||
+              !(thead instanceof HTMLTableSectionElement) ||
+              !(tbody instanceof HTMLTableSectionElement)
+            ) {
+              resolve({ rowKeyGroups: [[]], oversizeRowKeys: [] });
+              return;
+            }
+
+            const orientation = canvas.classList.contains('orientation-landscape') ? 'landscape' : 'portrait';
+            const pageHeightRatio = orientation === 'landscape' ? 210 / 297 : 297 / 210;
+            const sourceRows = Array.from(tbody.rows).map((row) => ({
+              key: row.dataset.rowKey || '',
+              html: row.outerHTML
+            }));
+
+            const createSection = (rowHtmlList) => {
+              const clone = document.createElement('section');
+              clone.className = section.className.replace(/\\s*page-break\\s*/g, ' ').trim();
+              clone.innerHTML =
+                '<div class="' +
+                documentNode.className +
+                '"><table class="' +
+                table.className +
+                '">' +
+                (colgroup?.outerHTML || '') +
+                '<thead>' +
+                thead.innerHTML +
+                '</thead><tbody>' +
+                rowHtmlList.join('') +
+                '</tbody></table></div>';
+              return clone;
+            };
+
+            const host = document.createElement('div');
+            host.className = canvas.className;
+            host.style.position = 'absolute';
+            host.style.visibility = 'hidden';
+            host.style.pointerEvents = 'none';
+            host.style.left = '-99999px';
+            host.style.top = '0';
+            document.body.appendChild(host);
+            const measureSection = createSection([]);
+            host.appendChild(measureSection);
+            const measureTbody = measureSection.querySelector('tbody');
+            if (!(measureTbody instanceof HTMLTableSectionElement)) {
+              host.remove();
+              resolve({ rowKeyGroups: [[]], oversizeRowKeys: [] });
+              return;
+            }
+
+            await fitAllText();
+            const pageWidth = measureSection.getBoundingClientRect().width;
+            const pageHeightLimit = pageWidth * pageHeightRatio;
+            const pages = [];
+            const oversizeRowKeys = [];
+            let currentPage = [];
+
+            for (const sourceRow of sourceRows) {
+              const buffer = document.createElement('tbody');
+              buffer.innerHTML = sourceRow.html;
+              const rowNode = buffer.firstElementChild;
+              if (!(rowNode instanceof HTMLTableRowElement)) {
+                continue;
+              }
+              measureTbody.appendChild(rowNode);
+              await fitAllText();
+              const currentHeight = measureSection.getBoundingClientRect().height;
+              if (currentHeight > pageHeightLimit + 1) {
+                measureTbody.removeChild(rowNode);
+                if (currentPage.length === 0) {
+                  currentPage.push(sourceRow.key);
+                  oversizeRowKeys.push(sourceRow.key);
+                  pages.push(currentPage);
+                  currentPage = [];
+                  measureTbody.innerHTML = '';
+                } else {
+                  pages.push(currentPage);
+                  currentPage = [sourceRow.key];
+                  measureTbody.innerHTML = '';
+                  const nextBuffer = document.createElement('tbody');
+                  nextBuffer.innerHTML = sourceRow.html;
+                  const nextNode = nextBuffer.firstElementChild;
+                  if (nextNode instanceof HTMLTableRowElement) {
+                    measureTbody.appendChild(nextNode);
+                    await fitAllText();
+                    if (measureSection.getBoundingClientRect().height > pageHeightLimit + 1) {
+                      oversizeRowKeys.push(sourceRow.key);
+                      pages.push(currentPage);
+                      currentPage = [];
+                      measureTbody.innerHTML = '';
+                    }
+                  }
+                }
+              } else {
+                currentPage.push(sourceRow.key);
+              }
+            }
+
+            if (currentPage.length > 0) {
+              pages.push(currentPage);
+            }
+
+            host.remove();
+            resolve({
+              rowKeyGroups: pages.length > 0 ? pages : [[]],
+              oversizeRowKeys
+            });
+          } catch (error) {
+            console.error('collectPrintLayout failed', error);
+            resolve({ rowKeyGroups: [[]], oversizeRowKeys: [] });
+          }
+        };
+
+        if (document.readyState === 'complete') {
+          void collect();
+        } else {
+          window.addEventListener('load', () => {
+            void collect();
+          }, { once: true });
+        }
+      })
+    `)) as {
+      rowKeyGroups: string[][]
+      oversizeRowKeys: string[]
+    }
+
+    return {
+      rowKeyGroups:
+        Array.isArray(result?.rowKeyGroups) && result.rowKeyGroups.length > 0
+          ? result.rowKeyGroups
+          : [[]],
+      oversizeRowKeys: Array.isArray(result?.oversizeRowKeys) ? result.oversizeRowKeys : []
+    }
+  } finally {
+    measurementWindow.destroy()
+  }
+}
+
+async function layoutPrintDocument(
+  document: PrintDocument,
+  settings: PrintPreviewSettings
+): Promise<PrintLayoutResult> {
+  const tableSegments = document.segments.filter(
+    (segment): segment is PrintTableSegment => segment.kind === 'table'
+  )
+  const voucherSegments = document.segments.filter(
+    (segment): segment is PrintVoucherSegment => segment.kind === 'voucher'
+  )
+
+  if (tableSegments.length > 0 && voucherSegments.length > 0) {
+    throw new Error('暂不支持混合表格与凭证的打印任务')
+  }
+
+  if (tableSegments.length > 0) {
+    const measuredGroups = await Promise.all(
+      tableSegments.map(async (segment) => {
+        const fallback = estimateTableRowGroups(segment, settings)
+        try {
+          const measured = await Promise.race([
+            measureTableRowGroups(segment, settings),
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), 1200))
+          ])
+          const resolved = resolveMeasuredTableRowGroups(segment, fallback, measured)
+          return {
+            segment,
+            ...resolved
+          }
+        } catch {
+          return {
+            segment,
+            ...fallback
+          }
+        }
+      })
+    )
+
+    return buildTableLayoutResult({
+      title: document.title,
+      orientation: settings.orientation,
+      settings,
+      segmentDrafts: measuredGroups.map(({ segment, rowKeyGroups }) => ({
+        segment,
+        rowKeyGroups
+      })),
+      oversizeRowKeys: measuredGroups.flatMap((group) => group.oversizeRowKeys)
+    })
+  }
+
+  return buildVoucherLayoutResult({
+    title: document.title,
+    orientation: settings.orientation,
+    settings,
+    segments: voucherSegments
+  })
 }
 
 function getReportSegment(detail: ReportSnapshotDetail): PrintTableSegment {
@@ -326,7 +715,7 @@ function createPrintDocument(
   type: PrintJobType
   ledgerId: number | null
   orientation: 'portrait' | 'landscape'
-  html: string
+  document: PrintDocument
 } {
   if (payload.type === 'report') {
     const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
@@ -341,7 +730,7 @@ function createPrintDocument(
       type: 'report',
       ledgerId: detail.ledger_id,
       orientation: document.orientation,
-      html: buildPrintDocumentHtml(document)
+      document
     }
   }
 
@@ -364,7 +753,7 @@ function createPrintDocument(
       type: 'batch',
       ledgerId: details[0].ledger_id,
       orientation: document.orientation,
-      html: buildPrintDocumentHtml(document)
+      document
     }
   }
 
@@ -394,7 +783,7 @@ function createPrintDocument(
       type: 'book',
       ledgerId: payload.ledgerId,
       orientation: document.orientation,
-      html: buildPrintDocumentHtml(document)
+      document
     }
   }
 
@@ -422,7 +811,7 @@ function createPrintDocument(
     type: voucherPayload.voucherIds.length > 1 ? 'batch' : 'voucher',
     ledgerId: voucherData.ledgerId,
     orientation: document.orientation,
-    html: buildPrintDocumentHtml(document)
+    document
   }
 }
 
@@ -461,15 +850,21 @@ function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJ
 }
 
 async function openPreviewWindow(
-  jobId: string,
-  title: string,
-  contentHtml: string,
-  orientation: 'portrait' | 'landscape'
+  jobId: string
 ): Promise<void> {
   const existing = getPreviewWindow(jobId)
   if (existing) {
     existing.focus()
     return
+  }
+
+  const job = printJobs.get(jobId)
+  if (!job) {
+    throw new Error('打印任务不存在')
+  }
+  const previewModel = buildPreviewModel(job)
+  if (!previewModel) {
+    throw new Error(job.error ?? '打印任务尚未完成')
   }
 
   const previewWindow = new BrowserWindow({
@@ -482,24 +877,24 @@ async function openPreviewWindow(
     }
   })
 
-  const previewHtml = buildPrintPreviewHtml(jobId, title, contentHtml, orientation)
+  const previewHtml = buildPagedPrintPreviewHtml(jobId, previewModel)
   previewWindow.on('closed', () => {
-    const job = printJobs.get(jobId)
-    if (job) {
-      job.previewWebContentsId = null
+    const currentJob = printJobs.get(jobId)
+    if (currentJob) {
+      currentJob.previewWebContentsId = null
     }
   })
   await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`)
-  const job = printJobs.get(jobId)
-  if (job) {
-    job.previewWebContentsId = previewWindow.webContents.id
+  const currentJob = printJobs.get(jobId)
+  if (currentJob) {
+    currentJob.previewWebContentsId = previewWindow.webContents.id
   }
 }
 
 export function registerPrintHandlers(): void {
+  const db = getDatabase()
   ipcMain.handle('print:prepare', (event, payload: PrintPreparePayload) => {
     const user = requireAuth(event)
-    const db = getDatabase()
     pruneExpiredPrintJobs()
 
     if (payload.type === 'report') {
@@ -526,9 +921,13 @@ export function registerPrintHandlers(): void {
     }
 
     const jobId = randomUUID()
+    const initialBookType = payload.type === 'book' ? payload.bookType : null
+    const preferenceKey = getPreviewPreferenceKey(initialBookType)
     printJobs.set(jobId, {
       id: jobId,
       type: payload.type === 'batch' ? 'batch' : payload.type,
+      bookType: initialBookType,
+      preferenceKey,
       title: '打印任务',
       ledgerId:
         payload.type === 'book'
@@ -541,25 +940,40 @@ export function registerPrintHandlers(): void {
       lastAccessAt: Date.now(),
       status: 'preparing',
       orientation: 'portrait',
-      html: null,
+      settings: buildDefaultPreviewSettings('portrait'),
+      sourceDocument: null,
+      layoutResult: null,
+      layoutVersion: 0,
       error: null,
       previewWebContentsId: null
     })
 
-    void Promise.resolve().then(() => {
+    void Promise.resolve().then(async () => {
       const job = printJobs.get(jobId)
       if (!job) return
       try {
         const prepared = createPrintDocument(db, payload)
+        const settings = loadPersistedPreviewSettings(
+          db,
+          user.id,
+          preferenceKey,
+          prepared.orientation
+        )
+        const layoutResult = await layoutPrintDocument(prepared.document, settings)
         job.type = prepared.type
         job.title = prepared.title
         job.ledgerId = prepared.ledgerId
-        job.orientation = prepared.orientation
-        job.html = prepared.html
+        job.orientation = settings.orientation
+        job.settings = settings
+        job.sourceDocument = prepared.document
+        job.layoutResult = layoutResult
+        job.layoutVersion = 1
         job.status = 'ready'
+        job.error = null
       } catch (error) {
         job.status = 'failed'
         job.error = error instanceof Error ? error.message : '生成打印任务失败'
+        job.layoutResult = null
       }
     })
 
@@ -581,9 +995,77 @@ export function registerPrintHandlers(): void {
       success: true,
       status: job.status,
       title: job.title,
-      error: job.error
+      error: job.error,
+      pageCount: job.layoutResult?.pageCount ?? 0,
+      layoutVersion: job.layoutVersion,
+      layoutError: job.error
     }
   })
+
+  ipcMain.handle('print:getPreviewModel', (event, jobId: string) => {
+    const job = (() => {
+      try {
+        return getAccessiblePrintJob(event, jobId)
+      } catch {
+        return null
+      }
+    })()
+    if (!job) {
+      return { success: false, error: '打印任务不存在' }
+    }
+
+    const previewModel = buildPreviewModel(job)
+    if (!previewModel) {
+      return { success: false, error: job.error ?? '打印任务尚未完成' }
+    }
+
+    return {
+      success: true,
+      model: previewModel
+    }
+  })
+
+  ipcMain.handle(
+    'print:updatePreviewSettings',
+    async (event, payload: { jobId: string; settings: Partial<PrintPreviewSettings> }) => {
+      const job = (() => {
+        try {
+          return getAccessiblePrintJob(event, payload.jobId)
+        } catch {
+          return null
+        }
+      })()
+      if (!job) {
+        return { success: false, error: '打印任务不存在' }
+      }
+      if (!job.sourceDocument) {
+        return { success: false, error: job.error ?? '打印任务尚未完成' }
+      }
+
+      try {
+        const nextSettings = normalizePrintPreviewSettings(payload.settings, job.settings.orientation)
+        const layoutResult = await layoutPrintDocument(job.sourceDocument, nextSettings)
+        job.settings = nextSettings
+        job.orientation = nextSettings.orientation
+        job.layoutResult = layoutResult
+        job.layoutVersion += 1
+        job.error = null
+        if (job.preferenceKey) {
+          persistPreviewSettings(db, job.createdBy, job.preferenceKey, nextSettings)
+        }
+        return {
+          success: true,
+          model: buildPreviewModel(job)
+        }
+      } catch (error) {
+        job.error = error instanceof Error ? error.message : '更新打印预览失败'
+        return {
+          success: false,
+          error: job.error
+        }
+      }
+    }
+  )
 
   ipcMain.handle('print:openPreview', async (event, jobId: string) => {
     const job = (() => {
@@ -596,11 +1078,11 @@ export function registerPrintHandlers(): void {
     if (!job) {
       return { success: false, error: '打印任务不存在' }
     }
-    if (job.status !== 'ready' || !job.html) {
+    if (job.status !== 'ready' || !job.layoutResult) {
       return { success: false, error: job.error ?? '打印任务尚未完成' }
     }
 
-    await openPreviewWindow(jobId, job.title, job.html, job.orientation)
+    await openPreviewWindow(jobId)
     return { success: true }
   })
 
@@ -626,7 +1108,7 @@ export function registerPrintHandlers(): void {
       previewWindow.webContents.print(
         {
           printBackground: true,
-          landscape: (command.orientation ?? job.orientation) === 'landscape'
+          landscape: job.orientation === 'landscape'
         },
         (success, failureReason) => {
           resolve(success ? { success: true } : { success: false, error: failureReason })
@@ -672,7 +1154,7 @@ export function registerPrintHandlers(): void {
     const pdfBuffer = await previewWindow.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
-      landscape: (command.orientation ?? job.orientation) === 'landscape',
+      landscape: job.orientation === 'landscape',
       margins: {
         top: 0,
         bottom: 0,

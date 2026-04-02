@@ -1397,10 +1397,82 @@ interface PrintAPI {
     status?: 'preparing' | 'ready' | 'failed'
     title?: string
     error?: string
+    pageCount?: number
+    layoutVersion?: number
+    layoutError?: string
+  }>
+  getPreviewModel: (jobId: string) => Promise<{
+    success: boolean
+    error?: string
+    model?: {
+      title: string
+      orientation: 'portrait' | 'landscape'
+      settings: {
+        orientation: 'portrait' | 'landscape'
+        scalePercent: number
+        marginPreset: 'default' | 'narrow' | 'extra-narrow'
+        densityPreset: 'default' | 'compact' | 'ultra-compact'
+      }
+      pageCount: number
+      layoutVersion: number
+      pages: Array<{
+        kind: 'table' | 'voucher'
+        pageNumber: number
+        firstRowKey: string | null
+        lastRowKey: string | null
+        pageHtml: string
+      }>
+      diagnostics: {
+        engine: 'page-model'
+        overflowDetected: boolean
+        oversizeRowKeys: string[]
+        pageRowCounts: number[]
+      }
+    }
   }>
   openPreview: (jobId: string) => Promise<{ success: boolean; error?: string }>
-  print: (jobId: string) => Promise<{ success: boolean; error?: string }>
-  exportPdf: (jobId: string) => Promise<{
+  updatePreviewSettings: (payload: {
+    jobId: string
+    settings: {
+      orientation?: 'portrait' | 'landscape'
+      scalePercent?: number
+      marginPreset?: 'default' | 'narrow' | 'extra-narrow'
+      densityPreset?: 'default' | 'compact' | 'ultra-compact'
+    }
+  }) => Promise<{
+    success: boolean
+    error?: string
+    model?: {
+      title: string
+      orientation: 'portrait' | 'landscape'
+      settings: {
+        orientation: 'portrait' | 'landscape'
+        scalePercent: number
+        marginPreset: 'default' | 'narrow' | 'extra-narrow'
+        densityPreset: 'default' | 'compact' | 'ultra-compact'
+      }
+      pageCount: number
+      layoutVersion: number
+      pages: Array<{
+        kind: 'table' | 'voucher'
+        pageNumber: number
+        firstRowKey: string | null
+        lastRowKey: string | null
+        pageHtml: string
+      }>
+      diagnostics: {
+        engine: 'page-model'
+        overflowDetected: boolean
+        oversizeRowKeys: string[]
+        pageRowCounts: number[]
+      }
+    }
+  }>
+  print: (payload: string | { jobId: string }) => Promise<{
+    success: boolean
+    error?: string
+  }>
+  exportPdf: (payload: string | { jobId: string }) => Promise<{
     success: boolean
     cancelled?: boolean
     error?: string

@@ -5,6 +5,14 @@
 
 ## 任务列表
 
+### [x] 打印预览残余风险修复与复验
+- 类型：Fix
+- 模块：service / scripts / docs / test
+- 描述：修复打印测量页宿主缺少 `preview-canvas orientation-*` 约束导致的多页布局失真，并修复 Electron 审计脚本汇总时覆盖 `multiPageModel` 的问题，重新完成真实多页账簿预览复验。
+- 完成时间：2026-04-02
+- 修改文件：`src/main/ipc/print.ts`、`src/main/ipc/print.test.ts`、`scripts/electron_breakpoint_audit.py`、`PROGRESS.md`、`docs/context/latest_context.md`、`prds/开发日志.md`
+- 影响范围：账簿打印测量回退稳定性、真实 Electron 多页预览审计、残余风险收敛与项目上下文同步
+
 ### [x] 账套级备份与删除强提示重构
 - 类型：Feature
 - 模块：core / service / ui / docs
@@ -68,6 +76,22 @@
 - 完成时间：2026-04-01
 - 修改文件：`docs/plans/2026-04-01_print_orientation_and_report_header_plan.md`、`src/main/services/print.ts`、`src/main/ipc/print.ts`、`src/preload/index.ts`、`src/main/services/reportSnapshotOutput.ts`、`src/main/services/print.test.ts`、`src/main/services/reportSnapshotOutput.test.ts`
 - 影响范围：所有打印预览模式、报表打印预览、报表 HTML/PDF 导出头部布局
+
+### [x] 打印设置扩展与账簿续页表头
+- 类型：Feature
+- 模块：service / core / preload / docs / test
+- 描述：将打印预览升级为统一设置栏，支持纸张方向、缩放、页边距、内容密度和恢复默认；账簿打印预览按 `bookType` 记忆最近设置，并在超过 1 页时从第 2 页开始重复完整页眉与列头。
+- 完成时间：2026-04-02
+- 修改文件：`docs/plans/2026-04-02_print_settings_repeat_book_header_plan.md`、`src/main/services/print.ts`、`src/main/ipc/print.ts`、`src/main/ipc/session.ts`、`src/main/ipc/session.test.ts`、`src/main/services/print.test.ts`、`src/main/services/bookExport.test.ts`、`src/preload/index.d.ts`、`PROGRESS.md`、`docs/context/latest_context.md`、`prds/PROJECT_SPEC.md`、`prds/prd.md`、`prds/开发日志.md`
+- 影响范围：统一打印预览工具栏、账簿多页续打可读性、账簿打印设置持久化、预览窗口登录态继承、打印与导出回归测试
+
+### [x] 打印预览可信多页重构
+- 类型：Feature
+- 模块：service / ipc / preload / docs / test
+- 描述：将打印预览改为 page model 驱动的按页渲染结构，打印 job 以 `sourceDocument + layoutResult` 为事实来源；新增预览模型读取与设置重排 IPC，移除预览窗口直接读写用户偏好的依赖。
+- 完成时间：2026-04-02
+- 修改文件：`docs/plans/2026-04-02_print_preview_rearchitecture_plan.md`、`src/main/services/printLayout.ts`、`src/main/services/printMeasurement.ts`、`src/main/services/printPreviewShell.ts`、`src/main/ipc/print.ts`、`src/preload/index.ts`、`src/preload/index.d.ts`、`src/main/services/printLayout.test.ts`、`src/main/services/printPreviewShell.test.ts`、`src/main/ipc/print.test.ts`、`scripts/electron_breakpoint_audit.py`
+- 影响范围：打印任务结构、账簿/报表/凭证预览页分页展示、预览设置重排、打印与 PDF 导出事实源、真实 Electron 审计脚本
 
 ### [ ] 清理断链测试账套
 - 类型：运维

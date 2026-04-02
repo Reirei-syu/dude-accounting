@@ -19,6 +19,11 @@ type PermissionKey =
 const senderSessionMap = new Map<number, SessionUser>()
 const senderCleanupBoundSet = new Set<number>()
 
+interface SessionSenderLike {
+  id: number
+  once: (eventName: 'destroyed', listener: () => void) => void
+}
+
 function clearSessionBySenderId(senderId: number): void {
   senderSessionMap.delete(senderId)
 }
@@ -29,12 +34,16 @@ function cleanupSessionBySenderId(senderId: number): void {
 }
 
 export function setSessionByEvent(event: IpcMainInvokeEvent, user: SessionUser): void {
-  const senderId = event.sender.id
+  setSessionBySender(event.sender, user)
+}
+
+export function setSessionBySender(sender: SessionSenderLike, user: SessionUser): void {
+  const senderId = sender.id
   senderSessionMap.set(senderId, user)
 
   if (!senderCleanupBoundSet.has(senderId)) {
     senderCleanupBoundSet.add(senderId)
-    event.sender.once('destroyed', () => {
+    sender.once('destroyed', () => {
       cleanupSessionBySenderId(senderId)
     })
   }

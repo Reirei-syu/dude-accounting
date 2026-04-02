@@ -64,6 +64,7 @@ class AuditRunner:
         self.browser = None
         self.context = None
         self.page: Page | None = None
+        self._bound_page_ids: set[int] = set()
         self.findings: list[Finding] = []
         self.summary: dict[str, Any] = {
             "startedAt": datetime.now().isoformat(timespec="seconds"),
@@ -194,12 +195,25 @@ class AuditRunner:
         self.screenshot("00-connected")
 
     def attach_page_listeners(self) -> None:
-        assert self.context is not None
-        for page in self.context.pages:
+        assert self.browser is not None
+        for context in self.browser.contexts:
+            self._attach_context_listeners(context)
+
+    def _attach_context_listeners(self, context: Any) -> None:
+        for page in context.pages:
             self._bind_page(page)
-        self.context.on("page", self._bind_page)
+        context.on("page", self._bind_page)
 
     def _bind_page(self, page: Page) -> None:
+        try:
+            page_id = id(page)
+        except Exception:  # noqa: BLE001
+            page_id = None
+        if page_id is not None and page_id in self._bound_page_ids:
+            return
+        if page_id is not None:
+            self._bound_page_ids.add(page_id)
+
         def _on_console(message: Any) -> None:
             self.log(f"[console:{page.url}] {message.type}: {message.text}")
 
@@ -209,18 +223,28 @@ class AuditRunner:
         page.on("console", _on_console)
         page.on("pageerror", _on_error)
 
+    def iter_all_pages(self) -> list[Page]:
+        assert self.browser is not None
+        pages: list[Page] = []
+        for context in self.browser.contexts:
+            self._attach_context_listeners(context)
+            pages.extend(context.pages)
+        return pages
+
     def wait_for_main_page(self, timeout_seconds: int = 120) -> Page:
-        assert self.context is not None
+        assert self.browser is not None
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
-            for page in self.context.pages:
-                try:
-                    title = page.title()
-                except Exception:  # noqa: BLE001
-                    continue
-                if APP_TITLE in title or "localhost" in page.url:
-                    self.log(f"命中主页面：title={title} url={page.url}")
-                    return page
+            for context in self.browser.contexts:
+                self._attach_context_listeners(context)
+                for page in context.pages:
+                    try:
+                        title = page.title()
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if APP_TITLE in title or "localhost" in page.url:
+                        self.log(f"命中主页面：title={title} url={page.url}")
+                        return page
             time.sleep(1)
         raise RuntimeError("未找到 Electron 主页面")
 
@@ -475,8 +499,22 @@ class AuditRunner:
         self.page.get_by_role("checkbox", name="显示无余额科目").first.check()
         self.click_button("查询")
         self.page.wait_for_timeout(800)
+        multi_page_preview = self.open_print_preview_and_capture("subject-balance-multipage")
+        multi_page_model = self.collect_subject_balance_preview_model()
         boundary = self.find_print_boundary()
+        boundary["multiPagePreview"] = multi_page_preview
+        boundary["multiPageModel"] = multi_page_model
         self.summary["boundaryPrint"] = boundary
+        if multi_page_model.get("pageCount", 0) < 2:
+            self.summary["errors"].append("账簿多页预览未形成至少 2 页，无法验证第 2 页页眉重复")
+        if multi_page_model.get("pageCount", 0) >= 2 and not multi_page_model.get(
+            "secondPageHasRepeatedHeader"
+        ):
+            self.summary["errors"].append("账簿多页预览第 2 页缺少完整页眉")
+        if multi_page_model.get("pageCount", 0) >= 2 and not multi_page_model.get(
+            "secondPageHasColumnHeader"
+        ):
+            self.summary["errors"].append("账簿多页预览第 2 页缺少列表列头")
         if boundary.get("overflowWarning") and not boundary.get("overflowPreview", {}).get(
             "hasRecoveryControls", False
         ):
@@ -527,15 +565,9 @@ class AuditRunner:
         self.summary["longPrint"] = long_case
 
     def open_print_preview_and_capture(self, screenshot_prefix: str) -> dict[str, Any]:
-        assert self.context is not None
-        before_pages = set(self.context.pages)
-        try:
-            with self.context.expect_page(timeout=20000) as page_info:
-                self.click_button("打印预览")
-            preview_page = page_info.value
-        except Exception:
-            self.click_button("打印预览")
-            preview_page = self.wait_for_new_page(before_pages)
+        before_pages = set(self.iter_all_pages())
+        self.click_button("打印预览")
+        preview_page = self.wait_for_new_page(before_pages)
         preview_page.wait_for_load_state("domcontentloaded")
         preview_page.wait_for_timeout(800)
         self.screenshot(f"{screenshot_prefix}-preview", preview_page)
@@ -548,36 +580,68 @@ class AuditRunner:
         self.page.bring_to_front()
         return preview
 
-    def wait_for_new_page(self, existing_pages: set[Page], timeout_seconds: int = 20) -> Page:
-        assert self.context is not None
+    def wait_for_new_page(self, existing_pages: set[Page], timeout_seconds: int = 60) -> Page:
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:
-            for page in self.context.pages:
-                if page not in existing_pages:
+            for page in self.iter_all_pages():
+                if page is self.page or page in existing_pages:
+                    continue
+                try:
+                    url = page.url
+                except Exception:  # noqa: BLE001
+                    continue
+                if url.startswith("data:text/html") and "print-measure" not in url:
                     return page
-            time.sleep(0.2)
-        for page in reversed(self.context.pages):
-            if page is not self.page:
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=300)
+                    title = page.title()
+                except Exception:  # noqa: BLE001
+                    continue
+                if title in {"Electron", "print-measure", ""}:
+                    continue
+                return page
+            assert self.page is not None
+            self.page.wait_for_timeout(200)
+        for page in reversed(self.iter_all_pages()):
+            if page is not self.page and page not in existing_pages:
                 return page
         raise RuntimeError("等待打印预览窗口超时")
 
     def collect_preview_state(self, preview_page: Page) -> dict[str, Any]:
+        preview_model = preview_page.evaluate("() => window.__PRINT_PREVIEW_MODEL__ ?? null")
+        if not preview_model:
+            if preview_page.locator(".preview-page-card").count() == 0:
+                preview_page.locator(".preview-page-card").first.wait_for(timeout=5000)
+            preview_model = preview_page.evaluate("() => window.__PRINT_PREVIEW_MODEL__ ?? null")
         buttons = [text.strip() for text in preview_page.locator(".preview-toolbar button").all_inner_texts()]
         status_text = preview_page.locator("#preview-status").inner_text().strip()
         has_scale_control = preview_page.locator("text=缩放").count() > 0
         has_margin_control = preview_page.locator("text=页边距").count() > 0 or preview_page.locator("text=间距").count() > 0
         has_auto_fit_hint = preview_page.locator("text=自动适配").count() > 0
+        page_count = int(preview_model.get("pageCount", 0)) if isinstance(preview_model, dict) else 0
+        second_page_html = (
+            preview_model.get("pages", [])[1].get("pageHtml", "")
+            if isinstance(preview_model, dict) and page_count > 1
+            else ""
+        )
         return {
             "title": preview_page.title(),
             "buttons": buttons,
             "statusText": status_text,
+            "pageCount": page_count,
             "overflowWarning": "超出纸张范围" in status_text or "减小两联间距" in status_text,
             "hasScaleControl": has_scale_control,
             "hasMarginControl": has_margin_control,
             "hasAutoFitHint": has_auto_fit_hint,
             "hasCompactModeControl": preview_page.locator("#preview-compact-toggle").count() > 0,
             "hasRecoveryControls": has_scale_control
-            or preview_page.locator("#preview-compact-toggle").count() > 0
+            or preview_page.locator("#preview-compact-toggle").count() > 0,
+            "secondPageHasRepeatedHeader": (
+                "编制单位：" in second_page_html
+                and "会计期间：" in second_page_html
+                and "单位：" in second_page_html
+            ),
+            "secondPageHasColumnHeader": "科目编码" in second_page_html or "日期" in second_page_html
         }
 
     def find_print_boundary(self) -> dict[str, Any]:
@@ -625,6 +689,115 @@ class AuditRunner:
         self.click_button("查询")
         self.page.wait_for_timeout(600)
         return self.open_print_preview_and_capture("subject-balance-long")
+
+    def collect_subject_balance_preview_model(self) -> dict[str, Any]:
+        assert self.page is not None
+        ledger = self.get_current_ledger()
+        result = self.page.evaluate(
+            """async (payload) => {
+                const rows = await window.api.bookQuery.listSubjectBalances({
+                    ledgerId: payload.ledgerId,
+                    startDate: payload.startDate,
+                    endDate: payload.endDate,
+                    includeUnpostedVouchers: true,
+                    includeZeroBalance: true
+                });
+
+                const prepared = await window.api.print.prepare({
+                    type: 'book',
+                    ledgerId: payload.ledgerId,
+                    bookType: 'subject_balance',
+                    title: '科目余额表',
+                    ledgerName: payload.ledgerName,
+                    periodLabel: `${payload.startDate} 至 ${payload.endDate}`,
+                    columns: [
+                        { key: 'subject_code', label: '科目编码', align: 'left' },
+                        { key: 'subject_name', label: '科目名称', align: 'left' },
+                        { key: 'opening_debit', label: '期初借方', align: 'right' },
+                        { key: 'opening_credit', label: '期初贷方', align: 'right' },
+                        { key: 'period_debit', label: '本期借方', align: 'right' },
+                        { key: 'period_credit', label: '本期贷方', align: 'right' },
+                        { key: 'ending_debit', label: '期末借方', align: 'right' },
+                        { key: 'ending_credit', label: '期末贷方', align: 'right' }
+                    ],
+                    rows: rows.map((row) => ({
+                        key: row.subject_code,
+                        cells: [
+                            { value: row.subject_code },
+                            { value: row.subject_name },
+                            { value: row.opening_debit_amount / 100, isAmount: true },
+                            { value: row.opening_credit_amount / 100, isAmount: true },
+                            { value: row.period_debit_amount / 100, isAmount: true },
+                            { value: row.period_credit_amount / 100, isAmount: true },
+                            { value: row.ending_debit_amount / 100, isAmount: true },
+                            { value: row.ending_credit_amount / 100, isAmount: true }
+                        ]
+                    }))
+                });
+                if (!prepared.success || !prepared.jobId) {
+                    return { success: false, error: prepared.error || 'prepare failed' };
+                }
+
+                for (let attempt = 0; attempt < 100; attempt += 1) {
+                    const status = await window.api.print.getJobStatus(prepared.jobId);
+                    if (!status.success) {
+                        await window.api.print.dispose(prepared.jobId);
+                        return { success: false, error: status.error || 'status failed' };
+                    }
+                    if (status.status === 'ready') {
+                        const modelResult = await window.api.print.getPreviewModel(prepared.jobId);
+                        await window.api.print.dispose(prepared.jobId);
+                        if (!modelResult.success || !modelResult.model) {
+                            return { success: false, error: modelResult.error || 'model failed' };
+                        }
+                        return {
+                            success: true,
+                            pageCount: modelResult.model.pageCount,
+                            secondPageHtml:
+                                modelResult.model.pageCount > 1
+                                    ? modelResult.model.pages[1]?.pageHtml || ''
+                                    : '',
+                            diagnostics: modelResult.model.diagnostics
+                        };
+                    }
+                    if (status.status === 'failed') {
+                        await window.api.print.dispose(prepared.jobId);
+                        return { success: false, error: status.error || 'layout failed' };
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+
+                await window.api.print.dispose(prepared.jobId);
+                return { success: false, error: 'layout timeout' };
+            }""",
+            {
+                "ledgerId": ledger["id"],
+                "ledgerName": ledger["name"],
+                "startDate": "2026-01-01",
+                "endDate": "2026-04-02"
+            }
+        )
+
+        if not result.get("success"):
+            return {
+                "success": False,
+                "error": result.get("error", "collect preview model failed"),
+                "pageCount": 0,
+                "secondPageHasRepeatedHeader": False,
+                "secondPageHasColumnHeader": False
+            }
+
+        second_page_html = result.get("secondPageHtml", "")
+        return {
+            "success": True,
+            "pageCount": int(result.get("pageCount", 0)),
+            "secondPageHasRepeatedHeader": (
+                "编制单位：" in second_page_html
+                and "会计期间：" in second_page_html
+                and "单位：" in second_page_html
+            ),
+            "secondPageHasColumnHeader": "科目编码" in second_page_html
+        }
 
     def run_report_reflection_audit(self) -> None:
         assert self.page is not None

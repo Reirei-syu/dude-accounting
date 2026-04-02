@@ -4,7 +4,8 @@ import {
   buildPrintDocumentHtml,
   buildPrintPreviewHtml,
   resolveBookPrintOrientation,
-  type PrintDocument
+  type PrintDocument,
+  type PrintPreviewSettings
 } from './print'
 
 describe('print service', () => {
@@ -171,13 +172,16 @@ describe('print service', () => {
     }
 
     const html = buildPrintDocumentHtml(document)
+    const theadHtml = html.match(/<thead>([\s\S]*?)<\/thead>/)?.[1] ?? ''
 
-    expect(html).toContain('print-book-title-row')
-    expect(html).toContain('print-book-subject')
-    expect(html).toContain('print-meta-book')
-    expect(html).toContain('print-meta-left')
-    expect(html).toContain('print-meta-center')
-    expect(html).toContain('print-meta-right')
+    expect(theadHtml).toContain('print-book-repeat-header')
+    expect(theadHtml).toContain('print-book-thead-title-row')
+    expect(theadHtml).toContain('print-book-subject')
+    expect(theadHtml).toContain('print-book-thead-meta')
+    expect(theadHtml).toContain('print-meta-left')
+    expect(theadHtml).toContain('print-meta-center')
+    expect(theadHtml).toContain('print-meta-right')
+    expect(html).toContain('print-segment-book')
     expect(html).toContain('print-fit-cell')
     expect(html).toContain('print-fit-text')
     expect(html).toContain('&#12288;&#12288;')
@@ -212,12 +216,14 @@ describe('print service', () => {
     }
 
     const html = buildPrintDocumentHtml(document)
+    const theadHtml = html.match(/<thead>([\s\S]*?)<\/thead>/)?.[1] ?? ''
 
-    expect(html).toContain('print-book-header-row')
-    expect(html).toContain('print-book-title-side')
-    expect(html).toContain('print-book-title-side-line')
-    expect(html).toContain('print-book-title-center')
-    expect(html).toContain('辅助科目：FA001 固定资产卡片')
+    expect(theadHtml).toContain('print-book-repeat-header')
+    expect(theadHtml).toContain('print-book-header-row')
+    expect(theadHtml).toContain('print-book-title-side')
+    expect(theadHtml).toContain('print-book-title-side-line')
+    expect(theadHtml).toContain('print-book-title-center')
+    expect(theadHtml).toContain('辅助科目：FA001 固定资产卡片')
   })
 
   it('builds fit-text cells and indents book subject columns', () => {
@@ -311,19 +317,48 @@ describe('print service', () => {
     expect(resolveBookPrintOrientation(8)).toBe('landscape')
   })
 
-  it('builds preview html with print and export controls', () => {
-    const html = buildPrintPreviewHtml('job-1', '打印预览', '<div>preview</div>', 'landscape')
+  it('builds preview html with unified settings bar and persisted book defaults', () => {
+    const initialSettings: PrintPreviewSettings = {
+      orientation: 'landscape',
+      scalePercent: 85,
+      marginPreset: 'narrow',
+      densityPreset: 'ultra-compact'
+    }
+
+    const html = buildPrintPreviewHtml(
+      'job-1',
+      '打印预览',
+      '<div>preview</div>',
+      initialSettings,
+      'book_print_settings_detail_ledger'
+    )
 
     expect(html).toContain('triggerPrint')
     expect(html).toContain('triggerExportPdf')
     expect(html).toContain('preview-orientation-select')
     expect(html).toContain('applyOrientation')
     expect(html).toContain('preview-scale-select')
-    expect(html).toContain('toggleCompactMode')
+    expect(html).toContain('preview-margin-select')
+    expect(html).toContain('preview-density-select')
+    expect(html).toContain('preview-reset-button')
+    expect(html).toContain('applyMarginPreset')
+    expect(html).toContain('applyDensityPreset')
+    expect(html).toContain('resetPreviewSettings')
+    expect(html).toContain('persistPreviewSettings')
+    expect(html).toContain('paginateBookSegments')
+    expect(html).toContain('createBookPageSection')
+    expect(html).toContain('data-book-pagination-id')
+    expect(html).toContain('恢复默认')
+    expect(html).toContain('页边距')
+    expect(html).toContain('内容密度')
     expect(html).toContain('打印预览')
     expect(html).toContain('orientation-landscape')
     expect(html).toContain('--voucher-table-gap: 10px')
-    expect(html).toContain('--preview-scale: 1')
+    expect(html).toContain('book_print_settings_detail_ledger')
+    expect(html).toContain('"scalePercent":85')
+    expect(html).toContain('"marginPreset":"narrow"')
+    expect(html).toContain('"densityPreset":"ultra-compact"')
+    expect(html).toContain('<option value="75">75%</option>')
     expect(html).toContain('margin-top: var(--voucher-table-gap)')
     expect(html).toContain('margin-bottom: var(--voucher-table-gap)')
     expect(html).toContain('fitVoucherAmountCells')
@@ -338,5 +373,18 @@ describe('print service', () => {
     expect(html).toContain('hasPrintOverflow')
     expect(html).toContain('ensurePrintableLayout')
     expect(html).toContain('height: 38.4px')
+  })
+
+  it('does not persist preview settings for non-book jobs', () => {
+    const initialSettings: PrintPreviewSettings = {
+      orientation: 'portrait',
+      scalePercent: 100,
+      marginPreset: 'default',
+      densityPreset: 'default'
+    }
+
+    const html = buildPrintPreviewHtml('job-2', '报表打印预览', '<div>preview</div>', initialSettings)
+
+    expect(html).toContain('const persistPreferenceKey = null;')
   })
 })

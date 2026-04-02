@@ -73,6 +73,65 @@ export interface PrintDocument {
   segments: PrintDocumentSegment[]
 }
 
+export interface PrintPageModel {
+  kind: PrintDocumentSegment['kind']
+  pageNumber: number
+  firstRowKey: string | null
+  lastRowKey: string | null
+  pageHtml: string
+}
+
+export interface PrintLayoutDiagnostics {
+  engine: 'page-model'
+  overflowDetected: boolean
+  oversizeRowKeys: string[]
+  pageRowCounts: number[]
+}
+
+export interface PrintLayoutResult {
+  title: string
+  orientation: PrintOrientation
+  settings: PrintPreviewSettings
+  pageCount: number
+  pages: PrintPageModel[]
+  diagnostics: PrintLayoutDiagnostics
+}
+
+export interface PrintPreviewModel extends PrintLayoutResult {
+  layoutVersion: number
+}
+
+export type PrintPreviewMarginPreset = 'default' | 'narrow' | 'extra-narrow'
+export type PrintPreviewDensityPreset = 'default' | 'compact' | 'ultra-compact'
+
+export interface PrintPreviewSettings {
+  orientation: PrintOrientation
+  scalePercent: number
+  marginPreset: PrintPreviewMarginPreset
+  densityPreset: PrintPreviewDensityPreset
+}
+
+const PRINT_PREVIEW_SCALE_OPTIONS = new Set([75, 80, 85, 90, 95, 100])
+
+export function normalizePrintPreviewSettings(
+  settings: Partial<PrintPreviewSettings> | undefined,
+  fallbackOrientation: PrintOrientation = 'portrait'
+): PrintPreviewSettings {
+  const scaleCandidate = Number(settings?.scalePercent)
+  return {
+    orientation: settings?.orientation === 'landscape' ? 'landscape' : fallbackOrientation,
+    scalePercent: PRINT_PREVIEW_SCALE_OPTIONS.has(scaleCandidate) ? scaleCandidate : 100,
+    marginPreset:
+      settings?.marginPreset === 'narrow' || settings?.marginPreset === 'extra-narrow'
+        ? settings.marginPreset
+        : 'default',
+    densityPreset:
+      settings?.densityPreset === 'compact' || settings?.densityPreset === 'ultra-compact'
+        ? settings.densityPreset
+        : 'default'
+  }
+}
+
 const VOUCHER_TABLE_GAP_PX = 10
 const VOUCHER_MIN_ENTRY_ROWS = 6
 const VOUCHER_ROW_HEIGHT_PX = 38.4
@@ -170,7 +229,48 @@ function formatTableCellContent(cell: PrintTableCell, column: PrintTableColumn):
   return `<span class="print-fit-text" data-base-font-size="${PRINT_FIT_TEXT_FONT_SIZE_PX}" data-min-font-size="${PRINT_FIT_TEXT_MIN_FONT_SIZE_PX}">${contentHtml}</span>`
 }
 
-function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boolean): string {
+export function buildBookRepeatedHeaderHtml(segment: PrintTableSegment): string {
+  const titleHtml =
+    segment.titleMetaLines && segment.titleMetaLines.length > 0
+      ? `
+        <div class="print-book-header-row">
+          <div class="print-book-title-side">
+            ${segment.titleMetaLines
+              .map((line) => `<span class="print-book-title-side-line">${escapeHtml(line)}</span>`)
+              .join('')}
+          </div>
+          <h1 class="print-book-title-center">${escapeHtml(segment.title)}</h1>
+          <div class="print-book-title-spacer" aria-hidden="true"></div>
+        </div>
+      `
+      : segment.subjectLabel
+        ? `
+          <div class="print-book-thead-title-row">
+            <span class="print-book-title">${escapeHtml(segment.title)}</span>
+            <span class="print-book-subject">${escapeHtml(segment.subjectLabel)}</span>
+          </div>
+        `
+        : `
+          <div class="print-book-thead-title-row print-book-thead-title-row--centered">
+            <span class="print-book-title">${escapeHtml(segment.title)}</span>
+          </div>
+        `
+
+  return `
+    <tr class="print-book-repeat-header">
+      <th class="print-book-repeat-header-cell" colspan="${Math.max(segment.columns.length, 1)}">
+        ${titleHtml}
+        <div class="print-meta print-meta-book print-book-thead-meta">
+          <span class="print-meta-left">编制单位：${escapeHtml(segment.ledgerName)}</span>
+          <span class="print-meta-center">${escapeHtml(segment.periodLabel ? `会计期间：${segment.periodLabel}` : '')}</span>
+          <span class="print-meta-right">单位：${escapeHtml(segment.unitLabel || '元')}</span>
+        </div>
+      </th>
+    </tr>
+  `
+}
+
+export function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boolean): string {
   const isBookHeader = segment.headerMode === 'book'
   const metaLines = [
     `编制单位：${segment.ledgerName}`,
@@ -199,52 +299,32 @@ function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boolean): 
           return `<td class="${className}">${column ? formatTableCellContent(cell, column) : escapeHtml(formatCellValue(cell))}</td>`
         })
         .join('')
-      return `<tr>${cells}</tr>`
+      return `<tr data-row-key="${escapeHtml(row.key)}">${cells}</tr>`
     })
     .join('')
-  const titleHtml =
-    isBookHeader && segment.titleMetaLines && segment.titleMetaLines.length > 0
-      ? `
-        <div class="print-book-header-row">
-          <div class="print-book-title-side">
-            ${segment.titleMetaLines
-              .map((line) => `<span class="print-book-title-side-line">${escapeHtml(line)}</span>`)
-              .join('')}
-          </div>
-          <h1 class="print-book-title-center">${escapeHtml(segment.title)}</h1>
-          <div class="print-book-title-spacer" aria-hidden="true"></div>
-        </div>
-      `
-      : isBookHeader && segment.subjectLabel
-      ? `
-        <div class="print-book-title-row">
-          <span class="print-book-title">${escapeHtml(segment.title)}</span>
-          <span class="print-book-subject">${escapeHtml(segment.subjectLabel)}</span>
-        </div>
-      `
-      : `<h1>${escapeHtml(segment.title)}</h1>`
+  const titleHtml = isBookHeader ? '' : `<h1>${escapeHtml(segment.title)}</h1>`
   const metaHtml = isBookHeader
-    ? `
-        <div class="print-meta print-meta-book">
-          <span class="print-meta-left">编制单位：${escapeHtml(segment.ledgerName)}</span>
-          <span class="print-meta-center">${escapeHtml(segment.periodLabel ? `会计期间：${segment.periodLabel}` : '')}</span>
-          <span class="print-meta-right">单位：${escapeHtml(segment.unitLabel || '元')}</span>
-        </div>
-      `
+    ? ''
     : `
         <div class="print-meta">
           ${metaLines.map((line) => `<span>${escapeHtml(line)}</span>`).join('')}
         </div>
       `
+  const theadHtml = isBookHeader
+    ? `${buildBookRepeatedHeaderHtml(segment)}<tr class="print-book-thead-column-row">${headerHtml}</tr>`
+    : `<tr>${headerHtml}</tr>`
+  const sectionClassName = ['print-segment', isBookHeader ? 'print-segment-book' : '', pageBreak ? 'page-break' : '']
+    .filter(Boolean)
+    .join(' ')
 
   return `
-    <section class="print-segment ${pageBreak ? 'page-break' : ''}">
+    <section class="${sectionClassName}">
       <div class="print-document">
         ${titleHtml}
         ${metaHtml}
         <table class="print-table">
           <colgroup>${colGroupHtml}</colgroup>
-          <thead><tr>${headerHtml}</tr></thead>
+          <thead>${theadHtml}</thead>
           <tbody>${bodyHtml}</tbody>
         </table>
       </div>
@@ -252,7 +332,7 @@ function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boolean): 
   `
 }
 
-function buildVoucherSheetHtml(voucher: PrintVoucherRecord, ledgerName: string): string {
+export function buildVoucherSheetHtml(voucher: PrintVoucherRecord, ledgerName: string): string {
   const paddedEntries = [...voucher.entries]
   while (paddedEntries.length < VOUCHER_MIN_ENTRY_ROWS) {
     paddedEntries.push({
@@ -334,7 +414,7 @@ function buildVoucherSheetHtml(voucher: PrintVoucherRecord, ledgerName: string):
   `
 }
 
-function buildVoucherSegmentHtml(segment: PrintVoucherSegment, pageBreak: boolean): string {
+export function buildVoucherSegmentHtml(segment: PrintVoucherSegment, pageBreak: boolean): string {
   if (segment.layout === 'double') {
     const pages: Array<Array<PrintVoucherRecord | null>> = []
     for (let index = 0; index < segment.vouchers.length; index += 2) {
@@ -391,8 +471,10 @@ export function buildPrintPreviewHtml(
   jobId: string,
   title: string,
   contentHtml: string,
-  orientation: PrintOrientation = 'portrait'
+  initialSettings: PrintPreviewSettings,
+  persistPreferenceKey: string | null = null
 ): string {
+  const defaultSettings = normalizePrintPreviewSettings(initialSettings, initialSettings.orientation)
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -400,17 +482,19 @@ export function buildPrintPreviewHtml(
     <title>${escapeHtml(title)}</title>
     <style>
       @page {
-        size: A4 ${orientation};
+        size: A4 ${defaultSettings.orientation};
         margin: 0;
       }
       :root {
         color-scheme: light;
         --voucher-table-gap: ${VOUCHER_TABLE_GAP_PX}px;
-        --preview-scale: 1;
+        --preview-scale: ${defaultSettings.scalePercent / 100};
         --preview-padding-y: 16mm;
         --preview-padding-x: 14mm;
         --preview-cell-padding-y: 6px;
         --preview-cell-padding-x: 8px;
+        --preview-fit-cell-height: 32px;
+        --preview-voucher-row-height: ${VOUCHER_ROW_HEIGHT_PX}px;
       }
       * { box-sizing: border-box; }
       body {
@@ -466,6 +550,10 @@ export function buildPrintPreviewHtml(
       .preview-control--orientation {
         min-width: 140px;
       }
+      .preview-control--margin,
+      .preview-control--density {
+        min-width: 132px;
+      }
       .preview-status {
         font-size: 12px;
         color: #475569;
@@ -493,6 +581,10 @@ export function buildPrintPreviewHtml(
         break-after: page;
         page-break-after: always;
       }
+      .print-segment-book {
+        break-inside: avoid-page;
+        page-break-inside: avoid;
+      }
       .print-document h1,
       .voucher-title {
         margin: 0 0 10px;
@@ -500,13 +592,16 @@ export function buildPrintPreviewHtml(
         font-size: 20px;
         font-weight: 700;
       }
-      .print-book-title-row {
+      .print-book-thead-title-row {
         display: flex;
         align-items: baseline;
         justify-content: flex-start;
         gap: 16px;
         margin: 0 0 10px;
         text-align: left;
+      }
+      .print-book-thead-title-row--centered {
+        justify-content: center;
       }
       .print-book-title,
       .print-book-subject {
@@ -548,6 +643,13 @@ export function buildPrintPreviewHtml(
       }
       .print-meta {
         margin-bottom: 10px;
+      }
+      .print-book-repeat-header-cell {
+        padding: 10px 12px !important;
+        background: #ffffff;
+      }
+      .print-book-repeat-header-cell .print-meta {
+        margin-bottom: 0;
       }
       .print-meta span,
       .voucher-meta span,
@@ -595,7 +697,7 @@ export function buildPrintPreviewHtml(
         vertical-align: middle;
       }
       .print-fit-cell {
-        height: 32px;
+        height: var(--preview-fit-cell-height);
         overflow: hidden;
       }
       .print-fit-text {
@@ -612,7 +714,7 @@ export function buildPrintPreviewHtml(
         overflow: hidden;
       }
       .voucher-fit-cell {
-        height: ${VOUCHER_ROW_HEIGHT_PX}px;
+        height: var(--preview-voucher-row-height);
         overflow: hidden;
       }
       .voucher-fit-text {
@@ -680,6 +782,10 @@ export function buildPrintPreviewHtml(
           margin: 0;
           box-shadow: none;
         }
+        .print-segment-book {
+          break-inside: avoid-page;
+          page-break-inside: avoid;
+        }
       }
     </style>
   </head>
@@ -690,41 +796,172 @@ export function buildPrintPreviewHtml(
       <label class="preview-control preview-control--orientation" for="preview-orientation-select">
         纸张方向
         <select id="preview-orientation-select" onchange="applyOrientation(this.value)">
-          <option value="portrait"${orientation === 'portrait' ? ' selected' : ''}>竖向</option>
-          <option value="landscape"${orientation === 'landscape' ? ' selected' : ''}>横向</option>
+          <option value="portrait"${defaultSettings.orientation === 'portrait' ? ' selected' : ''}>竖向</option>
+          <option value="landscape"${defaultSettings.orientation === 'landscape' ? ' selected' : ''}>横向</option>
         </select>
       </label>
       <label class="preview-control" for="preview-scale-select">
         缩放
         <select id="preview-scale-select" onchange="applyScale(this.value)">
-          <option value="100">100%</option>
-          <option value="95">95%</option>
-          <option value="90">90%</option>
-          <option value="85">85%</option>
-          <option value="80">80%</option>
+          <option value="100"${defaultSettings.scalePercent === 100 ? ' selected' : ''}>100%</option>
+          <option value="95"${defaultSettings.scalePercent === 95 ? ' selected' : ''}>95%</option>
+          <option value="90"${defaultSettings.scalePercent === 90 ? ' selected' : ''}>90%</option>
+          <option value="85"${defaultSettings.scalePercent === 85 ? ' selected' : ''}>85%</option>
+          <option value="80"${defaultSettings.scalePercent === 80 ? ' selected' : ''}>80%</option>
+          <option value="75"${defaultSettings.scalePercent === 75 ? ' selected' : ''}>75%</option>
         </select>
       </label>
-      <button
-        type="button"
-        id="preview-compact-toggle"
-        aria-pressed="false"
-        onclick="toggleCompactMode()"
-      >
-        紧凑模式：关
-      </button>
+      <label class="preview-control preview-control--margin" for="preview-margin-select">
+        页边距
+        <select id="preview-margin-select" onchange="applyMarginPreset(this.value)">
+          <option value="default"${defaultSettings.marginPreset === 'default' ? ' selected' : ''}>标准</option>
+          <option value="narrow"${defaultSettings.marginPreset === 'narrow' ? ' selected' : ''}>窄</option>
+          <option value="extra-narrow"${defaultSettings.marginPreset === 'extra-narrow' ? ' selected' : ''}>极窄</option>
+        </select>
+      </label>
+      <label class="preview-control preview-control--density" for="preview-density-select">
+        内容密度
+        <select id="preview-density-select" onchange="applyDensityPreset(this.value)">
+          <option value="default"${defaultSettings.densityPreset === 'default' ? ' selected' : ''}>标准</option>
+          <option value="compact"${defaultSettings.densityPreset === 'compact' ? ' selected' : ''}>紧凑</option>
+          <option value="ultra-compact"${defaultSettings.densityPreset === 'ultra-compact' ? ' selected' : ''}>超紧凑</option>
+        </select>
+      </label>
+      <button type="button" id="preview-reset-button" onclick="resetPreviewSettings()">恢复默认</button>
       <button type="button" onclick="triggerPrint('${jobId}')">打印</button>
       <button type="button" onclick="triggerExportPdf('${jobId}')">导出 PDF</button>
       <button type="button" onclick="window.close()">关闭</button>
     </div>
-    <main class="preview-canvas orientation-${orientation}">${contentHtml}</main>
+    <main class="preview-canvas orientation-${defaultSettings.orientation}">${contentHtml}</main>
     <script>
       const statusNode = document.getElementById('preview-status');
-      const compactToggleButton = document.getElementById('preview-compact-toggle');
       const orientationSelect = document.getElementById('preview-orientation-select');
+      const scaleSelect = document.getElementById('preview-scale-select');
+      const marginSelect = document.getElementById('preview-margin-select');
+      const densitySelect = document.getElementById('preview-density-select');
       const rootStyle = document.documentElement.style;
-      const overflowWarningText = '提示：当前打印内容已超出纸张范围，请调整缩放、紧凑模式或内容后重试。';
+      const defaultPreviewSettings = ${JSON.stringify(defaultSettings)};
+      const persistPreferenceKey = ${JSON.stringify(persistPreferenceKey)};
+      const overflowWarningText = '提示：当前打印内容已超出纸张范围，请调整缩放、页边距或内容密度后重试。';
+      const marginPresetMap = {
+        default: { paddingY: '16mm', paddingX: '14mm' },
+        narrow: { paddingY: '10mm', paddingX: '8mm' },
+        'extra-narrow': { paddingY: '6mm', paddingX: '4mm' }
+      };
+      const densityPresetMap = {
+        default: {
+          cellPaddingY: '6px',
+          cellPaddingX: '8px',
+          fitCellHeight: '32px',
+          voucherRowHeight: '${VOUCHER_ROW_HEIGHT_PX}px',
+          voucherGap: '${VOUCHER_TABLE_GAP_PX}px'
+        },
+        compact: {
+          cellPaddingY: '4px',
+          cellPaddingX: '6px',
+          fitCellHeight: '28px',
+          voucherRowHeight: '34px',
+          voucherGap: '8px'
+        },
+        'ultra-compact': {
+          cellPaddingY: '2px',
+          cellPaddingX: '4px',
+          fitCellHeight: '24px',
+          voucherRowHeight: '30px',
+          voucherGap: '6px'
+        }
+      };
+      let activePreviewSettings = { ...defaultPreviewSettings };
+      let allowPersist = false;
+      let bookPaginationSequence = 0;
+      const bookPaginationState = new Map();
       function isBlankAmountText(value) {
         return value.replace(/[\\s\\u00A0]/g, '') === '';
+      }
+      function normalizePreviewSettings(candidate, fallbackOrientation) {
+        const scalePercent = Number(candidate?.scalePercent);
+        return {
+          orientation: candidate?.orientation === 'landscape' ? 'landscape' : fallbackOrientation,
+          scalePercent: [75, 80, 85, 90, 95, 100].includes(scalePercent) ? scalePercent : 100,
+          marginPreset: ['default', 'narrow', 'extra-narrow'].includes(candidate?.marginPreset)
+            ? candidate.marginPreset
+            : 'default',
+          densityPreset: ['default', 'compact', 'ultra-compact'].includes(candidate?.densityPreset)
+            ? candidate.densityPreset
+            : 'default'
+        };
+      }
+      async function persistPreviewSettings() {
+        if (!allowPersist || !persistPreferenceKey) {
+          return;
+        }
+        try {
+          await window.api.settings.setUserPreferences({
+            [persistPreferenceKey]: JSON.stringify(activePreviewSettings)
+          });
+        } catch (error) {
+          console.warn('persist preview settings failed', error);
+        }
+      }
+      function isBookSegment(segment) {
+        return segment instanceof HTMLElement && segment.classList.contains('print-segment-book');
+      }
+      function getBookSegmentId(section) {
+        if (!(section instanceof HTMLElement)) {
+          return null;
+        }
+        if (section.dataset.bookPaginationId) {
+          return section.dataset.bookPaginationId;
+        }
+        bookPaginationSequence += 1;
+        section.dataset.bookPaginationId = 'book-segment-' + String(bookPaginationSequence);
+        return section.dataset.bookPaginationId;
+      }
+      function ensureBookPaginationState(section) {
+        const segmentId = getBookSegmentId(section);
+        if (!segmentId) {
+          return null;
+        }
+        if (bookPaginationState.has(segmentId)) {
+          return bookPaginationState.get(segmentId);
+        }
+        const documentNode = section.querySelector('.print-document');
+        const table = section.querySelector('.print-table');
+        const thead = table?.querySelector('thead');
+        const colgroup = table?.querySelector('colgroup');
+        const tbody = table?.querySelector('tbody');
+        if (!(documentNode instanceof HTMLElement) || !(table instanceof HTMLTableElement) || !(thead instanceof HTMLTableSectionElement) || !(tbody instanceof HTMLTableSectionElement)) {
+          return null;
+        }
+        const state = {
+          id: segmentId,
+          baseSectionClassName: Array.from(section.classList)
+            .filter((className) => className !== 'page-break')
+            .join(' '),
+          documentClassName: documentNode.className,
+          tableClassName: table.className,
+          colgroupHtml: colgroup?.outerHTML ?? '',
+          theadHtml: thead.innerHTML,
+          rowHtmlList: Array.from(tbody.rows).map((row) => row.outerHTML)
+        };
+        bookPaginationState.set(segmentId, state);
+        return state;
+      }
+      async function loadPersistedPreviewSettings() {
+        if (!persistPreferenceKey) {
+          return { ...defaultPreviewSettings };
+        }
+        try {
+          const preferences = await window.api.settings.getUserPreferences();
+          const rawValue = preferences?.[persistPreferenceKey];
+          if (!rawValue) {
+            return { ...defaultPreviewSettings };
+          }
+          return normalizePreviewSettings(JSON.parse(rawValue), defaultPreviewSettings.orientation);
+        } catch (error) {
+          console.warn('load persisted preview settings failed', error);
+          return { ...defaultPreviewSettings };
+        }
       }
       function getPreviewOrientation() {
         const canvas = document.querySelector('.preview-canvas');
@@ -732,18 +969,24 @@ export function buildPrintPreviewHtml(
           ? 'landscape'
           : 'portrait';
       }
-      function applyOrientation(value) {
+      function applyOrientation(value, options = { persist: true, refresh: true }) {
         const canvas = document.querySelector('.preview-canvas');
         if (!(canvas instanceof HTMLElement)) {
           return;
         }
         const nextOrientation = value === 'landscape' ? 'landscape' : 'portrait';
+        activePreviewSettings.orientation = nextOrientation;
         canvas.classList.toggle('orientation-landscape', nextOrientation === 'landscape');
         canvas.classList.toggle('orientation-portrait', nextOrientation === 'portrait');
         if (orientationSelect instanceof HTMLSelectElement && orientationSelect.value !== nextOrientation) {
           orientationSelect.value = nextOrientation;
         }
-        void refreshLayoutStatus();
+        if (options.persist) {
+          void persistPreviewSettings();
+        }
+        if (options.refresh) {
+          void refreshLayoutStatus();
+        }
       }
       function hasPrintOverflow() {
         const orientation = getPreviewOrientation();
@@ -753,7 +996,8 @@ export function buildPrintPreviewHtml(
           if (!(segment instanceof HTMLElement)) continue;
           const rect = segment.getBoundingClientRect();
           const heightLimit = rect.width * heightRatio;
-          if (rect.height > heightLimit + 1 || segment.scrollWidth > segment.clientWidth + 1) {
+          const exceedsHeight = !isBookSegment(segment) && rect.height > heightLimit + 1;
+          if (exceedsHeight || segment.scrollWidth > segment.clientWidth + 1) {
             return true;
           }
         }
@@ -790,11 +1034,129 @@ export function buildPrintPreviewHtml(
       function fitBookCells() {
         fitTextNodes('.print-fit-text');
       }
-      async function settleVoucherAmountLayout() {
+      async function settleVoucherAmountLayoutWithoutPagination() {
         fitVoucherAmountCells();
         fitVoucherTextCells();
         fitBookCells();
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
+      function createBookPageSection(state, rowHtmlList, withPageBreak) {
+        const section = document.createElement('section');
+        section.className = [state.baseSectionClassName, withPageBreak ? 'page-break' : '']
+          .filter(Boolean)
+          .join(' ');
+        section.dataset.bookPaginationId = state.id;
+        section.innerHTML =
+          '<div class="' +
+          state.documentClassName +
+          '"><table class="' +
+          state.tableClassName +
+          '">' +
+          state.colgroupHtml +
+          '<thead>' +
+          state.theadHtml +
+          '</thead><tbody>' +
+          rowHtmlList.join('') +
+          '</tbody></table></div>';
+        return section;
+      }
+      async function paginateBookSegment(section) {
+        if (!isBookSegment(section)) {
+          return;
+        }
+        const state = ensureBookPaginationState(section);
+        if (!state) {
+          return;
+        }
+        const parent = section.parentElement;
+        if (!(parent instanceof HTMLElement)) {
+          return;
+        }
+        const existingSections = Array.from(
+          parent.querySelectorAll('section[data-book-pagination-id="' + state.id + '"]')
+        );
+        const anchorSection =
+          existingSections.find((item) => item === section) ?? existingSections[0] ?? section;
+        const orientation = getPreviewOrientation();
+        const heightRatio = orientation === 'landscape' ? 210 / 297 : 297 / 210;
+        const measureHost = document.createElement('div');
+        measureHost.style.position = 'absolute';
+        measureHost.style.visibility = 'hidden';
+        measureHost.style.pointerEvents = 'none';
+        measureHost.style.left = '-99999px';
+        measureHost.style.top = '0';
+        document.body.appendChild(measureHost);
+        const measureSection = createBookPageSection(state, [], false);
+        measureHost.appendChild(measureSection);
+        const measureTbody = measureSection.querySelector('tbody');
+        if (!(measureTbody instanceof HTMLTableSectionElement)) {
+          measureHost.remove();
+          return;
+        }
+        const pageWidth = measureSection.getBoundingClientRect().width;
+        const pageHeightLimit = pageWidth * heightRatio;
+        const pages = [];
+        let currentPageRows = [];
+        for (const rowHtml of state.rowHtmlList) {
+          const buffer = document.createElement('tbody');
+          buffer.innerHTML = rowHtml;
+          const rowNode = buffer.firstElementChild;
+          if (!(rowNode instanceof HTMLTableRowElement)) {
+            continue;
+          }
+          measureTbody.appendChild(rowNode);
+          await settleVoucherAmountLayoutWithoutPagination();
+          const currentHeight = measureSection.getBoundingClientRect().height;
+          if (currentHeight > pageHeightLimit + 1) {
+            measureTbody.removeChild(rowNode);
+            if (currentPageRows.length === 0) {
+              currentPageRows.push(rowHtml);
+              pages.push(currentPageRows);
+              currentPageRows = [];
+            } else {
+              pages.push(currentPageRows);
+              currentPageRows = [rowHtml];
+              measureTbody.innerHTML = '';
+              for (const nextRowHtml of currentPageRows) {
+                const nextBuffer = document.createElement('tbody');
+                nextBuffer.innerHTML = nextRowHtml;
+                const nextRowNode = nextBuffer.firstElementChild;
+                if (nextRowNode instanceof HTMLTableRowElement) {
+                  measureTbody.appendChild(nextRowNode);
+                }
+              }
+            }
+          } else {
+            currentPageRows.push(rowHtml);
+          }
+        }
+        if (currentPageRows.length > 0) {
+          pages.push(currentPageRows);
+        }
+        measureHost.remove();
+        const fragment = document.createDocumentFragment();
+        pages.forEach((rowHtmlList, index) => {
+          fragment.appendChild(
+            createBookPageSection(state, rowHtmlList, index < pages.length - 1)
+          );
+        });
+        existingSections.forEach((item) => {
+          if (item !== anchorSection) {
+            item.remove();
+          }
+        });
+        anchorSection.replaceWith(fragment);
+      }
+      async function paginateBookSegments() {
+        const sections = Array.from(document.querySelectorAll('.preview-canvas .print-segment-book'));
+        for (const section of sections) {
+          await paginateBookSegment(section);
+        }
+      }
+      async function settleVoucherAmountLayout() {
+        await settleVoucherAmountLayoutWithoutPagination();
+        await paginateBookSegments();
+        await settleVoucherAmountLayoutWithoutPagination();
       }
       async function ensurePrintableLayout() {
         await settleVoucherAmountLayout();
@@ -813,30 +1175,74 @@ export function buildPrintPreviewHtml(
         }
         statusNode.textContent = hasPrintOverflow() ? overflowWarningText : '';
       }
-      function applyScale(value) {
+      function applyScale(value, options = { persist: true, refresh: true }) {
         const numeric = Number(value);
-        if (!Number.isFinite(numeric) || numeric <= 0) {
+        if (![75, 80, 85, 90, 95, 100].includes(numeric)) {
           return;
         }
+        activePreviewSettings.scalePercent = numeric;
         rootStyle.setProperty('--preview-scale', String(numeric / 100));
-        void refreshLayoutStatus();
-      }
-      function setCompactMode(enabled) {
-        rootStyle.setProperty('--preview-padding-y', enabled ? '10mm' : '16mm');
-        rootStyle.setProperty('--preview-padding-x', enabled ? '8mm' : '14mm');
-        rootStyle.setProperty('--preview-cell-padding-y', enabled ? '4px' : '6px');
-        rootStyle.setProperty('--preview-cell-padding-x', enabled ? '6px' : '8px');
-        if (compactToggleButton instanceof HTMLButtonElement) {
-          compactToggleButton.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-          compactToggleButton.textContent = enabled ? '紧凑模式：开' : '紧凑模式：关';
+        if (scaleSelect instanceof HTMLSelectElement && scaleSelect.value !== String(numeric)) {
+          scaleSelect.value = String(numeric);
         }
-        void refreshLayoutStatus();
+        if (options.persist) {
+          void persistPreviewSettings();
+        }
+        if (options.refresh) {
+          void refreshLayoutStatus();
+        }
       }
-      function toggleCompactMode() {
-        const enabled = compactToggleButton instanceof HTMLButtonElement
-          ? compactToggleButton.getAttribute('aria-pressed') === 'true'
-          : false;
-        setCompactMode(!enabled);
+      function applyMarginPreset(value, options = { persist: true, refresh: true }) {
+        const nextPreset = ['narrow', 'extra-narrow'].includes(value) ? value : 'default';
+        const preset = marginPresetMap[nextPreset];
+        activePreviewSettings.marginPreset = nextPreset;
+        rootStyle.setProperty('--preview-padding-y', preset.paddingY);
+        rootStyle.setProperty('--preview-padding-x', preset.paddingX);
+        if (marginSelect instanceof HTMLSelectElement && marginSelect.value !== nextPreset) {
+          marginSelect.value = nextPreset;
+        }
+        if (options.persist) {
+          void persistPreviewSettings();
+        }
+        if (options.refresh) {
+          void refreshLayoutStatus();
+        }
+      }
+      function applyDensityPreset(value, options = { persist: true, refresh: true }) {
+        const nextPreset = ['compact', 'ultra-compact'].includes(value) ? value : 'default';
+        const preset = densityPresetMap[nextPreset];
+        activePreviewSettings.densityPreset = nextPreset;
+        rootStyle.setProperty('--preview-cell-padding-y', preset.cellPaddingY);
+        rootStyle.setProperty('--preview-cell-padding-x', preset.cellPaddingX);
+        rootStyle.setProperty('--preview-fit-cell-height', preset.fitCellHeight);
+        rootStyle.setProperty('--preview-voucher-row-height', preset.voucherRowHeight);
+        rootStyle.setProperty('--voucher-table-gap', preset.voucherGap);
+        if (densitySelect instanceof HTMLSelectElement && densitySelect.value !== nextPreset) {
+          densitySelect.value = nextPreset;
+        }
+        if (options.persist) {
+          void persistPreviewSettings();
+        }
+        if (options.refresh) {
+          void refreshLayoutStatus();
+        }
+      }
+      function applyPreviewSettings(settings, options = { persist: true, refresh: true }) {
+        const normalized = normalizePreviewSettings(settings, defaultPreviewSettings.orientation);
+        applyOrientation(normalized.orientation, { persist: false, refresh: false });
+        applyScale(String(normalized.scalePercent), { persist: false, refresh: false });
+        applyMarginPreset(normalized.marginPreset, { persist: false, refresh: false });
+        applyDensityPreset(normalized.densityPreset, { persist: false, refresh: false });
+        activePreviewSettings = normalized;
+        if (options.persist) {
+          void persistPreviewSettings();
+        }
+        if (options.refresh) {
+          void refreshLayoutStatus();
+        }
+      }
+      function resetPreviewSettings() {
+        applyPreviewSettings(defaultPreviewSettings, { persist: true, refresh: true });
       }
       async function run(action, successText, failureText) {
         if (!statusNode) return;
@@ -872,11 +1278,15 @@ export function buildPrintPreviewHtml(
         fitVoucherAmountCells();
         fitVoucherTextCells();
         fitBookCells();
-        applyOrientation('${orientation}');
-        applyScale('100');
-        requestAnimationFrame(() => {
-          void refreshLayoutStatus();
-        });
+        void (async () => {
+          applyPreviewSettings(defaultPreviewSettings, { persist: false, refresh: false });
+          const storedSettings = await loadPersistedPreviewSettings();
+          applyPreviewSettings(storedSettings, { persist: false, refresh: false });
+          allowPersist = true;
+          requestAnimationFrame(() => {
+            void refreshLayoutStatus();
+          });
+        })();
       });
       window.addEventListener('resize', () => {
         void refreshLayoutStatus();

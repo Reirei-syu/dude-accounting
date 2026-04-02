@@ -367,11 +367,19 @@ const api = {
   print: {
     prepare: (payload: Record<string, unknown>) => ipcRenderer.invoke('print:prepare', payload),
     getJobStatus: (jobId: string) => ipcRenderer.invoke('print:getJobStatus', jobId),
+    getPreviewModel: (jobId: string) => ipcRenderer.invoke('print:getPreviewModel', jobId),
     openPreview: (jobId: string) => ipcRenderer.invoke('print:openPreview', jobId),
-    print: (payload: string | { jobId: string; orientation?: 'portrait' | 'landscape' }) =>
-      ipcRenderer.invoke('print:print', payload),
-    exportPdf: (payload: string | { jobId: string; orientation?: 'portrait' | 'landscape' }) =>
-      ipcRenderer.invoke('print:exportPdf', payload),
+    updatePreviewSettings: (payload: {
+      jobId: string
+      settings: {
+        orientation?: 'portrait' | 'landscape'
+        scalePercent?: number
+        marginPreset?: 'default' | 'narrow' | 'extra-narrow'
+        densityPreset?: 'default' | 'compact' | 'ultra-compact'
+      }
+    }) => ipcRenderer.invoke('print:updatePreviewSettings', payload),
+    print: (payload: string | { jobId: string }) => ipcRenderer.invoke('print:print', payload),
+    exportPdf: (payload: string | { jobId: string }) => ipcRenderer.invoke('print:exportPdf', payload),
     dispose: (jobId: string) => ipcRenderer.invoke('print:dispose', jobId)
   },
   bookQuery: {
