@@ -95,7 +95,7 @@ jobs:
         shell: pwsh
         run: |
           npm run typecheck
-          npm test
+          npx vitest run --testTimeout=20000
 
       - name: Build Windows installer
         if: steps.version.outputs.changed == 'true'
