@@ -323,6 +323,9 @@ export function initializeDatabase(): void {
       ledger_id INTEGER NOT NULL,
       backup_period TEXT DEFAULT NULL,
       fiscal_year TEXT DEFAULT NULL,
+      package_type TEXT NOT NULL DEFAULT 'system_db_snapshot_legacy'
+        CHECK(package_type IN ('ledger_backup', 'system_db_snapshot_legacy')),
+      package_schema_version TEXT NOT NULL DEFAULT '1.0',
       backup_path TEXT NOT NULL,
       manifest_path TEXT DEFAULT NULL,
       checksum TEXT NOT NULL,
@@ -738,6 +741,16 @@ export function ensureBackupSchema(db: Database.Database): void {
     name: string
   }>
   if (columns.length === 0) return
+
+  if (!columns.some((column) => column.name === 'package_type')) {
+    db.exec(
+      "ALTER TABLE backup_packages ADD COLUMN package_type TEXT NOT NULL DEFAULT 'system_db_snapshot_legacy'"
+    )
+  }
+
+  if (!columns.some((column) => column.name === 'package_schema_version')) {
+    db.exec("ALTER TABLE backup_packages ADD COLUMN package_schema_version TEXT NOT NULL DEFAULT '1.0'")
+  }
 
   if (!columns.some((column) => column.name === 'manifest_path')) {
     db.exec('ALTER TABLE backup_packages ADD COLUMN manifest_path TEXT DEFAULT NULL')

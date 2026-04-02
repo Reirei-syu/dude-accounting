@@ -12,11 +12,13 @@ import {
   updateBackupPackageValidation
 } from '../services/backupCatalog'
 import {
-  createBackupArtifact,
+  createLedgerBackupArtifact,
+  importLedgerBackupArtifact,
   resolveBackupArtifactPaths,
   restoreBackupArtifact,
   type BackupManifest,
-  validateBackupArtifact
+  validateBackupArtifact,
+  validateLedgerBackupArtifact
 } from '../services/backupRecovery'
 import { formatLocalDateTime } from '../services/localTime'
 import {
@@ -34,6 +36,10 @@ import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requireAdmin, requireLedgerAccess, requirePermission } from './session'
 
 const BACKUP_LAST_DIR_KEY = 'backup_last_dir'
+
+function getElectronicVoucherRootDir(): string {
+  return path.join(app.getPath('userData'), 'electronic-vouchers')
+}
 
 function getDefaultBackupRootDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '系统备份')
@@ -127,7 +133,7 @@ export function registerBackupHandlers(): void {
             db.pragma('wal_checkpoint(TRUNCATE)')
             const createdAtDate = new Date()
 
-            const artifact = createBackupArtifact({
+            const artifact = createLedgerBackupArtifact({
               sourcePath: getDatabasePath(),
               backupDir: picked.directoryPath,
               ledgerId: payload.ledgerId,
@@ -142,6 +148,8 @@ export function registerBackupHandlers(): void {
               ledgerId: payload.ledgerId,
               backupPeriod,
               fiscalYear,
+              packageType: 'ledger_backup',
+              packageSchemaVersion: '2.0',
               backupPath: artifact.backupPath,
               manifestPath: artifact.manifestPath,
               checksum: artifact.checksum,
@@ -167,7 +175,8 @@ export function registerBackupHandlers(): void {
                 manifestPath: artifact.manifestPath,
                 fileSize: artifact.fileSize,
                 createdAt,
-                backupMode: 'system_db_snapshot'
+                backupMode: 'ledger_backup_package',
+                packageType: 'ledger_backup'
               }
             })
 
@@ -239,11 +248,10 @@ export function registerBackupHandlers(): void {
           }
           requireLedgerAccess(event, db, row.ledger_id)
 
-          const validation = validateBackupArtifact(
-            row.backup_path,
-            row.checksum,
-            row.manifest_path
-          )
+          const validation =
+            row.package_type === 'ledger_backup'
+              ? validateLedgerBackupArtifact(row.backup_path, row.manifest_path ?? '')
+              : validateBackupArtifact(row.backup_path, row.checksum, row.manifest_path)
           updateBackupPackageValidation(db, backupId, {
             valid: validation.valid,
             validatedAt: validation.valid ? formatLocalDateTime() : null
@@ -259,7 +267,8 @@ export function registerBackupHandlers(): void {
             targetId: row.id,
             details: {
               ...validation,
-              manifestPath: row.manifest_path
+              manifestPath: row.manifest_path,
+              packageType: row.package_type
             }
           })
 
@@ -277,6 +286,114 @@ export function registerBackupHandlers(): void {
         }
       }
     )
+  )
+
+  ipcMain.handle(
+    'backup:import',
+    async (
+      event,
+      payload?: {
+        backupId?: number
+        packagePath?: string
+      }
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'backup:import',
+          baseDir: app.getPath('userData'),
+          context: {
+            backupId: payload?.backupId ?? null,
+            hasPackagePath: Boolean(payload?.packagePath)
+          }
+        },
+        async () => {
+          try {
+            const user = requirePermission(event, 'ledger_settings')
+            const db = getDatabase()
+            const preferredDir =
+              getPathPreference(db, BACKUP_LAST_DIR_KEY) ?? getDefaultBackupRootDir()
+
+            let backupPath = ''
+            let manifestPath = ''
+            let sourceBackupId: number | null = null
+            let sourceLedgerId: number | null = null
+
+            if (typeof payload?.backupId === 'number') {
+              const row = getBackupPackageById(db, payload.backupId)
+
+              if (!row) {
+                return { success: false, error: '备份记录不存在' }
+              }
+
+              requireLedgerAccess(event, db, row.ledger_id)
+              if (row.package_type !== 'ledger_backup') {
+                return { success: false, error: '历史整库快照不支持导入为新账套' }
+              }
+
+              backupPath = row.backup_path
+              manifestPath = row.manifest_path ?? ''
+              sourceBackupId = row.id
+              sourceLedgerId = row.ledger_id
+            } else {
+              const picked = payload?.packagePath
+                ? { cancelled: false, directoryPath: payload.packagePath }
+                : await pickDirectory(event.sender, {
+                    defaultPath: preferredDir,
+                    title: '选择需要导入的账套备份包目录'
+                  })
+
+              if (picked.cancelled || !picked.directoryPath) {
+                return { success: false, cancelled: true }
+              }
+
+              rememberPathPreference(db, BACKUP_LAST_DIR_KEY, path.dirname(picked.directoryPath))
+              const resolved = resolveBackupArtifactPaths(picked.directoryPath)
+              backupPath = resolved.backupPath
+              manifestPath = resolved.manifestPath
+            }
+
+            db.pragma('wal_checkpoint(TRUNCATE)')
+
+            const imported = importLedgerBackupArtifact({
+              backupPath,
+              manifestPath,
+              targetPath: getDatabasePath(),
+              attachmentRootDir: getElectronicVoucherRootDir(),
+              operatorUserId: user.id,
+              operatorIsAdmin: user.isAdmin
+            })
+
+            appendOperationLog(db, {
+              ledgerId: imported.importedLedgerId,
+              userId: user.id,
+              username: user.username,
+              module: 'backup',
+              action: 'import',
+              targetType: 'ledger',
+              targetId: imported.importedLedgerId,
+              details: {
+                sourceBackupId,
+                sourceLedgerId,
+                sourcePackagePath: backupPath,
+                manifestPath,
+                packageType: 'ledger_backup',
+                importedLedgerName: imported.importedLedgerName
+              }
+            })
+
+            return {
+              success: true,
+              importedLedgerId: imported.importedLedgerId,
+              importedLedgerName: imported.importedLedgerName
+            }
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : '导入账套备份失败'
+            }
+          }
+        }
+      )
   )
 
   ipcMain.handle(

@@ -3,7 +3,8 @@ import {
   getArchiveYearOptions,
   getBackupPeriodOptions,
   pickDefaultArchiveYear,
-  pickDefaultBackupPeriod
+  pickDefaultBackupPeriod,
+  resolveBackupPeriodSelection
 } from './backupSelection'
 
 const periods = [
@@ -14,8 +15,8 @@ const periods = [
 ]
 
 describe('backup selection helpers', () => {
-  it('lists closed backup periods in descending order and defaults to latest closed period', () => {
-    expect(getBackupPeriodOptions(periods)).toEqual(['2026-03', '2026-01', '2025-12'])
+  it('lists all backup periods in descending order and defaults to latest period', () => {
+    expect(getBackupPeriodOptions(periods)).toEqual(['2026-03', '2026-02', '2026-01', '2025-12'])
     expect(pickDefaultBackupPeriod(periods)).toBe('2026-03')
   })
 
@@ -24,8 +25,14 @@ describe('backup selection helpers', () => {
     expect(pickDefaultArchiveYear(periods)).toBe('2026')
   })
 
-  it('returns empty defaults when no closed periods exist', () => {
-    expect(pickDefaultBackupPeriod([{ period: '2026-02', is_closed: 0 }])).toBe('')
+  it('returns backup defaults for unclosed periods and keeps archive year empty when none are closed', () => {
+    expect(pickDefaultBackupPeriod([{ period: '2026-02', is_closed: 0 }])).toBe('2026-02')
     expect(pickDefaultArchiveYear([{ period: '2026-02', is_closed: 0 }])).toBe('')
+  })
+
+  it('prefers current period when resolving backup period selection', () => {
+    expect(resolveBackupPeriodSelection(periods, '2026-02', '')).toBe('2026-02')
+    expect(resolveBackupPeriodSelection(periods, '2026-04', '')).toBe('2026-03')
+    expect(resolveBackupPeriodSelection([], '2026-04', '')).toBe('')
   })
 })

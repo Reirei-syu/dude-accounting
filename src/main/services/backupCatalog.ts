@@ -5,6 +5,8 @@ export interface BackupPackageRecord {
   ledger_id: number
   backup_period: string | null
   fiscal_year: string | null
+  package_type: 'ledger_backup' | 'system_db_snapshot_legacy'
+  package_schema_version: string
   backup_path: string
   manifest_path: string | null
   checksum: string
@@ -19,6 +21,8 @@ export interface CreateBackupPackageInput {
   ledgerId: number
   backupPeriod: string | null
   fiscalYear: string | null
+  packageType: 'ledger_backup' | 'system_db_snapshot_legacy'
+  packageSchemaVersion: string
   backupPath: string
   manifestPath: string
   checksum: string
@@ -39,23 +43,27 @@ export function createBackupPackageRecord(
 ): number {
   const result = db
     .prepare(
-      `INSERT INTO backup_packages (
-         ledger_id,
-         backup_period,
-         fiscal_year,
-         backup_path,
-         manifest_path,
-         checksum,
-         file_size,
-         status,
-         created_by,
-         created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)`
+       `INSERT INTO backup_packages (
+          ledger_id,
+          backup_period,
+          fiscal_year,
+          package_type,
+          package_schema_version,
+          backup_path,
+          manifest_path,
+          checksum,
+          file_size,
+          status,
+          created_by,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)`
     )
     .run(
       input.ledgerId,
       input.backupPeriod,
       input.fiscalYear,
+      input.packageType,
+      input.packageSchemaVersion,
       input.backupPath,
       input.manifestPath,
       input.checksum,

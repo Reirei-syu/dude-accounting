@@ -13,6 +13,8 @@ type BackupRow = {
   ledger_id: number
   backup_period: string | null
   fiscal_year: string | null
+  package_type: string
+  package_schema_version: string
   backup_path: string
   manifest_path: string
   checksum: string
@@ -37,7 +39,7 @@ class FakeBackupCatalogDb {
 
     if (
       normalized ===
-      `INSERT INTO backup_packages ( ledger_id, backup_period, fiscal_year, backup_path, manifest_path, checksum, file_size, status, created_by, created_at ) VALUES (?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)`
+      `INSERT INTO backup_packages ( ledger_id, backup_period, fiscal_year, package_type, package_schema_version, backup_path, manifest_path, checksum, file_size, status, created_by, created_at ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'generated', ?, ?)`
     ) {
       return {
         get: () => undefined,
@@ -46,6 +48,8 @@ class FakeBackupCatalogDb {
           ledgerId,
           backupPeriod,
           fiscalYear,
+          packageType,
+          packageSchemaVersion,
           backupPath,
           manifestPath,
           checksum,
@@ -59,6 +63,8 @@ class FakeBackupCatalogDb {
             ledger_id: Number(ledgerId),
             backup_period: backupPeriod === null ? null : String(backupPeriod),
             fiscal_year: fiscalYear === null ? null : String(fiscalYear),
+            package_type: String(packageType),
+            package_schema_version: String(packageSchemaVersion),
             backup_path: String(backupPath),
             manifest_path: String(manifestPath),
             checksum: String(checksum),
@@ -178,6 +184,8 @@ describe('backupCatalog service', () => {
       ledgerId: 1,
       backupPeriod: '2026-03',
       fiscalYear: '2026',
+      packageType: 'ledger_backup',
+      packageSchemaVersion: '2.0',
       backupPath: 'D:/tmp/backup-1.db',
       manifestPath: 'D:/tmp/backup-1/manifest.json',
       checksum: 'checksum-1',
@@ -189,6 +197,8 @@ describe('backupCatalog service', () => {
       ledgerId: 2,
       backupPeriod: '2026-02',
       fiscalYear: '2026',
+      packageType: 'system_db_snapshot_legacy',
+      packageSchemaVersion: '1.0',
       backupPath: 'D:/tmp/backup-2.db',
       manifestPath: 'D:/tmp/backup-2/manifest.json',
       checksum: 'checksum-2',
@@ -228,6 +238,8 @@ describe('backupCatalog service', () => {
       ledgerId: 1,
       backupPeriod: '2026-03',
       fiscalYear: '2026',
+      packageType: 'ledger_backup',
+      packageSchemaVersion: '2.0',
       backupPath: 'D:/tmp/backup-1.db',
       manifestPath: 'D:/tmp/backup-1/manifest.json',
       checksum: 'checksum-1',
@@ -243,6 +255,8 @@ describe('backupCatalog service', () => {
 
     expect(getBackupPackageById(db as never, backupId)).toMatchObject({
       id: backupId,
+      package_type: 'ledger_backup',
+      package_schema_version: '2.0',
       status: 'validated',
       validated_at: '2026-03-19 10:10:00'
     })

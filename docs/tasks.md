@@ -5,6 +5,22 @@
 
 ## 任务列表
 
+### [x] 账套级备份与删除强提示重构
+- 类型：Feature
+- 模块：core / service / ui / docs
+- 描述：将备份主流程从整库快照改为账套级备份包，新增导入为新账套能力，并把删除账套前的备份/归档硬阻断改为强提示与显式确认。
+- 完成时间：2026-04-02
+- 修改文件：`docs/plans/2026-04-02_ledger_backup_refactor_plan.md`、`AGENTS.md`、`prds/PROJECT_SPEC.md`、`prds/prd.md`、`prds/合规整改计划.md`、`src/main/database/init.ts`、`src/main/ipc/backup.ts`、`src/main/ipc/ledger.ts`、`src/main/services/backupCatalog.ts`、`src/main/services/backupRecovery.ts`、`src/main/services/ledgerCompliance.ts`、`src/preload/index.ts`、`src/preload/index.d.ts`、`src/renderer/src/pages/Backup.tsx`、`src/renderer/src/pages/MainLayout.tsx`
+- 影响范围：账套级备份包生成与校验、备份包导入新账套、legacy 整库快照兼容、删除账套风险确认、三层接口与项目约束文档
+
+### [x] 放宽账套备份期间限制
+- 类型：Fix
+- 模块：ui / docs / test
+- 描述：允许无已结账期间时也能创建账套备份；备份期间选择器改为显示全部期间，若账套暂无期间则按“未设置期间”备份，电子档案归档年度规则保持不变。
+- 完成时间：2026-04-02
+- 修改文件：`src/renderer/src/pages/backupSelection.ts`、`src/renderer/src/pages/backupSelection.test.ts`、`src/renderer/src/pages/Backup.tsx`、`prds/PROJECT_SPEC.md`、`PROGRESS.md`、`docs/context/latest_context.md`、`prds/开发日志.md`
+- 影响范围：备份期间选择、备份按钮可用性、备份提示文案、备份默认值与项目行为文档
+
 ### [x] Electron 真实链路断链测试文档与脚本落盘
 - 类型：开发
 - 模块：docs / scripts
@@ -57,8 +73,8 @@
 - 类型：运维
 - 模块：ui / docs
 - 描述：清理本次调试与正式审计过程中留在当前开发库中的多组 `自动测试-*` 账套，必要时先备份再删除。
-- 依赖：无
-- 风险：账套删除前必须先做备份/归档校验，不能直接清库
+- 依赖：账套级备份与删除强提示重构
+- 风险：需在新删除强提示流程下执行，避免误删测试账套
 
 ### [x] 安装升级数据路径保护
 - 类型：修复

@@ -18,6 +18,13 @@ const generateRandomString = (length = 10): string => {
   return result
 }
 
+interface LedgerDeletionRiskState {
+  validatedBackupCount: number
+  validatedArchiveCount: number
+  missingValidatedBackup: boolean
+  missingValidatedArchive: boolean
+}
+
 export default function MainLayout(): JSX.Element {
   const { isMenuSuspended, openTab, tabs, resetWorkspace } = useUIStore()
   const {
@@ -61,6 +68,8 @@ export default function MainLayout(): JSX.Element {
   const [isDeletingLedger, setIsDeletingLedger] = useState(false)
   const [deleteValidationCode, setDeleteValidationCode] = useState('')
   const [deleteInputCode, setDeleteInputCode] = useState('')
+  const [deleteRisk, setDeleteRisk] = useState<LedgerDeletionRiskState | null>(null)
+  const [deleteRiskAcknowledged, setDeleteRiskAcknowledged] = useState(false)
 
   useEffect(() => {
     startupAppliedRef.current = false
@@ -170,10 +179,29 @@ export default function MainLayout(): JSX.Element {
     }
   }
 
-  const openDeleteLedger = (): void => {
+  const openDeleteLedger = async (): Promise<void> => {
     if (!currentLedger) {
       window.alert('请先选择要删除的账套')
       return
+    }
+    if (window.electron) {
+      try {
+        const riskResult = await window.api.ledger.getDeletionRisk(currentLedger.id)
+        if (!riskResult.success) {
+          window.alert(riskResult.error || '读取删除风险失败')
+          return
+        }
+        setDeleteRisk({
+          validatedBackupCount: riskResult.validatedBackupCount ?? 0,
+          validatedArchiveCount: riskResult.validatedArchiveCount ?? 0,
+          missingValidatedBackup: riskResult.missingValidatedBackup === true,
+          missingValidatedArchive: riskResult.missingValidatedArchive === true
+        })
+        setDeleteRiskAcknowledged(false)
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : '读取删除风险失败')
+        return
+      }
     }
     setDeleteValidationCode(generateRandomString(10))
     setDeleteInputCode('')
@@ -186,18 +214,29 @@ export default function MainLayout(): JSX.Element {
       window.alert('验证码输入不一致，删除取消。')
       return
     }
+    const requiresRiskAcknowledgement =
+      deleteRisk?.missingValidatedBackup === true || deleteRisk?.missingValidatedArchive === true
+    if (requiresRiskAcknowledgement && !deleteRiskAcknowledged) {
+      window.alert('请先确认已知晓当前账套缺少备份或电子档案归档的风险。')
+      return
+    }
     const confirmSecond = window.confirm(
       '删除后数据不可恢复！确实要删除【' + currentLedger.name + '】吗？'
     )
     if (!confirmSecond) return
 
     try {
-      const result = await window.api.ledger.delete(currentLedger.id)
+      const result = await window.api.ledger.delete({
+        ledgerId: currentLedger.id,
+        riskAcknowledged: deleteRiskAcknowledged
+      })
       if (!result.success) {
         window.alert(result.error || '删除账套失败')
         return
       }
       setIsDeletingLedger(false)
+      setDeleteRisk(null)
+      setDeleteRiskAcknowledged(false)
       const finalLedgers = await window.api.ledger.getAll()
       setLedgers(finalLedgers)
       if (finalLedgers.length > 0) {
@@ -303,7 +342,7 @@ export default function MainLayout(): JSX.Element {
                   <button
                     className="glass-btn-secondary main-create-ledger-btn"
                     style={{ color: 'var(--color-danger)', borderColor: 'rgba(185, 28, 28, 0.3)' }}
-                    onClick={openDeleteLedger}
+                    onClick={() => void openDeleteLedger()}
                     aria-label="删除当期账套"
                   >
                     删除账套
@@ -459,6 +498,22 @@ export default function MainLayout(): JSX.Element {
                   <strong>绝对无法恢复</strong>！
                 </p>
 
+                {deleteRisk && (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="font-semibold">删除前风险提示</div>
+                    <div className="mt-2">
+                      已校验账套备份：{deleteRisk.validatedBackupCount} 份
+                    </div>
+                    <div>已校验电子档案导出：{deleteRisk.validatedArchiveCount} 份</div>
+                    {deleteRisk.missingValidatedBackup && (
+                      <div className="mt-2">当前账套缺少已校验账套备份，删除后将无法通过账套包回滚。</div>
+                    )}
+                    {deleteRisk.missingValidatedArchive && (
+                      <div className="mt-1">当前账套缺少已校验电子档案导出，删除后将失去归档留存保障。</div>
+                    )}
+                  </div>
+                )}
+
                 <div className="bg-slate-100 p-3 rounded text-center border border-slate-200">
                   <span className="text-xs text-slate-500 block mb-1">
                     请在下方输入验证码以解锁删除按钮
@@ -476,16 +531,40 @@ export default function MainLayout(): JSX.Element {
                   autoComplete="off"
                 />
 
+                {deleteRisk &&
+                  (deleteRisk.missingValidatedBackup || deleteRisk.missingValidatedArchive) && (
+                    <label className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={deleteRiskAcknowledged}
+                        onChange={(event) => setDeleteRiskAcknowledged(event.target.checked)}
+                      />
+                      <span>
+                        我已知晓当前账套缺少必要备份或电子档案归档，仍决定继续删除，并接受由此带来的恢复与留档风险。
+                      </span>
+                    </label>
+                  )}
+
                 <div className="flex justify-end gap-3 mt-2">
                   <button
                     className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition"
-                    onClick={() => setIsDeletingLedger(false)}
+                    onClick={() => {
+                      setIsDeletingLedger(false)
+                      setDeleteRisk(null)
+                      setDeleteRiskAcknowledged(false)
+                    }}
                   >
                     取消操作
                   </button>
                   <button
                     className="px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 shadow disabled:opacity-50 disabled:cursor-not-allowed transition"
-                    disabled={deleteInputCode !== deleteValidationCode}
+                    disabled={
+                      deleteInputCode !== deleteValidationCode ||
+                      ((deleteRisk?.missingValidatedBackup === true ||
+                        deleteRisk?.missingValidatedArchive === true) &&
+                        !deleteRiskAcknowledged)
+                    }
                     onClick={() => void submitDeleteLedger()}
                   >
                     确认删除

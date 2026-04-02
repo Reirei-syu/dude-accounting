@@ -8,7 +8,7 @@ import {
   createLedgerWithTemplate,
   updateLedgerConfiguration
 } from '../services/ledgerLifecycle'
-import { assertLedgerDeletionAllowed } from '../services/ledgerCompliance'
+import { getLedgerDeletionRiskSnapshot } from '../services/ledgerCompliance'
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import { requireAuth, requireLedgerAccess, requirePermission } from './session'
 
@@ -129,33 +129,72 @@ export function registerLedgerHandlers(): void {
       )
   )
 
-  ipcMain.handle('ledger:delete', (event, id: number) =>
+  ipcMain.handle('ledger:delete', (event, payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
     withIpcTelemetry(
       {
         channel: 'ledger:delete',
         baseDir: app.getPath('userData'),
-        context: { ledgerId: id }
+        context: { ledgerId: payload.ledgerId, riskAcknowledged: payload.riskAcknowledged === true }
       },
       () => {
         try {
           const user = requirePermission(event, 'ledger_settings')
-          requireLedgerAccess(event, db, id)
-          assertLedgerDeletionAllowed(db, id)
-          db.prepare('DELETE FROM ledgers WHERE id = ?').run(id)
+          requireLedgerAccess(event, db, payload.ledgerId)
+          const riskSnapshot = getLedgerDeletionRiskSnapshot(db, payload.ledgerId)
+          const requiresRiskAcknowledgement =
+            riskSnapshot.missingValidatedBackup || riskSnapshot.missingValidatedArchive
+
+          if (requiresRiskAcknowledgement && payload.riskAcknowledged !== true) {
+            return {
+              success: false,
+              error: '当前账套仍缺少已校验备份或电子档案导出，请在删除弹窗中显式确认风险后再继续。'
+            }
+          }
+
+          db.prepare('DELETE FROM ledgers WHERE id = ?').run(payload.ledgerId)
 
           appendOperationLog(db, {
-            ledgerId: id,
+            ledgerId: payload.ledgerId,
             userId: user.id,
             username: user.username,
             module: 'ledger',
             action: 'delete',
             targetType: 'ledger',
-            targetId: id
+            targetId: payload.ledgerId,
+            details: {
+              ...riskSnapshot,
+              riskAcknowledged: payload.riskAcknowledged === true
+            }
           })
 
           return { success: true }
         } catch (error) {
           return { success: false, error: (error as Error).message }
+        }
+      }
+    )
+  )
+
+  ipcMain.handle('ledger:getDeletionRisk', (event, ledgerId: number) =>
+    withIpcTelemetry(
+      {
+        channel: 'ledger:getDeletionRisk',
+        baseDir: app.getPath('userData'),
+        context: { ledgerId }
+      },
+      () => {
+        try {
+          requirePermission(event, 'ledger_settings')
+          requireLedgerAccess(event, db, ledgerId)
+          return {
+            success: true,
+            ...getLedgerDeletionRiskSnapshot(db, ledgerId)
+          }
+        } catch (error) {
+          return {
+            success: false,
+            error: (error as Error).message
+          }
         }
       }
     )

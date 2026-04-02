@@ -12,7 +12,7 @@ import {
   getArchiveYearOptions,
   getBackupPeriodOptions,
   pickDefaultArchiveYear,
-  pickDefaultBackupPeriod,
+  resolveBackupPeriodSelection,
   type SelectablePeriod
 } from './backupSelection'
 
@@ -21,6 +21,8 @@ interface BackupRow {
   ledger_id: number
   backup_period: string | null
   fiscal_year: string | null
+  package_type: 'ledger_backup' | 'system_db_snapshot_legacy'
+  package_schema_version: string
   backup_path: string
   manifest_path: string | null
   checksum: string
@@ -64,18 +66,21 @@ const formatFileSize = (bytes: number): string => {
 const actionButtonClass =
   'glass-btn-secondary min-w-0 whitespace-nowrap px-3 py-1 text-xs leading-none disabled:cursor-not-allowed disabled:opacity-45'
 
-const confirmRecordedRestore = (): boolean =>
+const getBackupPackageModeLabel = (backup: BackupRow): string =>
+  backup.package_type === 'ledger_backup' ? '账套级备份包' : '历史整库快照（legacy）'
+
+const confirmRecordedImport = (): boolean =>
   window.confirm(
-    '整库恢复会用所选系统备份包完整覆盖当前系统数据，当前所有账套都会回到该备份创建时的状态，包括刚新建的账套。该操作不是导入单个账套。恢复完成后应用会自动重启。是否继续？'
+    '导入后会把所选账套备份包写入当前数据库，并创建一个新的账套，不会覆盖现有账套。若账套名称已存在，系统会自动追加“（导入）”后缀。是否继续？'
   )
 
-const confirmPathRestore = (): boolean =>
+const confirmPathImport = (): boolean =>
   window.confirm(
-    '从路径整库恢复会在你选择备份包后，完整覆盖当前系统数据，当前所有账套都会回到该备份创建时的状态，包括刚新建的账套。该操作不是导入单个账套。恢复完成后应用会自动重启。是否继续？'
+    '从路径导入会读取你选择的账套备份包，并在当前数据库中创建一个新的账套，不会覆盖现有账套。是否继续？'
   )
 
 export default function Backup(): JSX.Element {
-  const { currentLedger, currentPeriod } = useLedgerStore()
+  const { currentLedger, currentPeriod, setLedgers, setCurrentLedger } = useLedgerStore()
   const [backupPeriod, setBackupPeriod] = useState('')
   const [archiveYear, setArchiveYear] = useState('')
   const [backups, setBackups] = useState<BackupRow[]>([])
@@ -101,22 +106,17 @@ export default function Backup(): JSX.Element {
   const visibleArchives = useMemo(() => getVisibleRecordItems(archives, false), [archives])
 
   useEffect(() => {
-    if (!backupPeriodOptions.includes(backupPeriod)) {
-      setBackupPeriod(pickDefaultBackupPeriod(periods))
+    const nextBackupPeriod = resolveBackupPeriodSelection(periods, currentPeriod, backupPeriod)
+    if (nextBackupPeriod !== backupPeriod) {
+      setBackupPeriod(nextBackupPeriod)
     }
-  }, [backupPeriod, backupPeriodOptions, periods])
+  }, [backupPeriod, currentPeriod, periods])
 
   useEffect(() => {
     if (!archiveYearOptions.includes(archiveYear)) {
       setArchiveYear(pickDefaultArchiveYear(periods))
     }
   }, [archiveYear, archiveYearOptions, periods])
-
-  useEffect(() => {
-    if (currentPeriod && backupPeriodOptions.includes(currentPeriod)) {
-      setBackupPeriod(currentPeriod)
-    }
-  }, [currentPeriod, backupPeriodOptions])
 
   const loadData = async (): Promise<void> => {
     if (!currentLedger || !window.electron) {
@@ -163,15 +163,11 @@ export default function Backup(): JSX.Element {
 
   const createBackup = async (): Promise<void> => {
     if (!currentLedger || !canOperate) return
-    if (!backupPeriod) {
-      setMessage({ type: 'error', text: '当前没有已结账会计期间可用于备份。' })
-      return
-    }
 
     setMessage(null)
     const result = await window.api.backup.create({
       ledgerId: currentLedger.id,
-      period: backupPeriod
+      period: backupPeriod || null
     })
 
     if (result.cancelled) return
@@ -183,8 +179,8 @@ export default function Backup(): JSX.Element {
     setMessage({
       type: 'success',
       text: result.directoryPath
-        ? `系统备份包已创建到：${result.directoryPath}`
-        : '系统备份包已创建。'
+        ? `账套备份包已创建到：${result.directoryPath}`
+        : '账套备份包已创建。'
     })
     await loadData()
   }
@@ -232,32 +228,56 @@ export default function Backup(): JSX.Element {
     await loadData()
   }
 
-  const restoreBackup = async (backupId: number): Promise<void> => {
-    if (!confirmRecordedRestore()) return
+  const importBackup = async (backup: BackupRow): Promise<void> => {
+    if (backup.package_type !== 'ledger_backup') {
+      setMessage({ type: 'error', text: '历史整库快照不再支持导入为新账套。' })
+      return
+    }
+    if (!confirmRecordedImport()) return
 
     setMessage(null)
-    const result = await window.api.backup.restore({ backupId })
+    const result = await window.api.backup.import({ backupId: backup.id })
     if (result.cancelled) return
     if (!result.success) {
-      setMessage({ type: 'error', text: result.error || '整库恢复失败' })
+      setMessage({ type: 'error', text: result.error || '导入账套备份失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '整库恢复已启动，应用即将重启。' })
+    setMessage({
+      type: 'success',
+      text: `账套备份已导入：${result.importedLedgerName || '新账套'}`
+    })
+    const finalLedgers = await window.api.ledger.getAll()
+    setLedgers(finalLedgers)
+    const importedLedger = finalLedgers.find((ledger) => ledger.id === result.importedLedgerId)
+    if (importedLedger) {
+      setCurrentLedger(importedLedger)
+    }
+    await loadData()
   }
 
-  const restoreBackupFromPath = async (): Promise<void> => {
-    if (!confirmPathRestore()) return
+  const importBackupFromPath = async (): Promise<void> => {
+    if (!confirmPathImport()) return
 
     setMessage(null)
-    const result = await window.api.backup.restore()
+    const result = await window.api.backup.import()
     if (result.cancelled) return
     if (!result.success) {
-      setMessage({ type: 'error', text: result.error || '从自选路径整库恢复失败' })
+      setMessage({ type: 'error', text: result.error || '从路径导入账套失败' })
       return
     }
 
-    setMessage({ type: 'success', text: '已从自选路径启动整库恢复，应用即将重启。' })
+    setMessage({
+      type: 'success',
+      text: `已从路径导入账套：${result.importedLedgerName || '新账套'}`
+    })
+    const finalLedgers = await window.api.ledger.getAll()
+    setLedgers(finalLedgers)
+    const importedLedger = finalLedgers.find((ledger) => ledger.id === result.importedLedgerId)
+    if (importedLedger) {
+      setCurrentLedger(importedLedger)
+    }
+    await loadData()
   }
 
   const createArchive = async (): Promise<void> => {
@@ -336,6 +356,8 @@ export default function Backup(): JSX.Element {
       title: getBackupPackageName(backup.backup_path),
       rows: [
         { label: '包件名称', value: getBackupPackageName(backup.backup_path) },
+        { label: '包件类型', value: getBackupPackageModeLabel(backup) },
+        { label: '包格式版本', value: backup.package_schema_version },
         { label: '创建时间', value: backup.created_at },
         { label: '备份期间', value: backup.backup_period ?? '未指定' },
         { label: '归属年度', value: backup.fiscal_year ?? '未指定' },
@@ -368,6 +390,7 @@ export default function Backup(): JSX.Element {
 
   const renderBackupCard = (backup: BackupRow): JSX.Element => {
     const canDelete = !latestBackupIds.has(backup.id)
+    const canImport = backup.package_type === 'ledger_backup'
     return (
       <div
         key={backup.id}
@@ -386,6 +409,9 @@ export default function Backup(): JSX.Element {
         >
           {backup.created_at}
         </div>
+        <div className="mt-1 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
+          {getBackupPackageModeLabel(backup)}
+        </div>
         <div className="mt-3 grid grid-cols-4 gap-2">
           <button className={actionButtonClass} onClick={() => openBackupDetail(backup)}>
             详细信息
@@ -393,8 +419,12 @@ export default function Backup(): JSX.Element {
           <button className={actionButtonClass} onClick={() => void validateBackup(backup.id)}>
             校验
           </button>
-          <button className={actionButtonClass} onClick={() => void restoreBackup(backup.id)}>
-            整库恢复
+          <button
+            className={actionButtonClass}
+            onClick={() => void importBackup(backup)}
+            disabled={!canImport}
+          >
+            导入新账套
           </button>
           <button
             className={actionButtonClass}
@@ -436,7 +466,7 @@ export default function Backup(): JSX.Element {
             校验
           </button>
           <button className={actionButtonClass} disabled>
-            整库恢复
+            不支持恢复
           </button>
           <button
             className={actionButtonClass}
@@ -458,21 +488,21 @@ export default function Backup(): JSX.Element {
             合规备份与归档
           </h2>
           <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
-            系统备份包属于整库快照；“整库恢复”会覆盖当前所有账套，不是单个账套导入。其他字段统一放进“详细信息”弹框。
+            账套备份不依赖已结账期间。未结账期间下的自定义会计科目、辅助项、期初余额等重要资料，同样会进入账套级备份包；历史整库快照仅保留校验与删除能力。
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
           <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            备份期间
+            备份期间（可选）
             <select
               className="glass-input px-3 py-2 text-sm"
               value={backupPeriod}
               onChange={(event) => setBackupPeriod(event.target.value)}
-              disabled={!canOperate || backupPeriodOptions.length === 0}
+              disabled={!canOperate}
             >
               {backupPeriodOptions.length === 0 ? (
-                <option value="">暂无已结账期间</option>
+                <option value="">当前暂无期间，将按未设置期间备份</option>
               ) : (
                 backupPeriodOptions.map((period) => (
                   <option key={period} value={period}>
@@ -508,10 +538,10 @@ export default function Backup(): JSX.Element {
           </button>
           <button
             className="glass-btn-secondary"
-            onClick={() => void restoreBackupFromPath()}
+            onClick={() => void importBackupFromPath()}
             disabled={!canOperate}
           >
-            从路径整库恢复
+            从路径导入账套
           </button>
           <button className="glass-btn-secondary" onClick={() => void createArchive()} disabled={!canOperate}>
             创建归档
@@ -527,7 +557,7 @@ export default function Backup(): JSX.Element {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                系统备份包（整库快照）
+                账套备份包
               </h3>
               {shouldShowExpandButton(backups.length) && (
                 <button
@@ -544,7 +574,7 @@ export default function Backup(): JSX.Element {
             </span>
           </div>
           <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            整库恢复会用选中的备份包覆盖当前全部账套，不支持把备份包导入为单独的新账套。
+            账套级备份包支持导入为新账套；历史整库快照仅保留校验和删除，不再作为新流程入口。
           </p>
 
           <div className="space-y-2 max-h-[56vh] overflow-auto">
@@ -611,11 +641,11 @@ export default function Backup(): JSX.Element {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-                  {recordBrowser.type === 'backup' ? '系统备份包全部记录' : '电子档案导出全部记录'}
+                  {recordBrowser.type === 'backup' ? '账套备份包全部记录' : '电子档案导出全部记录'}
                 </h3>
                 <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                   {recordBrowser.type === 'backup'
-                    ? '在独立交互框中查看并操作全部系统备份包。'
+                    ? '在独立交互框中查看并操作全部账套备份包；legacy 整库快照不会提供导入入口。'
                     : '在独立交互框中查看并操作全部电子档案导出记录。'}
                 </p>
               </div>

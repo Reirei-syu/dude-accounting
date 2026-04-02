@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assertLedgerDeletionAllowed, getLedgerDeletionPrerequisites } from './ledgerCompliance'
+import { getLedgerDeletionPrerequisites, getLedgerDeletionRiskSnapshot } from './ledgerCompliance'
 
 class FakeLedgerComplianceDb {
   backupPackages: Array<{ ledger_id: number; status: string }> = []
@@ -39,20 +39,26 @@ class FakeLedgerComplianceDb {
 }
 
 describe('ledgerCompliance service', () => {
-  it('blocks deletion when validated backup or archive export is missing', () => {
+  it('returns deletion risk warnings instead of hard blocking', () => {
     const db = new FakeLedgerComplianceDb()
 
-    expect(() => assertLedgerDeletionAllowed(db as never, 1)).toThrow(
-      '删除账套前必须先完成已校验的系统备份和电子档案导出'
-    )
+    expect(getLedgerDeletionRiskSnapshot(db as never, 1)).toEqual({
+      validatedBackupCount: 0,
+      validatedArchiveCount: 0,
+      missingValidatedBackup: true,
+      missingValidatedArchive: true
+    })
 
     db.backupPackages.push({ ledger_id: 1, status: 'validated' })
-    expect(() => assertLedgerDeletionAllowed(db as never, 1)).toThrow(
-      '删除账套前必须先完成已校验的电子档案导出'
-    )
+    expect(getLedgerDeletionRiskSnapshot(db as never, 1)).toEqual({
+      validatedBackupCount: 1,
+      validatedArchiveCount: 0,
+      missingValidatedBackup: false,
+      missingValidatedArchive: true
+    })
   })
 
-  it('allows deletion only after both validated backup and archive export exist', () => {
+  it('keeps prerequisite counters for delete warnings', () => {
     const db = new FakeLedgerComplianceDb()
     db.backupPackages.push({ ledger_id: 1, status: 'validated' })
     db.archiveExports.push({ ledger_id: 1, status: 'validated' })
@@ -61,6 +67,11 @@ describe('ledgerCompliance service', () => {
       validatedBackupCount: 1,
       validatedArchiveCount: 1
     })
-    expect(() => assertLedgerDeletionAllowed(db as never, 1)).not.toThrow()
+    expect(getLedgerDeletionRiskSnapshot(db as never, 1)).toEqual({
+      validatedBackupCount: 1,
+      validatedArchiveCount: 1,
+      missingValidatedBackup: false,
+      missingValidatedArchive: false
+    })
   })
 })

@@ -29,7 +29,9 @@ const api = {
       ipcRenderer.invoke('ledger:create', data),
     update: (data: { id: number; name?: string; currentPeriod?: string }) =>
       ipcRenderer.invoke('ledger:update', data),
-    delete: (id: number) => ipcRenderer.invoke('ledger:delete', id),
+    delete: (payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
+      ipcRenderer.invoke('ledger:delete', payload),
+    getDeletionRisk: (ledgerId: number) => ipcRenderer.invoke('ledger:getDeletionRisk', ledgerId),
     getPeriods: (ledgerId: number) => ipcRenderer.invoke('ledger:getPeriods', ledgerId),
     getStandardTemplates: () => ipcRenderer.invoke('ledger:getStandardTemplates'),
     applyStandardTemplate: (data: { ledgerId: number; standardType: 'enterprise' | 'npo' }) =>
@@ -283,6 +285,8 @@ const api = {
       ipcRenderer.invoke('backup:create', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('backup:list', ledgerId),
     validate: (backupId: number) => ipcRenderer.invoke('backup:validate', backupId),
+    import: (payload?: { backupId?: number; packagePath?: string }) =>
+      ipcRenderer.invoke('backup:import', payload),
     delete: (payload: { backupId: number; deleteRecordOnly?: boolean }) =>
       ipcRenderer.invoke('backup:delete', payload),
     restore: (payload?: { backupId?: number; packagePath?: string }) =>

@@ -65,7 +65,18 @@ interface LedgerAPI {
     name?: string
     currentPeriod?: string
   }) => Promise<{ success: boolean; error?: string }>
-  delete: (id: number) => Promise<{ success: boolean; error?: string }>
+  delete: (payload: {
+    ledgerId: number
+    riskAcknowledged?: boolean
+  }) => Promise<{ success: boolean; error?: string }>
+  getDeletionRisk: (ledgerId: number) => Promise<{
+    success: boolean
+    validatedBackupCount?: number
+    validatedArchiveCount?: number
+    missingValidatedBackup?: boolean
+    missingValidatedArchive?: boolean
+    error?: string
+  }>
   getPeriods: (ledgerId: number) => Promise<
     Array<{
       id: number
@@ -920,6 +931,8 @@ interface BackupAPI {
       ledger_id: number
       backup_period: string | null
       fiscal_year: string | null
+      package_type: 'ledger_backup' | 'system_db_snapshot_legacy'
+      package_schema_version: string
       backup_path: string
       manifest_path: string | null
       checksum: string
@@ -934,6 +947,13 @@ interface BackupAPI {
     success: boolean
     valid?: boolean
     actualChecksum?: string | null
+    error?: string
+  }>
+  import: (payload?: { backupId?: number; packagePath?: string }) => Promise<{
+    success: boolean
+    cancelled?: boolean
+    importedLedgerId?: number
+    importedLedgerName?: string
     error?: string
   }>
   delete: (payload: { backupId: number; deleteRecordOnly?: boolean }) => Promise<{
