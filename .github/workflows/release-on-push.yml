@@ -103,6 +103,7 @@ jobs:
         run: |
           $outputDir = Join-Path $PWD 'release-dist'
           $configPath = Join-Path $PWD 'electron-builder.ci.yml'
+          $baseConfigPath = Join-Path $PWD 'electron-builder.yml'
           if (Test-Path $outputDir) {
             Remove-Item -LiteralPath $outputDir -Recurse -Force
           }
@@ -110,13 +111,11 @@ jobs:
             Remove-Item -LiteralPath $configPath -Force
           }
 
-          $ciConfig = @"
-directories:
-  output: release-dist
-"@
+          $baseConfig = Get-Content -LiteralPath $baseConfigPath -Raw
+          $ciConfig = $baseConfig -replace '(?m)^(\s*output:\s*).+$', '${1}release-dist'
           Set-Content -LiteralPath $configPath -Value $ciConfig -Encoding UTF8
 
-          npx electron-builder --win nsis --publish never --config electron-builder.yml --config $configPath
+          npx electron-builder --win nsis --publish never --config $configPath
           if ($LASTEXITCODE -ne 0) {
             throw "electron-builder failed with exit code $LASTEXITCODE"
           }
