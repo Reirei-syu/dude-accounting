@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPrintDocumentHtml,
   buildPrintPreviewHtml,
+  normalizePrintPreviewSettings,
   resolveBookPrintOrientation,
   type PrintDocument,
   type PrintPreviewSettings
@@ -386,5 +387,24 @@ describe('print service', () => {
     const html = buildPrintPreviewHtml('job-2', '报表打印预览', '<div>preview</div>', initialSettings)
 
     expect(html).toContain('const persistPreferenceKey = null;')
+  })
+
+  it('keeps an explicit portrait orientation instead of falling back to landscape', () => {
+    expect(
+      normalizePrintPreviewSettings(
+        {
+          orientation: 'portrait',
+          scalePercent: 95,
+          marginPreset: 'narrow',
+          densityPreset: 'compact'
+        },
+        'landscape'
+      )
+    ).toEqual({
+      orientation: 'portrait',
+      scalePercent: 95,
+      marginPreset: 'narrow',
+      densityPreset: 'compact'
+    })
   })
 })

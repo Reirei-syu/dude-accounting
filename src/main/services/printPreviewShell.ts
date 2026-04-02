@@ -428,8 +428,12 @@ export function buildPagedPrintPreviewHtml(
 
       function normalizePreviewSettings(candidate, fallbackOrientation) {
         const scalePercent = Number(candidate?.scalePercent);
+        const orientationCandidate = candidate?.orientation;
         return {
-          orientation: candidate?.orientation === 'landscape' ? 'landscape' : fallbackOrientation,
+          orientation:
+            orientationCandidate === 'landscape' || orientationCandidate === 'portrait'
+              ? orientationCandidate
+              : fallbackOrientation,
           scalePercent: [75, 80, 85, 90, 95, 100].includes(scalePercent) ? scalePercent : 100,
           marginPreset: ['default', 'narrow', 'extra-narrow'].includes(candidate?.marginPreset)
             ? candidate.marginPreset

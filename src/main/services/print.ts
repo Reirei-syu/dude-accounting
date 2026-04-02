@@ -118,8 +118,12 @@ export function normalizePrintPreviewSettings(
   fallbackOrientation: PrintOrientation = 'portrait'
 ): PrintPreviewSettings {
   const scaleCandidate = Number(settings?.scalePercent)
+  const orientationCandidate = settings?.orientation
   return {
-    orientation: settings?.orientation === 'landscape' ? 'landscape' : fallbackOrientation,
+    orientation:
+      orientationCandidate === 'landscape' || orientationCandidate === 'portrait'
+        ? orientationCandidate
+        : fallbackOrientation,
     scalePercent: PRINT_PREVIEW_SCALE_OPTIONS.has(scaleCandidate) ? scaleCandidate : 100,
     marginPreset:
       settings?.marginPreset === 'narrow' || settings?.marginPreset === 'extra-narrow'

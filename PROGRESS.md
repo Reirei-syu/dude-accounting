@@ -185,3 +185,23 @@
 - Lessons Learned：
   - 清理带中文前缀的测试数据时，不应依赖控制台编码环境里的 SQL `LIKE` 条件，使用 Unicode 转义或应用层前缀判断更稳妥。
   - 运维类数据清理也应保留可回退快照，否则一旦误删就只能依赖整库恢复。
+
+## 2026-04-02 Orientation Toggle Fix
+- 当前阶段：Execution
+- 当前任务：修复打印预览从横向无法切回竖向的回归问题。
+- 本次修改：
+  - `src/main/services/print.ts` 修正 `normalizePrintPreviewSettings(...)`，显式接受 `portrait` 与 `landscape` 两种合法方向值。
+  - `src/main/services/printPreviewShell.ts` 修正预览页内联 `normalizePreviewSettings(...)`，避免前端控件把 `portrait` 当成无效值回退到当前横向。
+  - `src/main/services/print.test.ts`、`src/main/services/printPreviewShell.test.ts` 新增回归测试，覆盖“横向切回竖向”归一化逻辑。
+- 影响范围：打印预览方向切换、主进程重排参数归一化、预览页控件状态同步。
+- 任务进度百分比：100%
+- 方案路径：无新增方案；属于局部缺陷修复。
+- 验证结果：
+  - `npx vitest run src/main/services/print.test.ts src/main/services/printPreviewShell.test.ts`：通过（11/11）
+  - `npm run typecheck`：通过
+  - `npm test`：通过（72 个文件，348 个测试）
+- 风险备注：
+  - 本次修复不涉及 IPC 契约变更，也不改变打印布局模型，只纠正方向字段的合法值识别。
+- Lessons Learned：
+  - 枚举型设置不能用“只识别某一个值，否则回退”的写法处理，否则会把另一个合法值静默吞掉。
+  - 预览页和主进程各自维护归一化逻辑时，必须保持完全一致，否则 UI 和实际打印行为会分叉。

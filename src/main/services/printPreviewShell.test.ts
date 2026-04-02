@@ -47,5 +47,6 @@ describe('printPreviewShell service', () => {
     expect(html).toContain('"layoutVersion":3')
     expect(html).toContain('window.api.print.print(targetJobId)')
     expect(html).toContain('window.api.print.exportPdf(targetJobId)')
+    expect(html).toContain("orientationCandidate === 'landscape' || orientationCandidate === 'portrait'")
   })
 })

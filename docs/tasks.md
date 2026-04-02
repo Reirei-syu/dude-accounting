@@ -5,6 +5,14 @@
 
 ## 任务列表
 
+### [x] 修复打印方向切回竖向失效
+- 类型：Fix
+- 模块：service / test / docs
+- 描述：修复打印预览方向归一化逻辑只识别 `landscape`、导致从横向无法切回竖向的问题，并补充回归测试。
+- 完成时间：2026-04-02
+- 修改文件：`src/main/services/print.ts`、`src/main/services/printPreviewShell.ts`、`src/main/services/print.test.ts`、`src/main/services/printPreviewShell.test.ts`、`PROGRESS.md`、`docs/context/latest_context.md`、`prds/开发日志.md`
+- 影响范围：打印预览方向切换、主进程重排参数归一化、预览页本地控件状态同步
+
 ### [x] 打印预览残余风险修复与复验
 - 类型：Fix
 - 模块：service / scripts / docs / test
