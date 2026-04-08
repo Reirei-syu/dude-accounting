@@ -86,17 +86,38 @@ export function buildSubjectBalanceDisplayRows(
           { key: 'subtotal-equity', label: '所有者权益合计', categories: ['equity'] }
         ]
 
-  const summaryRows = subtotalConfigs
-    .map((config) => {
-      const matchedRows = leafRows.filter((row) => config.categories.includes(row.category))
-      if (matchedRows.length === 0) {
-        return null
-      }
-      return buildSummaryRow(config.key, config.label, config.categories[0], 'subtotal', matchedRows)
-    })
-    .filter((row): row is SubjectBalanceDisplayRow => row !== null)
+  const summaryRowsByCategory = new Map<string, SubjectBalanceDisplayRow>()
+  for (const config of subtotalConfigs) {
+    const matchedRows = leafRows.filter((row) => config.categories.includes(row.category))
+    if (matchedRows.length === 0) {
+      continue
+    }
+    summaryRowsByCategory.set(
+      config.categories[0],
+      buildSummaryRow(config.key, config.label, config.categories[0], 'subtotal', matchedRows)
+    )
+  }
+
+  const lastDisplayIndexByCategory = new Map<string, number>()
+  dataRows.forEach((row, index) => {
+    if (summaryRowsByCategory.has(row.category)) {
+      lastDisplayIndexByCategory.set(row.category, index)
+    }
+  })
 
   const totalRow = buildSummaryRow('total-all', '借贷总计', 'total', 'total', leafRows)
 
-  return [...dataRows, ...summaryRows, totalRow]
+  const displayRows: SubjectBalanceDisplayRow[] = []
+  dataRows.forEach((row, index) => {
+    displayRows.push(row)
+    if (lastDisplayIndexByCategory.get(row.category) === index) {
+      const summaryRow = summaryRowsByCategory.get(row.category)
+      if (summaryRow) {
+        displayRows.push(summaryRow)
+      }
+    }
+  })
+
+  displayRows.push(totalRow)
+  return displayRows
 }

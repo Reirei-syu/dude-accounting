@@ -83,6 +83,16 @@ describe('subjectBalanceSummary', () => {
     expect(totalRow?.opening_credit_amount).toBe(13000)
     expect(totalRow?.period_debit_amount).toBe(2400)
     expect(totalRow?.period_credit_amount).toBe(1700)
+    expect(rows.map((row) => row.subject_name)).toEqual([
+      '库存现金',
+      '应付账款',
+      '负债合计',
+      '实收资本',
+      '所有者权益合计',
+      '库存现金-子科目',
+      '资产合计',
+      '借贷总计'
+    ])
   })
 
   it('uses net assets label for npo ledgers', () => {

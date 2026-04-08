@@ -377,6 +377,8 @@ describe('print service', () => {
     expect(html).toContain('hasPrintOverflow')
     expect(html).toContain('ensurePrintableLayout')
     expect(html).toContain('height: 38.4px')
+    expect(html).toContain('-webkit-print-color-adjust: exact;')
+    expect(html).toContain('print-color-adjust: exact;')
   })
 
   it('does not persist preview settings for non-book jobs', () => {

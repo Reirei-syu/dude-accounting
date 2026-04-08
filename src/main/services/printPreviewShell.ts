@@ -52,6 +52,8 @@ export function buildPagedPrintPreviewHtml(
         font-family: "Microsoft YaHei", "SimSun", sans-serif;
         background: #e5e7eb;
         color: #111827;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
       }
       .preview-toolbar {
         position: sticky;
@@ -256,6 +258,16 @@ export function buildPagedPrintPreviewHtml(
         border: 1px solid #111827;
         padding: var(--preview-cell-padding-y) var(--preview-cell-padding-x);
         vertical-align: middle;
+      }
+      .print-row-subtotal td {
+        background: #ecfdf5;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      .print-row-total td {
+        background: #eff6ff;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
       }
       .print-fit-cell {
         height: var(--preview-fit-cell-height);
