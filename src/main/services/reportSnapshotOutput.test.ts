@@ -139,6 +139,7 @@ describe('reportSnapshotOutput service', () => {
     expect(crossYearHtml).not.toContain('口径')
     expect(crossYearHtml).toContain('grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto')
     expect(crossYearHtml).toContain('white-space: nowrap')
+    expect(crossYearHtml).toContain('570.00')
   })
 
   it('sanitizes cross-year export file names', () => {
@@ -170,6 +171,57 @@ describe('reportSnapshotOutput service', () => {
       '2025.12-2026.03 利润表（含未记账凭证）-20260319-123456.html'
     )
     expect(fs.readFileSync(htmlPath, 'utf8')).toContain('会计期间：2025年12月-2026年3月')
+  })
+
+  it('adds subtotal and total row styles in html and excel exports', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail: ReportSnapshotDetail = {
+      ...createCrossYearDetail(),
+      content: {
+        ...createCrossYearDetail().content,
+        tables: [
+          {
+            key: 'enterprise-income-statement',
+            columns: [
+              { key: 'item', label: '项目' },
+              { key: 'current', label: '本期金额' },
+              { key: 'previous', label: '上期金额' }
+            ],
+            rows: [
+              {
+                key: 'liability-total',
+                cells: [
+                  { value: '负债合计' },
+                  { value: 57000, isAmount: true },
+                  { value: 1000, isAmount: true }
+                ]
+              },
+              {
+                key: 'all-total',
+                cells: [
+                  { value: '资产总计' },
+                  { value: 67000, isAmount: true },
+                  { value: 2000, isAmount: true }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const html = buildReportSnapshotHtml(detail)
+    const xlsxPath = path.join(tempDir, 'report-highlight.xlsx')
+
+    await writeReportSnapshotExcel(xlsxPath, detail)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(xlsxPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(html).toContain('class="report-row-subtotal"')
+    expect(html).toContain('class="report-row-total"')
+    expect((worksheet?.getCell(5, 1).fill as { fgColor?: { argb?: string } } | undefined)?.fgColor?.argb).toBe('FFECFDF5')
+    expect((worksheet?.getCell(6, 1).fill as { fgColor?: { argb?: string } } | undefined)?.fgColor?.argb).toBe('FFEFF6FF')
   })
   it('falls back for blank report names and blank titles in export artifacts', async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))

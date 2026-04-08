@@ -13,6 +13,7 @@ export interface BookExportCell {
 
 export interface BookExportRow {
   key: string
+  rowType?: 'data' | 'subtotal' | 'total'
   cells: BookExportCell[]
 }
 

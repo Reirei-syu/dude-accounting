@@ -19,6 +19,7 @@ export interface BookExportCell {
 
 export interface BookExportRow {
   key: string
+  rowType?: 'data' | 'subtotal' | 'total'
   cells: BookExportCell[]
 }
 
@@ -39,7 +40,31 @@ function sanitizeFileName(value: string): string {
 }
 
 function formatAmount(value: number): string {
-  return value.toFixed(2)
+  return value.toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+}
+
+function resolveRowHighlightKind(
+  row: BookExportRow
+): 'subtotal' | 'total' | null {
+  if (row.rowType === 'subtotal' || row.rowType === 'total') {
+    return row.rowType
+  }
+
+  const firstCellValue = row.cells[0]?.value
+  if (typeof firstCellValue !== 'string') {
+    return null
+  }
+
+  if (firstCellValue.includes('总计')) {
+    return 'total'
+  }
+  if (firstCellValue.includes('合计')) {
+    return 'subtotal'
+  }
+  return null
 }
 
 function formatCellValue(cell: BookExportCell): string {
@@ -298,7 +323,7 @@ export async function writeBookExportExcel(
       const targetCell = excelRow.getCell(cellIndex + 1)
       if (typeof cell.value === 'number' && cell.isAmount) {
         targetCell.value = cell.value
-        targetCell.numFmt = '0.00'
+        targetCell.numFmt = '#,##0.00'
       } else {
         targetCell.value = cell.value === null ? '' : cell.value
       }
@@ -315,6 +340,18 @@ export async function writeBookExportExcel(
         right: { style: 'thin' }
       }
     })
+
+    const highlightKind = resolveRowHighlightKind(row)
+    if (highlightKind) {
+      const fillColor = highlightKind === 'total' ? 'FFEFF6FF' : 'FFECFDF5'
+      excelRow.eachCell({ includeEmpty: true }, (cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: fillColor }
+        }
+      })
+    }
   })
 
   worksheet.columns = payload.columns.map((column, index) => ({
@@ -450,7 +487,15 @@ export async function writeBookExportPdf(
         )
       }
 
-      top = drawRow(row, top)
+      const highlightKind = 'rowType' in row ? resolveRowHighlightKind(row as BookExportRow) : null
+      top = drawRow(row, top, {
+        fillColor:
+          highlightKind === 'total'
+            ? '#eff6ff'
+            : highlightKind === 'subtotal'
+              ? '#ecfdf5'
+              : undefined
+      })
     }
 
     document.end()

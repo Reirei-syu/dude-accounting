@@ -86,8 +86,43 @@ describe('bookExport service', () => {
     expect(worksheet.getCell(5, 1).value).toBe('科目编码')
     expect(worksheet.getCell(6, 1).value).toBe('1001')
     expect(worksheet.getCell(6, 3).value).toBe(1200.5)
+    expect(worksheet.getCell(6, 3).numFmt).toBe('#,##0.00')
     expect(fs.existsSync(pdfPath)).toBe(true)
     expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+  })
+
+  it('highlights subtotal and total rows in excel exports', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-book-export-'))
+    const payload: BookExportPayload = {
+      ...createPayload(),
+      rows: [
+        {
+          key: '1001',
+          rowType: 'data',
+          cells: [{ value: '1001' }, { value: '库存现金' }, { value: 1200.5, isAmount: true }]
+        },
+        {
+          key: 'subtotal-asset',
+          rowType: 'subtotal',
+          cells: [{ value: '' }, { value: '资产合计' }, { value: 1200.5, isAmount: true }]
+        },
+        {
+          key: 'total-all',
+          rowType: 'total',
+          cells: [{ value: '' }, { value: '借贷总计' }, { value: 2200.5, isAmount: true }]
+        }
+      ]
+    }
+    const excelPath = path.join(tempDir, 'highlight.xlsx')
+
+    await writeBookExportExcel(excelPath, payload)
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(excelPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect((worksheet.getCell(7, 1).fill as { fgColor?: { argb?: string } } | undefined)?.fgColor?.argb).toBe('FFECFDF5')
+    expect((worksheet.getCell(8, 1).fill as { fgColor?: { argb?: string } } | undefined)?.fgColor?.argb).toBe('FFEFF6FF')
   })
 
   it('writes multi-page pdf exports for long books without breaking header redraw path', async () => {

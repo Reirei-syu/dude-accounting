@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "仓库压力测试"
+  short_description: "规划并执行仓库级压力、长稳与收敛验证"
+  default_prompt: "Use $repository-stress-testing 分析当前仓库，建立数据链路矩阵并执行压力测试、长期运行稳定性验证与循环收敛检查。"

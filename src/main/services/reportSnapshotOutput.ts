@@ -88,7 +88,20 @@ function getHeaderFallbackLabel(index: number): string {
 }
 
 function formatAmount(amountCents: number): string {
-  return (amountCents / 100).toFixed(2)
+  return (amountCents / 100).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+}
+
+function resolveRowHighlightKindByLabel(label: string): 'subtotal' | 'total' | null {
+  if (label.includes('总计')) {
+    return 'total'
+  }
+  if (label.includes('合计')) {
+    return 'subtotal'
+  }
+  return null
 }
 
 function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
@@ -164,7 +177,14 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
                     return `<td${index === 0 ? '' : ' class="num"'}>${escapeHtml(value)}</td>`
                   })
                   .join('')
-                return `<tr>${cells}</tr>`
+                const firstCellText = String(row.cells[0]?.value ?? '')
+                const rowClassName =
+                  resolveRowHighlightKindByLabel(firstCellText) === 'total'
+                    ? 'report-row-total'
+                    : resolveRowHighlightKindByLabel(firstCellText) === 'subtotal'
+                      ? 'report-row-subtotal'
+                      : ''
+                return `<tr class="${rowClassName}">${cells}</tr>`
               })
               .join('')
 
@@ -203,7 +223,13 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
                       .join('') ?? '')
                   : `<td class="num">${formatAmount(row.amountCents)}</td>`
 
-                return `<tr><td>${escapeHtml(label)}</td>${valueCells}</tr>`
+                const rowClassName =
+                  resolveRowHighlightKindByLabel(label) === 'total'
+                    ? 'report-row-total'
+                    : resolveRowHighlightKindByLabel(label) === 'subtotal'
+                      ? 'report-row-subtotal'
+                      : ''
+                return `<tr class="${rowClassName}"><td>${escapeHtml(label)}</td>${valueCells}</tr>`
               })
               .join('')
 
@@ -226,7 +252,13 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   const totalsHtml = detail.content.totals
     .map(
       (total) =>
-        `<tr><td>${escapeHtml(total.label)}</td><td class="num">${formatAmount(total.amountCents)}</td></tr>`
+        `<tr class="${
+          resolveRowHighlightKindByLabel(total.label) === 'total'
+            ? 'report-row-total'
+            : resolveRowHighlightKindByLabel(total.label) === 'subtotal'
+              ? 'report-row-subtotal'
+              : ''
+        }"><td>${escapeHtml(total.label)}</td><td class="num">${formatAmount(total.amountCents)}</td></tr>`
     )
     .join('')
   const totalsSectionHtml =
@@ -310,6 +342,12 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
         padding: ${cellPadding};
         vertical-align: middle;
         word-break: break-word;
+      }
+      .report-row-subtotal td {
+        background: #ecfdf5;
+      }
+      .report-row-total td {
+        background: #eff6ff;
       }
       th {
         text-align: center;
@@ -438,6 +476,18 @@ export async function writeReportSnapshotExcel(
         right: { style: 'thin' }
       }
     })
+    const rowLabel = String(row.values[0] ?? '')
+    const highlightKind = resolveRowHighlightKindByLabel(rowLabel)
+    if (highlightKind) {
+      const fillColor = highlightKind === 'total' ? 'FFEFF6FF' : 'FFECFDF5'
+      worksheet.getRow(rowIndex).eachCell({ includeEmpty: true }, (cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: fillColor }
+        }
+      })
+    }
     rowIndex += 1
   }
 
@@ -448,9 +498,9 @@ export async function writeReportSnapshotExcel(
     worksheet.getCell(rowIndex, 1).font = { name: '宋体', size: 11, bold: true }
 
     rowIndex += 1
-    detail.content.totals.forEach((total) => {
-      worksheet.getCell(rowIndex, 1).value = total.label
-      worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
+      detail.content.totals.forEach((total) => {
+        worksheet.getCell(rowIndex, 1).value = total.label
+        worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
       for (let column = 1; column <= headers.length; column += 1) {
         const cell = worksheet.getCell(rowIndex, column)
         cell.font = { name: '宋体', size: 10 }
@@ -461,6 +511,17 @@ export async function writeReportSnapshotExcel(
           bottom: { style: 'thin' },
           right: { style: 'thin' }
         }
+      }
+      const highlightKind = resolveRowHighlightKindByLabel(total.label)
+      if (highlightKind) {
+        const fillColor = highlightKind === 'total' ? 'FFEFF6FF' : 'FFECFDF5'
+        worksheet.getRow(rowIndex).eachCell({ includeEmpty: true }, (cell) => {
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: fillColor }
+          }
+        })
       }
       rowIndex += 1
     })
@@ -553,7 +614,15 @@ export async function writeReportSnapshotPdf(
         })
       }
 
-      top = drawRow(row.values, top)
+      const highlightKind = resolveRowHighlightKindByLabel(String(row.values[0] ?? ''))
+      top = drawRow(row.values, top, {
+        fillColor:
+          highlightKind === 'total'
+            ? '#eff6ff'
+            : highlightKind === 'subtotal'
+              ? '#ecfdf5'
+              : undefined
+      })
     }
 
     if (!hasOfficialTables) {
@@ -567,7 +636,15 @@ export async function writeReportSnapshotPdf(
       top += 28
       top = drawRow(['项目', '金额'], top, { bold: true })
       detail.content.totals.forEach((total) => {
-        top = drawRow([total.label, formatAmount(total.amountCents)], top)
+        const highlightKind = resolveRowHighlightKindByLabel(total.label)
+        top = drawRow([total.label, formatAmount(total.amountCents)], top, {
+          fillColor:
+            highlightKind === 'total'
+              ? '#eff6ff'
+              : highlightKind === 'subtotal'
+                ? '#ecfdf5'
+                : undefined
+        })
       })
     }
 

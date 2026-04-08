@@ -120,7 +120,10 @@ export function getReportTypeByComponent(componentType: string): ReportType | nu
 }
 
 export function formatAmountCents(amountCents: number): string {
-  return new Decimal(amountCents).div(100).toFixed(2)
+  return new Decimal(amountCents).div(100).toNumber().toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
 }
 
 export function formatGeneratedAt(raw: string): string {

@@ -29,7 +29,8 @@ describe('print service', () => {
           rows: [
             {
               key: 'cash',
-              cells: [{ value: '货币资金' }, { value: 1234.56, isAmount: true }]
+              rowType: 'subtotal',
+              cells: [{ value: '资产合计' }, { value: 1234.56, isAmount: true }]
             }
           ]
         },
@@ -59,6 +60,8 @@ describe('print service', () => {
     expect(html).toContain('利润表')
     expect(html).toContain('print-segment page-break')
     expect(html).toContain('<thead>')
+    expect(html).toContain('print-row-subtotal')
+    expect(html).toContain('1,234.56')
   })
 
   it('renders voucher double layout with remembered gap', () => {

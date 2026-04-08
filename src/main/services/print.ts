@@ -16,6 +16,7 @@ export interface PrintTableCell {
 
 export interface PrintTableRow {
   key: string
+  rowType?: 'data' | 'subtotal' | 'total'
   cells: PrintTableCell[]
 }
 
@@ -162,7 +163,29 @@ function escapeHtml(value: string): string {
 }
 
 function formatAmount(value: number): string {
-  return value.toFixed(2)
+  return value.toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
+}
+
+function resolvePrintRowHighlightKind(row: PrintTableRow): 'subtotal' | 'total' | null {
+  if (row.rowType === 'subtotal' || row.rowType === 'total') {
+    return row.rowType
+  }
+
+  const firstCellValue = row.cells[0]?.value
+  if (typeof firstCellValue !== 'string') {
+    return null
+  }
+
+  if (firstCellValue.includes('总计')) {
+    return 'total'
+  }
+  if (firstCellValue.includes('合计')) {
+    return 'subtotal'
+  }
+  return null
 }
 
 function formatVoucherTextCell(value: string): string {
@@ -303,7 +326,14 @@ export function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boo
           return `<td class="${className}">${column ? formatTableCellContent(cell, column) : escapeHtml(formatCellValue(cell))}</td>`
         })
         .join('')
-      return `<tr data-row-key="${escapeHtml(row.key)}">${cells}</tr>`
+      const rowHighlightKind = resolvePrintRowHighlightKind(row)
+      const rowClassName =
+        rowHighlightKind === 'total'
+          ? 'print-row-total'
+          : rowHighlightKind === 'subtotal'
+            ? 'print-row-subtotal'
+            : ''
+      return `<tr data-row-key="${escapeHtml(row.key)}" class="${rowClassName}">${cells}</tr>`
     })
     .join('')
   const titleHtml = isBookHeader ? '' : `<h1>${escapeHtml(segment.title)}</h1>`
@@ -699,6 +729,12 @@ export function buildPrintPreviewHtml(
         border: 1px solid #111827;
         padding: var(--preview-cell-padding-y) var(--preview-cell-padding-x);
         vertical-align: middle;
+      }
+      .print-row-subtotal td {
+        background: #ecfdf5;
+      }
+      .print-row-total td {
+        background: #eff6ff;
       }
       .print-fit-cell {
         height: var(--preview-fit-cell-height);

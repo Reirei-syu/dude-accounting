@@ -19,6 +19,10 @@ import {
 } from './bookQueryUtils'
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
 import { prepareAndOpenPrintPreview } from './printUtils'
+import {
+  buildSubjectBalanceDisplayRows,
+  type SubjectBalanceDisplayRow
+} from './subjectBalanceSummary'
 import ScaledFilterRow from '../components/ScaledFilterRow'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -57,7 +61,10 @@ interface SubjectContextMenuState {
 }
 
 function formatAmount(amountCents: number): string {
-  return new Decimal(amountCents).div(100).toFixed(2)
+  return new Decimal(amountCents).div(100).toNumber().toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })
 }
 
 function clampMenuPosition(x: number, y: number): { x: number; y: number } {
@@ -95,7 +102,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
   const [activeSubjectCode, setActiveSubjectCode] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<SubjectContextMenuState | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
-  const [rows, setRows] = useState<SubjectBalanceRow[]>([])
+  const [rows, setRows] = useState<SubjectBalanceDisplayRow[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -145,7 +152,12 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
         nextSubjectCodeEnd
       )
 
-      setRows(filteredRows)
+      const displayRows = buildSubjectBalanceDisplayRows(
+        filteredRows,
+        currentLedger.standard_type
+      )
+
+      setRows(displayRows)
       setActiveSubjectCode(null)
       setContextMenu(null)
 
@@ -345,8 +357,9 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
       ],
       rows: rows.map((row) => ({
         key: row.subject_code,
+        rowType: row.rowType,
         cells: [
-          { value: row.subject_code, indentLevel: row.level },
+          { value: row.rowType === 'data' ? row.subject_code : '', indentLevel: row.level },
           { value: row.subject_name, indentLevel: row.level },
           { value: toExportAmount(row.opening_debit_amount), isAmount: true },
           { value: toExportAmount(row.opening_credit_amount), isAmount: true },
@@ -395,8 +408,9 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
       ],
       rows: rows.map((row) => ({
         key: row.subject_code,
+        rowType: row.rowType,
         cells: [
-          { value: row.subject_code },
+          { value: row.rowType === 'data' ? row.subject_code : '' },
           { value: row.subject_name },
           { value: toExportAmount(row.opening_debit_amount), isAmount: true },
           { value: toExportAmount(row.opening_credit_amount), isAmount: true },
@@ -508,7 +522,7 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
     setContextMenu({ ...position, row })
   }
 
-  const renderTable = (tableRows: SubjectBalanceRow[], fullHeight = false): JSX.Element => (
+  const renderTable = (tableRows: SubjectBalanceDisplayRow[], fullHeight = false): JSX.Element => (
     <div className="h-full overflow-x-auto">
       <div className="min-w-[1040px] h-full">
         <div
@@ -539,21 +553,38 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
             <div
               key={row.subject_code}
               className={`grid grid-cols-[120px_2fr_repeat(6,minmax(110px,1fr))] gap-3 border-b px-3 py-2 text-sm transition-colors ${
-                row.is_leaf === 1 ? 'cursor-context-menu hover:bg-black/5' : 'cursor-default'
+                row.rowType === 'data' && row.is_leaf === 1
+                  ? 'cursor-context-menu hover:bg-black/5'
+                  : 'cursor-default'
               }`}
               style={{
                 borderColor: 'var(--color-glass-border-light)',
-                color: 'var(--color-text-secondary)',
+                color:
+                  row.rowType === 'data'
+                    ? 'var(--color-text-secondary)'
+                    : 'var(--color-text-primary)',
                 background:
-                  activeSubjectCode === row.subject_code ? 'rgba(15, 23, 42, 0.08)' : 'transparent'
+                  activeSubjectCode === row.subject_code
+                    ? 'rgba(15, 23, 42, 0.08)'
+                    : row.rowType === 'total'
+                      ? 'rgba(219, 234, 254, 0.72)'
+                      : row.rowType === 'subtotal'
+                        ? 'rgba(220, 252, 231, 0.68)'
+                        : 'transparent',
+                fontWeight: row.rowType === 'data' ? 400 : 700
               }}
               onClick={() => {
                 setActiveSubjectCode(row.subject_code)
                 setContextMenu(null)
               }}
-              onContextMenu={(event) => handleContextMenu(event, row)}
+              onContextMenu={(event) => {
+                if (row.rowType !== 'data' || row.is_leaf !== 1) {
+                  return
+                }
+                handleContextMenu(event, row)
+              }}
             >
-              <div>{row.subject_code}</div>
+              <div>{row.rowType === 'data' ? row.subject_code : ''}</div>
               <div style={{ paddingLeft: `${Math.max(row.level - 1, 0) * 18}px` }}>
                 {row.subject_name}
               </div>
