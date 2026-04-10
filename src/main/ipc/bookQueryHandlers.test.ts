@@ -15,7 +15,9 @@ const bookQueryMocks = vi.hoisted(() => {
     getBookQueryExportFilters: vi.fn(),
     getPreferredBookQueryExportDir: vi.fn(),
     rememberBookQueryExportDir: vi.fn(),
-    withIpcTelemetry: vi.fn(async (_options: unknown, operation: () => unknown) => await operation()),
+    withIpcTelemetry: vi.fn(
+      async (_options: unknown, operation: () => unknown) => await operation()
+    ),
     listSubjectBalancesCommand: vi.fn(),
     getDetailLedgerCommand: vi.fn(),
     getJournalCommand: vi.fn(),
@@ -166,7 +168,9 @@ describe('bookQuery IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '导出标题不能为空'
+      error: '导出标题不能为空',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
     expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
@@ -189,7 +193,9 @@ describe('bookQuery IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '导出列不能为空'
+      error: '导出列不能为空',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
     expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
@@ -212,7 +218,9 @@ describe('bookQuery IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '导出列不能为空'
+      error: '导出列不能为空',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
     expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
@@ -235,9 +243,47 @@ describe('bookQuery IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '导出标题不能为空'
+      error: '导出标题不能为空',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
     expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
+  })
+
+  it('returns a structured error when the export command fails', async () => {
+    bookQueryMocks.showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: 'D:/exports/chosen-book.pdf'
+    })
+    bookQueryMocks.exportBookQueryCommand.mockResolvedValueOnce({
+      status: 'error',
+      data: null,
+      error: {
+        code: 'FORBIDDEN',
+        message: '当前用户无权导出该账簿',
+        details: { ledgerId: 1 }
+      }
+    })
+    const event = { sender: { id: 1 } }
+    const handler = bookQueryMocks.handlers.get('bookQuery:export')
+
+    const result = await handler?.(event, {
+      ledgerId: 1,
+      bookType: 'detail_ledger',
+      title: '明细账',
+      subtitle: '',
+      ledgerName: '测试账套',
+      format: 'pdf',
+      columns: [{ key: 'date', label: '日期', align: 'left' }],
+      rows: [{ key: 'row-1', cells: [{ value: '2025-12-01' }] }]
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: '当前用户无权导出该账簿',
+      errorCode: 'FORBIDDEN',
+      errorDetails: { ledgerId: 1 }
+    })
   })
 })

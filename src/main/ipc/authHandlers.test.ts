@@ -102,7 +102,12 @@ describe('auth IPC handlers', () => {
 
     const result = await handler?.({ sender: { id: 2 } }, { id: 2, password: 'next-pass' })
 
-    expect(result).toEqual({ success: false, error: '无权限执行该操作' })
+    expect(result).toEqual({
+      success: false,
+      error: '无权限执行该操作',
+      errorCode: 'FORBIDDEN',
+      errorDetails: null
+    })
   })
 
   it('maps successful login result back into IPC contract and binds session', async () => {

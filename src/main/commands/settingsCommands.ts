@@ -35,11 +35,7 @@ import {
   renderWallpaperCrop,
   type WallpaperAnalyzeResult
 } from '../services/wallpaperCropService'
-import {
-  requireCommandActor,
-  requireCommandAdmin,
-  requireCommandPermission
-} from './authz'
+import { requireCommandActor, requireCommandAdmin, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
@@ -47,7 +43,9 @@ import type { CommandContext, CommandResult } from './types'
 type StandardType = 'enterprise' | 'npo'
 
 function getUserPreferences(context: CommandContext, userId: number): Record<string, string> {
-  const rows = context.db.prepare('SELECT key, value FROM user_preferences WHERE user_id = ?').all(userId) as Array<{
+  const rows = context.db
+    .prepare('SELECT key, value FROM user_preferences WHERE user_id = ?')
+    .all(userId) as Array<{
     key: string
     value: string
   }>
@@ -173,7 +171,10 @@ export async function setDiagnosticsDirectoryCommand(
 ): Promise<CommandResult<{ status: ReturnType<typeof getErrorLogStatus> }>> {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'system_settings')
-    const pathState = setDiagnosticsLogDirectory(context.runtime.userDataPath, payload.directoryPath)
+    const pathState = setDiagnosticsLogDirectory(
+      context.runtime.userDataPath,
+      payload.directoryPath
+    )
     appendActorOperationLog(
       {
         ...context,
@@ -424,10 +425,18 @@ export async function saveSubjectTemplateCommand(
 export async function importSubjectTemplateCommand(
   context: CommandContext,
   payload: { standardType: StandardType; sourcePath: string }
-): Promise<CommandResult<{ template: ReturnType<typeof saveCustomTopLevelSubjectTemplate>; sourcePath: string }>> {
+): Promise<
+  CommandResult<{
+    template: ReturnType<typeof saveCustomTopLevelSubjectTemplate>
+    sourcePath: string
+  }>
+> {
   return withCommandResult(context, async () => {
     const actor = requireCommandAdmin(context.actor)
-    const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(payload.sourcePath, payload.standardType)
+    const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(
+      payload.sourcePath,
+      payload.standardType
+    )
     const template = saveCustomTopLevelSubjectTemplate(context.db, {
       standardType: payload.standardType,
       templateName: parsedTemplate.templateName,
@@ -463,7 +472,10 @@ export async function downloadSubjectTemplateCommand(
 ): Promise<CommandResult<{ filePath: string }>> {
   return withCommandResult(context, async () => {
     requireCommandAdmin(context.actor)
-    const filePath = await writeCustomTopLevelSubjectImportTemplate(payload.filePath, payload.standardType)
+    const filePath = await writeCustomTopLevelSubjectImportTemplate(
+      payload.filePath,
+      payload.standardType
+    )
     return { filePath }
   })
 }
@@ -566,10 +578,18 @@ export async function importCustomTemplateCommand(
     sourcePath: string
     mergeWithEntries?: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
   }
-): Promise<CommandResult<{ template: ReturnType<typeof saveIndependentCustomSubjectTemplate>; sourcePath: string }>> {
+): Promise<
+  CommandResult<{
+    template: ReturnType<typeof saveIndependentCustomSubjectTemplate>
+    sourcePath: string
+  }>
+> {
   return withCommandResult(context, async () => {
-    requireCommandAdmin(context.actor)
-    const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(payload.sourcePath, payload.baseStandardType)
+    const actor = requireCommandAdmin(context.actor)
+    const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(
+      payload.sourcePath,
+      payload.baseStandardType
+    )
     const mergedEntries = [...(payload.mergeWithEntries ?? []), ...parsedTemplate.entries]
     const template = saveIndependentCustomSubjectTemplate(context.db, {
       templateId: payload.templateId,
@@ -578,6 +598,27 @@ export async function importCustomTemplateCommand(
       templateDescription: payload.templateDescription,
       entries: mergedEntries
     })
+
+    appendActorOperationLog(
+      {
+        ...context,
+        actor
+      },
+      {
+        module: 'settings',
+        action: 'import_independent_custom_subject_template',
+        targetType: 'independent_custom_subject_template',
+        targetId: template.id,
+        details: {
+          baseStandardType: template.baseStandardType,
+          templateName: template.templateName,
+          templateDescription: template.templateDescription,
+          entryCount: template.entryCount,
+          sourcePath: payload.sourcePath
+        }
+      }
+    )
+
     return {
       template,
       sourcePath: payload.sourcePath
@@ -588,7 +629,9 @@ export async function importCustomTemplateCommand(
 export async function clearCustomTemplateEntriesCommand(
   context: CommandContext,
   payload: { templateId: string }
-): Promise<CommandResult<{ template: ReturnType<typeof clearIndependentCustomSubjectTemplateEntries> }>> {
+): Promise<
+  CommandResult<{ template: ReturnType<typeof clearIndependentCustomSubjectTemplateEntries> }>
+> {
   return withCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
     const template = clearIndependentCustomSubjectTemplateEntries(context.db, payload.templateId)

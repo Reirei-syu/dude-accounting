@@ -16,7 +16,9 @@ const reportingMocks = vi.hoisted(() => {
     getPreferredReportExportDir: vi.fn(),
     getReportExportFilters: vi.fn(),
     rememberReportExportDir: vi.fn(),
-    withIpcTelemetry: vi.fn(async (_options: unknown, operation: () => unknown) => await operation()),
+    withIpcTelemetry: vi.fn(
+      async (_options: unknown, operation: () => unknown) => await operation()
+    ),
     listReportsCommand: vi.fn(),
     getReportDetailCommand: vi.fn(),
     exportReportCommand: vi.fn(),
@@ -123,7 +125,10 @@ describe('reporting IPC handlers', () => {
     })
     reportingMocks.exportReportsBatchCommand.mockResolvedValue({
       status: 'success',
-      data: { directoryPath: 'D:/exports', filePaths: ['D:/exports/one.pdf', 'D:/exports/two.pdf'] },
+      data: {
+        directoryPath: 'D:/exports',
+        filePaths: ['D:/exports/one.pdf', 'D:/exports/two.pdf']
+      },
       error: null
     })
     registerReportingHandlers()
@@ -181,6 +186,35 @@ describe('reporting IPC handlers', () => {
     expect(reportingMocks.exportReportCommand).not.toHaveBeenCalled()
   })
 
+  it('returns a structured error and skips the save dialog when report detail lookup fails', async () => {
+    reportingMocks.getReportDetailCommand.mockResolvedValueOnce({
+      status: 'error',
+      data: null,
+      error: {
+        code: 'NOT_FOUND',
+        message: '报表快照不存在',
+        details: { snapshotId: 11 }
+      }
+    })
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:export')
+
+    const result = await handler?.(event, {
+      snapshotId: 11,
+      ledgerId: 1,
+      format: 'pdf'
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: '报表快照不存在',
+      errorCode: 'NOT_FOUND',
+      errorDetails: { snapshotId: 11 }
+    })
+    expect(reportingMocks.showSaveDialog).not.toHaveBeenCalled()
+    expect(reportingMocks.exportReportCommand).not.toHaveBeenCalled()
+  })
+
   it('returns a validation error for empty batch export payloads', async () => {
     const event = { sender: { id: 1 } }
     const handler = reportingMocks.handlers.get('reporting:exportBatch')
@@ -193,7 +227,9 @@ describe('reporting IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '请先选择至少一张报表'
+      error: '请先选择至少一张报表',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
     expect(reportingMocks.showOpenDialog).not.toHaveBeenCalled()
   })
@@ -210,9 +246,46 @@ describe('reporting IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '请先选择至少一张报表'
+      error: '请先选择至少一张报表',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
     expect(reportingMocks.showOpenDialog).not.toHaveBeenCalled()
+  })
+
+  it('returns a structured error and skips the directory dialog when a batch member detail lookup fails', async () => {
+    reportingMocks.getReportDetailCommand
+      .mockResolvedValueOnce({
+        status: 'success',
+        data: detail,
+        error: null
+      })
+      .mockResolvedValueOnce({
+        status: 'error',
+        data: null,
+        error: {
+          code: 'NOT_FOUND',
+          message: '报表快照不存在',
+          details: { snapshotId: 12 }
+        }
+      })
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:exportBatch')
+
+    const result = await handler?.(event, {
+      snapshotIds: [11, 12],
+      ledgerId: 1,
+      format: 'pdf'
+    })
+
+    expect(result).toEqual({
+      success: false,
+      error: '报表快照不存在',
+      errorCode: 'NOT_FOUND',
+      errorDetails: { snapshotId: 12 }
+    })
+    expect(reportingMocks.showOpenDialog).not.toHaveBeenCalled()
+    expect(reportingMocks.exportReportsBatchCommand).not.toHaveBeenCalled()
   })
 
   it('returns a cancelled result when the batch export directory dialog is dismissed', async () => {

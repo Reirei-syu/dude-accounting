@@ -25,6 +25,30 @@ import type {
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
 
+function toLegacyFailure(
+  error:
+    | {
+        message?: string | null
+        code?: string | null
+        details?: Record<string, unknown> | null
+      }
+    | null
+    | undefined,
+  fallbackMessage: string
+): {
+  success: false
+  error: string
+  errorCode: string
+  errorDetails: Record<string, unknown> | null
+} {
+  return {
+    success: false,
+    error: error?.message ?? fallbackMessage,
+    errorCode: error?.code ?? 'INTERNAL_ERROR',
+    errorDetails: error?.details ?? null
+  }
+}
+
 export function registerBookQueryHandlers(): void {
   const db = getDatabase()
 
@@ -135,10 +159,7 @@ export function registerBookQueryHandlers(): void {
         }
       },
       async () => {
-        const result = await getAuxiliaryDetailCommand(
-          createCommandContextFromEvent(event),
-          query
-        )
+        const result = await getAuxiliaryDetailCommand(createCommandContextFromEvent(event), query)
         if (isCommandSuccess(result)) {
           return result.data
         }
@@ -165,13 +186,28 @@ export function registerBookQueryHandlers(): void {
       async () => {
         try {
           if (!payload.ledgerId) {
-            return { success: false, error: '请选择账套' }
+            return {
+              success: false,
+              error: '请选择账套',
+              errorCode: 'VALIDATION_ERROR',
+              errorDetails: null
+            }
           }
           if (typeof payload.title !== 'string' || !payload.title.trim()) {
-            return { success: false, error: '导出标题不能为空' }
+            return {
+              success: false,
+              error: '导出标题不能为空',
+              errorCode: 'VALIDATION_ERROR',
+              errorDetails: null
+            }
           }
           if (!Array.isArray(payload.columns) || payload.columns.length === 0) {
-            return { success: false, error: '导出列不能为空' }
+            return {
+              success: false,
+              error: '导出列不能为空',
+              errorCode: 'VALIDATION_ERROR',
+              errorDetails: null
+            }
           }
 
           const preferredDir = getPreferredBookQueryExportDir(db, app.getPath('documents'))
@@ -198,10 +234,7 @@ export function registerBookQueryHandlers(): void {
             filePath: saveResult.filePath
           })
           if (!isCommandSuccess(result)) {
-            return {
-              success: false,
-              error: result.error?.message ?? '导出账簿失败'
-            }
+            return toLegacyFailure(result.error, '导出账簿失败')
           }
           const exportPath = result.data.filePath
           rememberBookQueryExportDir(db, exportPath)
@@ -213,7 +246,9 @@ export function registerBookQueryHandlers(): void {
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : '导出账簿失败'
+            error: error instanceof Error ? error.message : '导出账簿失败',
+            errorCode: 'INTERNAL_ERROR',
+            errorDetails: null
           }
         }
       }

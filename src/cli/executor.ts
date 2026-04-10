@@ -8,10 +8,7 @@ import {
   updateUserCommand,
   whoamiCommand
 } from '../main/commands/authCommands'
-import {
-  exportAuditLogsCommand,
-  listAuditLogsCommand
-} from '../main/commands/auditLogCommands'
+import { exportAuditLogsCommand, listAuditLogsCommand } from '../main/commands/auditLogCommands'
 import {
   createAuxiliaryItemCommand,
   createCashFlowMappingCommand,
@@ -136,12 +133,8 @@ import {
   printPreparedJobCommand,
   updatePrintPreviewSettingsCommand
 } from '../main/commands/printCommands'
-import {
-  clearCliSession,
-  requireCliSession,
-  saveCliSession
-} from './sessionStore'
-import { findCommandMetadata, listCommandKeys } from '../main/commands/catalog'
+import { clearCliSession, requireCliSession, saveCliSession } from './sessionStore'
+import { findCommandMetadata } from '../main/commands/catalog'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
@@ -165,7 +158,7 @@ function createAuthedContext(
   runtime: RuntimeContext,
   outputMode: CommandOutputMode,
   token?: string
-) {
+): ReturnType<typeof createCommandContext> {
   const session = requireCliSession(runtime, token)
   return createCommandContext({
     runtime,
@@ -227,7 +220,10 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     'update-user': async (runtime, payload, outputMode, token) =>
       updateUserCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'delete-user': async (runtime, payload, outputMode, token) =>
-      deleteUserCommand(createAuthedContext(runtime, outputMode, token), payload as { userId: number })
+      deleteUserCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as { userId: number }
+      )
   },
   'audit-log': {
     list: async (runtime, payload, outputMode, token) =>
@@ -251,7 +247,10 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     'apply-template': async (runtime, payload, outputMode, token) =>
       applyLedgerTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     risk: async (runtime, payload, outputMode, token) =>
-      getLedgerDeletionRiskCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+      getLedgerDeletionRiskCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      )
   },
   subject: {
     list: async (runtime, payload, outputMode, token) =>
@@ -279,17 +278,32 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     items: async (runtime, payload, outputMode, token) =>
       listCashFlowItemsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     list: async (runtime, payload, outputMode, token) =>
-      listCashFlowMappingsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      listCashFlowMappingsCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     create: async (runtime, payload, outputMode, token) =>
-      createCashFlowMappingCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      createCashFlowMappingCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     update: async (runtime, payload, outputMode, token) =>
-      updateCashFlowMappingCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      updateCashFlowMappingCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     delete: async (runtime, payload, outputMode, token) =>
-      deleteCashFlowMappingCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+      deleteCashFlowMappingCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      )
   },
   voucher: {
     'next-number': async (runtime, payload, outputMode, token) =>
-      getNextVoucherNumberCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      getNextVoucherNumberCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     save: async (runtime, payload, outputMode, token) =>
       createVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     update: async (runtime, payload, outputMode, token) =>
@@ -299,7 +313,10 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     entries: async (runtime, payload, outputMode, token) =>
       getVoucherEntriesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     swap: async (runtime, payload, outputMode, token) =>
-      swapVoucherPositionsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      swapVoucherPositionsCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     batch: async (runtime, payload, outputMode, token) =>
       voucherBatchActionCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
@@ -319,9 +336,15 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
   },
   'carry-forward': {
     rules: async (runtime, payload, outputMode, token) =>
-      listCarryForwardRulesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      listCarryForwardRulesCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     save: async (runtime, payload, outputMode, token) =>
-      saveCarryForwardRulesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      saveCarryForwardRulesCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     preview: async (runtime, payload, outputMode, token) =>
       previewCarryForwardCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     execute: async (runtime, payload, outputMode, token) =>
@@ -341,11 +364,17 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     'diagnostics-status': async (runtime, _payload, outputMode, token) =>
       getDiagnosticsStatusCommand(createAuthedContext(runtime, outputMode, token)),
     'diagnostics-set-dir': async (runtime, payload, outputMode, token) =>
-      setDiagnosticsDirectoryCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      setDiagnosticsDirectoryCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'diagnostics-reset-dir': async (runtime, _payload, outputMode, token) =>
       resetDiagnosticsDirectoryCommand(createAuthedContext(runtime, outputMode, token)),
     'diagnostics-export': async (runtime, payload, outputMode, token) =>
-      exportDiagnosticsLogsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      exportDiagnosticsLogsCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'diagnostics-open-dir': async (runtime, _payload, outputMode, token) =>
       openDiagnosticsDirectoryCommand(createAuthedContext(runtime, outputMode, token)),
     'wallpaper-status': async (runtime, _payload, outputMode, token) =>
@@ -361,17 +390,32 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     'subject-template-get': async (runtime, payload, outputMode, token) =>
       getSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'subject-template-reference': async (runtime, payload, outputMode, token) =>
-      getSubjectTemplateReferenceCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      getSubjectTemplateReferenceCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'subject-template-parse-import': async (runtime, payload, outputMode, token) =>
-      parseSubjectTemplateImportCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      parseSubjectTemplateImportCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'subject-template-save': async (runtime, payload, outputMode, token) =>
       saveSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'subject-template-import': async (runtime, payload, outputMode, token) =>
-      importSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      importSubjectTemplateCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'subject-template-download': async (runtime, payload, outputMode, token) =>
-      downloadSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      downloadSubjectTemplateCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'subject-template-clear': async (runtime, payload, outputMode, token) =>
-      clearSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      clearSubjectTemplateCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'custom-template-list': async (runtime, _payload, outputMode, token) =>
       listCustomTemplatesCommand(createAuthedContext(runtime, outputMode, token)),
     'custom-template-get': async (runtime, payload, outputMode, token) =>
@@ -379,9 +423,15 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     'custom-template-save': async (runtime, payload, outputMode, token) =>
       saveCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'custom-template-import': async (runtime, payload, outputMode, token) =>
-      importCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      importCustomTemplateCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'custom-template-clear-entries': async (runtime, payload, outputMode, token) =>
-      clearCustomTemplateEntriesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      clearCustomTemplateEntriesCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'custom-template-delete': async (runtime, payload, outputMode, token) =>
       deleteCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
@@ -391,15 +441,24 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     status: async (runtime, payload, outputMode, token) =>
       getPrintJobStatusCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     model: async (runtime, payload, outputMode, token) =>
-      getPrintPreviewModelCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      getPrintPreviewModelCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'update-settings': async (runtime, payload, outputMode, token) =>
-      updatePrintPreviewSettingsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      updatePrintPreviewSettingsCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'open-preview': async (runtime, payload, outputMode, token) =>
       openPrintPreviewCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     print: async (runtime, payload, outputMode, token) =>
       printPreparedJobCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'export-pdf': async (runtime, payload, outputMode, token) =>
-      exportPreparedJobPdfCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      exportPreparedJobPdfCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     dispose: async (runtime, payload, outputMode, token) =>
       disposePrintJobCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
@@ -425,7 +484,10 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     journal: async (runtime, payload, outputMode, token) =>
       getJournalCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'aux-balances': async (runtime, payload, outputMode, token) =>
-      getAuxiliaryBalancesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      getAuxiliaryBalancesCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'aux-detail': async (runtime, payload, outputMode, token) =>
       getAuxiliaryDetailCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     export: async (runtime, payload, outputMode, token) =>
@@ -459,20 +521,41 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
   },
   evoucher: {
     import: async (runtime, payload, outputMode, token) =>
-      importElectronicVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      importElectronicVoucherCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     list: async (runtime, payload, outputMode, token) =>
-      listElectronicVouchersCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      listElectronicVouchersCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     verify: async (runtime, payload, outputMode, token) =>
-      verifyElectronicVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      verifyElectronicVoucherCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     parse: async (runtime, payload, outputMode, token) =>
-      parseElectronicVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+      parseElectronicVoucherCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     convert: async (runtime, payload, outputMode, token) =>
-      convertElectronicVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+      convertElectronicVoucherCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      )
   }
 }
 
+export function listRegisteredCommandKeys(): string[] {
+  return Object.entries(registry).flatMap(([domain, actions]) =>
+    Object.keys(actions).map((action) => `${domain} ${action}`)
+  )
+}
+
 export function listCommands(): string[] {
-  return listCommandKeys()
+  return listRegisteredCommandKeys()
 }
 
 export async function executeCliCommand(

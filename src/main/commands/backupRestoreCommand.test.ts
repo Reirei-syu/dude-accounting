@@ -12,7 +12,7 @@ const backupMocks = vi.hoisted(() => ({
   getPendingRestoreLogPath: vi.fn(() => 'D:/tmp/pending-restore-log.json'),
   requestEmbeddedCliRelaunch: vi.fn(),
   requireCommandAdmin: vi.fn((actor) => actor),
-  requireCommandLedgerAccess: vi.fn((_db, actor, _ledgerId) => actor)
+  requireCommandLedgerAccess: vi.fn((...args) => args[1])
 }))
 
 vi.mock('../database/init', () => ({
@@ -85,6 +85,7 @@ describe('restoreBackupCommand', () => {
     backupMocks.getBackupPackageById.mockReturnValue({
       id: 11,
       ledger_id: 7,
+      package_type: 'system_db_snapshot_legacy',
       backup_path: 'D:/backup/package/data.db',
       manifest_path: 'D:/backup/package/manifest.json',
       checksum: 'checksum-1'
@@ -111,6 +112,32 @@ describe('restoreBackupCommand', () => {
     })
     expect(backupMocks.requestEmbeddedCliRelaunch).toHaveBeenCalledTimes(1)
     expect(backupMocks.initializeDatabase).not.toHaveBeenCalled()
+  })
+
+  it('rejects ledger backup packages with a clear import guidance message', async () => {
+    backupMocks.getBackupPackageById.mockReturnValue({
+      id: 11,
+      ledger_id: 7,
+      package_type: 'ledger_backup',
+      backup_path: 'D:/backup/package/data.db',
+      manifest_path: 'D:/backup/package/manifest.json',
+      checksum: 'checksum-1'
+    })
+
+    const result = await restoreBackupCommand(context as never, { backupId: 11 })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+      details: {
+        backupId: 11,
+        packageType: 'ledger_backup'
+      }
+    })
+    expect(backupMocks.validateBackupArtifact).not.toHaveBeenCalled()
+    expect(backupMocks.restoreBackupArtifact).not.toHaveBeenCalled()
+    expect(backupMocks.requestEmbeddedCliRelaunch).not.toHaveBeenCalled()
   })
 
   it('clears pending log and reopens database when restore fails', async () => {

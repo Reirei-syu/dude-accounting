@@ -41,6 +41,8 @@ export function toLegacySuccess<T = unknown>(
 
   return {
     success: false,
-    error: result.error?.message ?? '未知错误'
+    error: result.error?.message ?? '未知错误',
+    errorCode: result.error?.code ?? 'INTERNAL_ERROR',
+    errorDetails: result.error?.details ?? null
   }
 }

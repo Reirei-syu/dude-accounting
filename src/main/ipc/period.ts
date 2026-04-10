@@ -11,16 +11,6 @@ export function registerPeriodHandlers(): void {
   getDatabase()
 
   ipcMain.handle('period:getStatus', (event, ledgerId: number, period: string) => {
-    if (!ledgerId || !period) {
-      return {
-        period,
-        is_closed: 0,
-        closed_at: null,
-        pending_audit_vouchers: [],
-        pending_bookkeep_vouchers: []
-      }
-    }
-
     return getPeriodStatusCommand(createCommandContextFromEvent(event), {
       ledgerId,
       period

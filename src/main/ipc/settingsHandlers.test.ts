@@ -20,6 +20,7 @@ const settingsMocks = vi.hoisted(() => {
     getDatabase: vi.fn(() => ({ prepare: vi.fn(), transaction: vi.fn((cb) => cb) })),
     appendOperationLog: vi.fn(),
     getErrorLogStatus: vi.fn(),
+    listDiagnosticLogFiles: vi.fn(),
     exportDiagnosticLogs: vi.fn(),
     setDiagnosticsLogDirectory: vi.fn(),
     resetDiagnosticsLogDirectory: vi.fn(),
@@ -81,6 +82,7 @@ vi.mock('../services/wallpaperPreference', () => ({
 
 vi.mock('../services/errorLog', () => ({
   getErrorLogStatus: settingsMocks.getErrorLogStatus,
+  listDiagnosticLogFiles: settingsMocks.listDiagnosticLogFiles,
   exportDiagnosticLogs: settingsMocks.exportDiagnosticLogs
 }))
 
@@ -150,6 +152,10 @@ describe('settings IPC handlers', () => {
         path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'error-2026-03-19.jsonl')
       ]
     })
+    settingsMocks.listDiagnosticLogFiles.mockReturnValue([
+      path.join(tempDir, 'logs', 'runtime-2026-03-19.jsonl'),
+      path.join(tempDir, 'logs', 'error-2026-03-19.jsonl')
+    ])
     settingsMocks.setDiagnosticsLogDirectory.mockReturnValue({
       mode: 'custom',
       defaultDirectory: path.join(tempDir, 'logs'),
@@ -226,10 +232,7 @@ describe('settings IPC handlers', () => {
       defaultPath: path.join(tempDir, 'logs'),
       properties: ['openDirectory', 'createDirectory']
     })
-    expect(settingsMocks.setDiagnosticsLogDirectory).toHaveBeenCalledWith(
-      tempDir,
-      'D:/CustomLogs'
-    )
+    expect(settingsMocks.setDiagnosticsLogDirectory).toHaveBeenCalledWith(tempDir, 'D:/CustomLogs')
     expect(settingsMocks.appendOperationLog).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -446,13 +449,7 @@ describe('settings IPC handlers', () => {
   })
 
   it('returns a stable error payload when diagnostics export has no files', async () => {
-    settingsMocks.showOpenDialog.mockResolvedValue({
-      canceled: false,
-      filePaths: ['D:/Logs']
-    })
-    settingsMocks.exportDiagnosticLogs.mockImplementation(() => {
-      throw new Error('暂无可导出的日志文件')
-    })
+    settingsMocks.listDiagnosticLogFiles.mockReturnValue([])
     const handler = settingsMocks.handlers.get('settings:exportDiagnosticsLogs')
     const event = { sender: { id: 1 } }
 
@@ -460,7 +457,13 @@ describe('settings IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '暂无可导出的日志文件'
+      error: '暂无可导出的日志文件',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: {
+        reason: 'NO_DIAGNOSTIC_LOGS'
+      }
     })
+    expect(settingsMocks.showOpenDialog).not.toHaveBeenCalled()
+    expect(settingsMocks.exportDiagnosticLogs).not.toHaveBeenCalled()
   })
 })

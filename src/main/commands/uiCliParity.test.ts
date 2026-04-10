@@ -38,7 +38,9 @@ function readPreloadMethodNames(): string[] {
 describe('UI / CLI parity catalog', () => {
   it('covers every preload API method with at least one CLI mapping', () => {
     const preloadMethods = readPreloadMethodNames()
-    const mappedMethods = new Set(getCommandMetadata().flatMap((item) => item.uiMethods))
+    const mappedMethods = new Set(
+      getCommandMetadata().flatMap((item) => [...item.uiMethods, ...item.uiAssistedMethods])
+    )
     const missingMethods = preloadMethods.filter((methodName) => !mappedMethods.has(methodName))
 
     expect(preloadMethods.length).toBeGreaterThan(0)

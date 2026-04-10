@@ -29,6 +29,7 @@ import { buildTableMeasurementHtml } from '../services/printMeasurement'
 import { buildPagedPrintPreviewHtml } from '../services/printPreviewShell'
 import { requestEmbeddedCliKeepAlive } from '../runtime/embeddedCliState'
 import { requireCommandActor, requireCommandLedgerAccess } from '../commands/authz'
+import { CommandError } from '../commands/types'
 import type { CommandActor } from '../commands/types'
 import { requireAuth, requireLedgerAccess } from './session'
 
@@ -97,6 +98,58 @@ interface PrintJobRecord {
 
 const printJobs = new Map<string, PrintJobRecord>()
 const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
+
+function buildPrintFailureResponse(
+  error: string,
+  errorCode: string,
+  errorDetails: Record<string, unknown> | null = null
+): {
+  success: false
+  error: string
+  errorCode: string
+  errorDetails: Record<string, unknown> | null
+} {
+  return {
+    success: false,
+    error,
+    errorCode,
+    errorDetails
+  }
+}
+
+function resolveAccessiblePrintJob(
+  event: IpcMainInvokeEvent,
+  jobId: string
+): {
+  job: PrintJobRecord | null
+  failure?: {
+    success: false
+    error: string
+    errorCode: string
+    errorDetails: Record<string, unknown> | null
+  }
+} {
+  try {
+    return {
+      job: getAccessiblePrintJob(event, jobId)
+    }
+  } catch (error) {
+    if (error instanceof CommandError) {
+      return {
+        job: null,
+        failure: buildPrintFailureResponse(error.message, error.code, error.details)
+      }
+    }
+
+    return {
+      job: null,
+      failure: buildPrintFailureResponse(
+        error instanceof Error ? error.message : '打印任务访问失败',
+        'INTERNAL_ERROR'
+      )
+    }
+  }
+}
 
 function getPrintJobDirectory(): string {
   return path.join(app.getPath('userData'), 'print-jobs')
@@ -179,9 +232,9 @@ function pruneExpiredPrintJobs(now: number = Date.now()): void {
       const previewWindow =
         job.previewWebContentsId === null
           ? null
-          : BrowserWindow.getAllWindows().find(
+          : (BrowserWindow.getAllWindows().find(
               (window) => window.webContents.id === job.previewWebContentsId
-            ) ?? null
+            ) ?? null)
       previewWindow?.close()
       deletePrintJob(jobId)
     }
@@ -315,7 +368,9 @@ export function resolveMeasuredTableRowGroups(
   }
 }
 
-function buildPreviewModel(job: PrintJobRecord): (PrintLayoutResult & { layoutVersion: number }) | null {
+function buildPreviewModel(
+  job: PrintJobRecord
+): (PrintLayoutResult & { layoutVersion: number }) | null {
   if (!job.layoutResult) {
     return null
   }
@@ -981,15 +1036,13 @@ function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJ
 
   const user = requireAuth(event)
   if (job.createdBy !== user.id && !user.isAdmin) {
-    throw new Error('无权访问该打印任务')
+    throw new CommandError('FORBIDDEN', '无权访问该打印任务', { jobId }, 4)
   }
 
   return job
 }
 
-async function openPreviewWindow(
-  jobId: string
-): Promise<void> {
+async function openPreviewWindow(jobId: string): Promise<void> {
   const existing = getPreviewWindow(jobId)
   if (existing) {
     existing.focus()
@@ -1029,7 +1082,7 @@ function getAccessiblePrintJobForActor(
     requireCommandLedgerAccess(db, actor, job.ledgerId)
   }
   if (job.createdBy !== currentActor.id && !currentActor.isAdmin) {
-    throw new Error('无权访问该打印任务')
+    throw new CommandError('FORBIDDEN', '无权访问该打印任务', { jobId }, 4)
   }
 
   job.lastAccessAt = Date.now()
@@ -1116,7 +1169,7 @@ export async function preparePrintJobForActor(
     previewWebContentsId: null
   })
 
-  const finalizeJob = async () => {
+  const finalizeJob = async (): Promise<void> => {
     const job = loadPrintJob(jobId)
     if (!job) return
     try {
@@ -1487,15 +1540,12 @@ export function registerPrintHandlers(): void {
   })
 
   ipcMain.handle('print:getJobStatus', (event, jobId: string) => {
-    const job = (() => {
-      try {
-        return getAccessiblePrintJob(event, jobId)
-      } catch {
-        return null
-      }
-    })()
+    const { job, failure } = resolveAccessiblePrintJob(event, jobId)
+    if (failure) {
+      return failure
+    }
     if (!job) {
-      return { success: false, error: '打印任务不存在' }
+      return buildPrintFailureResponse('打印任务不存在', 'NOT_FOUND', { jobId })
     }
     return {
       success: true,
@@ -1509,20 +1559,20 @@ export function registerPrintHandlers(): void {
   })
 
   ipcMain.handle('print:getPreviewModel', (event, jobId: string) => {
-    const job = (() => {
-      try {
-        return getAccessiblePrintJob(event, jobId)
-      } catch {
-        return null
-      }
-    })()
+    const { job, failure } = resolveAccessiblePrintJob(event, jobId)
+    if (failure) {
+      return failure
+    }
     if (!job) {
-      return { success: false, error: '打印任务不存在' }
+      return buildPrintFailureResponse('打印任务不存在', 'NOT_FOUND', { jobId })
     }
 
     const previewModel = buildPreviewModel(job)
     if (!previewModel) {
-      return { success: false, error: job.error ?? '打印任务尚未完成' }
+      return buildPrintFailureResponse(job.error ?? '打印任务尚未完成', 'CONFLICT', {
+        jobId,
+        status: job.status
+      })
     }
 
     return {
@@ -1534,22 +1584,27 @@ export function registerPrintHandlers(): void {
   ipcMain.handle(
     'print:updatePreviewSettings',
     async (event, payload: { jobId: string; settings: Partial<PrintPreviewSettings> }) => {
-      const job = (() => {
-        try {
-          return getAccessiblePrintJob(event, payload.jobId)
-        } catch {
-          return null
-        }
-      })()
+      const { job, failure } = resolveAccessiblePrintJob(event, payload.jobId)
+      if (failure) {
+        return failure
+      }
       if (!job) {
-        return { success: false, error: '打印任务不存在' }
+        return buildPrintFailureResponse('打印任务不存在', 'NOT_FOUND', {
+          jobId: payload.jobId
+        })
       }
       if (!job.sourceDocument) {
-        return { success: false, error: job.error ?? '打印任务尚未完成' }
+        return buildPrintFailureResponse(job.error ?? '打印任务尚未完成', 'CONFLICT', {
+          jobId: payload.jobId,
+          status: job.status
+        })
       }
 
       try {
-        const nextSettings = normalizePrintPreviewSettings(payload.settings, job.settings.orientation)
+        const nextSettings = normalizePrintPreviewSettings(
+          payload.settings,
+          job.settings.orientation
+        )
         const layoutResult = await layoutPrintDocument(job.sourceDocument, nextSettings)
         job.settings = nextSettings
         job.orientation = nextSettings.orientation
@@ -1567,27 +1622,27 @@ export function registerPrintHandlers(): void {
       } catch (error) {
         job.error = error instanceof Error ? error.message : '更新打印预览失败'
         savePrintJob(job)
-        return {
-          success: false,
-          error: job.error
-        }
+        return buildPrintFailureResponse(job.error, 'CONFLICT', {
+          jobId: payload.jobId,
+          status: job.status
+        })
       }
     }
   )
 
   ipcMain.handle('print:openPreview', async (event, jobId: string) => {
-    const job = (() => {
-      try {
-        return getAccessiblePrintJob(event, jobId)
-      } catch {
-        return null
-      }
-    })()
+    const { job, failure } = resolveAccessiblePrintJob(event, jobId)
+    if (failure) {
+      return failure
+    }
     if (!job) {
-      return { success: false, error: '打印任务不存在' }
+      return buildPrintFailureResponse('打印任务不存在', 'NOT_FOUND', { jobId })
     }
     if (job.status !== 'ready' || !job.layoutResult) {
-      return { success: false, error: job.error ?? '打印任务尚未完成' }
+      return buildPrintFailureResponse(job.error ?? '打印任务尚未完成', 'CONFLICT', {
+        jobId,
+        status: job.status
+      })
     }
 
     await openPreviewWindow(jobId)
@@ -1596,15 +1651,20 @@ export function registerPrintHandlers(): void {
 
   ipcMain.handle('print:print', async (event, payload: PrintCommandPayload) => {
     const command = resolvePrintCommandPayload(payload)
-    const job = (() => {
-      try {
-        return getAccessiblePrintJob(event, command.jobId)
-      } catch {
-        return null
-      }
-    })()
+    const { job, failure } = resolveAccessiblePrintJob(event, command.jobId)
+    if (failure) {
+      return failure
+    }
     if (!job) {
-      return { success: false, error: '打印任务不存在' }
+      return buildPrintFailureResponse('打印任务不存在', 'NOT_FOUND', {
+        jobId: command.jobId
+      })
+    }
+    if (job.status !== 'ready' || !job.layoutResult) {
+      return buildPrintFailureResponse(job.error ?? '打印任务尚未完成', 'CONFLICT', {
+        jobId: command.jobId,
+        status: job.status
+      })
     }
 
     return printJobToSystem(command.jobId, {
@@ -1634,15 +1694,20 @@ export function registerPrintHandlers(): void {
 
   ipcMain.handle('print:exportPdf', async (event, payload: PrintCommandPayload) => {
     const command = resolvePrintCommandPayload(payload)
-    const job = (() => {
-      try {
-        return getAccessiblePrintJob(event, command.jobId)
-      } catch {
-        return null
-      }
-    })()
+    const { job, failure } = resolveAccessiblePrintJob(event, command.jobId)
+    if (failure) {
+      return failure
+    }
     if (!job) {
-      return { success: false, error: '打印任务不存在' }
+      return buildPrintFailureResponse('打印任务不存在', 'NOT_FOUND', {
+        jobId: command.jobId
+      })
+    }
+    if (job.status !== 'ready' || !job.layoutResult) {
+      return buildPrintFailureResponse(job.error ?? '打印任务尚未完成', 'CONFLICT', {
+        jobId: command.jobId,
+        status: job.status
+      })
     }
 
     const browserWindow = BrowserWindow.fromWebContents(event.sender)

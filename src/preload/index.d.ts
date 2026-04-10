@@ -65,10 +65,12 @@ interface LedgerAPI {
     name?: string
     currentPeriod?: string
   }) => Promise<{ success: boolean; error?: string }>
-  delete: (payload: {
-    ledgerId: number
-    riskAcknowledged?: boolean
-  }) => Promise<{ success: boolean; error?: string }>
+  delete: (payload: { ledgerId: number; riskAcknowledged?: boolean }) => Promise<{
+    success: boolean
+    error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
+  }>
   getDeletionRisk: (ledgerId: number) => Promise<{
     success: boolean
     validatedBackupCount?: number
@@ -269,10 +271,10 @@ interface SettingsAPI {
     mode: 'default' | 'custom'
     wallpaperPath: string | null
     wallpaperUrl: string | null
-      recommendedResolution: string
-      recommendedRatio: string
-      maxFileSizeMb: number
-      supportedFormats: string[]
+    recommendedResolution: string
+    recommendedRatio: string
+    maxFileSizeMb: number
+    supportedFormats: string[]
   }>
   getUserPreferences: () => Promise<Record<string, string>>
   setSystemParam: (
@@ -299,6 +301,8 @@ interface SettingsAPI {
     success: boolean
     cancelled?: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     exportDirectory?: string
     filePaths?: string[]
   }>
@@ -331,24 +335,26 @@ interface SettingsAPI {
       outputHeight: number
     }
   }>
-  applyWallpaperCrop: (payload:
-    | {
-        extension: string
-        bytes: number[]
-        sourcePath?: string
-      }
-    | {
-        sourcePath: string
-        extension?: string
-        viewport?: {
-          scale: number
-          minScale: number
-          maxScale: number
-          offsetX: number
-          offsetY: number
+  applyWallpaperCrop: (
+    payload:
+      | {
+          extension: string
+          bytes: number[]
+          sourcePath?: string
         }
-        useSuggestedViewport?: boolean
-      }) => Promise<{
+      | {
+          sourcePath: string
+          extension?: string
+          viewport?: {
+            scale: number
+            minScale: number
+            maxScale: number
+            offsetX: number
+            offsetY: number
+          }
+          useSuggestedViewport?: boolean
+        }
+  ) => Promise<{
     success: boolean
     error?: string
     state?: {
@@ -1033,15 +1039,13 @@ interface BackupAPI {
     cancelled?: boolean
     restartRequired?: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
   }>
 }
 
 interface ArchiveAPI {
-  export: (payload: {
-    ledgerId: number
-    fiscalYear: string
-    directoryPath?: string
-  }) => Promise<{
+  export: (payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }) => Promise<{
     success: boolean
     cancelled?: boolean
     exportId?: number
@@ -1070,6 +1074,8 @@ interface ArchiveAPI {
     valid?: boolean
     actualChecksum?: string | null
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
   }>
   delete: (payload: { exportId: number; deleteRecordOnly?: boolean }) => Promise<{
     success: boolean
@@ -1269,6 +1275,8 @@ interface ReportingAPI {
     success: boolean
     cancelled?: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     filePath?: string
   }>
   exportBatch: (payload: {
@@ -1280,6 +1288,8 @@ interface ReportingAPI {
     success: boolean
     cancelled?: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     directoryPath?: string
     filePaths?: string[]
   }>
@@ -1421,12 +1431,12 @@ interface BookQueryAPI {
   export: (payload: {
     ledgerId: number
     bookType: string
-      title: string
-      subtitle?: string
-      ledgerName?: string
-      titleMetaLines?: string[]
-      subjectLabel?: string
-      periodLabel?: string
+    title: string
+    subtitle?: string
+    ledgerName?: string
+    titleMetaLines?: string[]
+    subjectLabel?: string
+    periodLabel?: string
     format: 'xlsx' | 'pdf'
     columns: Array<{
       key: string
@@ -1445,6 +1455,8 @@ interface BookQueryAPI {
     success: boolean
     cancelled?: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     filePath?: string
   }>
 }
@@ -1460,6 +1472,8 @@ interface PrintAPI {
     status?: 'preparing' | 'ready' | 'failed'
     title?: string
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     pageCount?: number
     layoutVersion?: number
     layoutError?: string
@@ -1467,6 +1481,8 @@ interface PrintAPI {
   getPreviewModel: (jobId: string) => Promise<{
     success: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     model?: {
       title: string
       orientation: 'portrait' | 'landscape'
@@ -1493,7 +1509,12 @@ interface PrintAPI {
       }
     }
   }>
-  openPreview: (jobId: string) => Promise<{ success: boolean; error?: string }>
+  openPreview: (jobId: string) => Promise<{
+    success: boolean
+    error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
+  }>
   updatePreviewSettings: (payload: {
     jobId: string
     settings: {
@@ -1505,6 +1526,8 @@ interface PrintAPI {
   }) => Promise<{
     success: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     model?: {
       title: string
       orientation: 'portrait' | 'landscape'
@@ -1534,11 +1557,15 @@ interface PrintAPI {
   print: (payload: string | { jobId: string }) => Promise<{
     success: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
   }>
   exportPdf: (payload: string | { jobId: string }) => Promise<{
     success: boolean
     cancelled?: boolean
     error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
     filePath?: string
   }>
   dispose: (jobId: string) => Promise<{ success: boolean; error?: string }>

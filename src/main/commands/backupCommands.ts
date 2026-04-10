@@ -31,11 +31,7 @@ import {
 } from '../services/pendingRestoreLog'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requestEmbeddedCliRelaunch } from '../runtime/embeddedCliState'
-import {
-  requireCommandAdmin,
-  requireCommandLedgerAccess,
-  requireCommandPermission
-} from './authz'
+import { requireCommandAdmin, requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
@@ -49,6 +45,20 @@ function getElectronicVoucherRootDir(context: CommandContext): string {
 
 function readBackupManifest(manifestPath: string): BackupManifest {
   return JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as BackupManifest
+}
+
+function assertRestorePackageSupported(
+  packageType: 'ledger_backup' | 'system_db_snapshot_legacy' | 'system_backup' | undefined,
+  details: Record<string, unknown>
+): void {
+  if (packageType === 'ledger_backup') {
+    throw new CommandError(
+      'VALIDATION_ERROR',
+      '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+      details,
+      2
+    )
+  }
 }
 
 export async function createBackupCommand(
@@ -171,9 +181,7 @@ export async function listBackupsCommand(
 export async function validateBackupCommand(
   context: CommandContext,
   payload: { backupId: number }
-): Promise<
-  CommandResult<{ valid: boolean; actualChecksum: string | null; error?: string }>
-> {
+): Promise<CommandResult<{ valid: boolean; actualChecksum: string | null; error?: string }>> {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'ledger_settings')
     const row = getBackupPackageById(context.db, payload.backupId)
@@ -395,6 +403,10 @@ export async function restoreBackupCommand(
         throw new CommandError('NOT_FOUND', '备份记录不存在', { backupId: payload.backupId }, 5)
       }
       requireCommandLedgerAccess(context.db, context.actor, row.ledger_id)
+      assertRestorePackageSupported(row.package_type, {
+        backupId: payload.backupId,
+        packageType: row.package_type
+      })
       backupPath = row.backup_path
       manifestPath = row.manifest_path
       expectedChecksum = row.checksum
@@ -406,6 +418,10 @@ export async function restoreBackupCommand(
       }
       const resolved = resolveBackupArtifactPaths(packagePath)
       const manifest = readBackupManifest(resolved.manifestPath)
+      assertRestorePackageSupported(manifest.packageType, {
+        packagePath,
+        packageType: manifest.packageType ?? null
+      })
       backupPath = resolved.backupPath
       manifestPath = resolved.manifestPath
       expectedChecksum = manifest.checksum
@@ -431,7 +447,7 @@ export async function restoreBackupCommand(
         ledgerId,
         targetType: typeof payload.backupId === 'number' ? 'backup_package' : 'backup_package_path',
         targetId:
-          typeof payload.backupId === 'number' ? payload.backupId : payload.packagePath ?? null,
+          typeof payload.backupId === 'number' ? payload.backupId : (payload.packagePath ?? null),
         backupPath,
         manifestPath,
         backupMode: 'system_db_snapshot'

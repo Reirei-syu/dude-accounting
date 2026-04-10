@@ -155,12 +155,16 @@ export function registerArchiveHandlers(): void {
               }
             : {
                 success: false,
-                error: result.error?.message ?? '校验电子档案失败'
+                error: result.error?.message ?? '校验电子档案失败',
+                errorCode: result.error?.code ?? 'INTERNAL_ERROR',
+                errorDetails: result.error?.details ?? null
               }
         } catch (error) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : '校验电子档案失败'
+            error: error instanceof Error ? error.message : '校验电子档案失败',
+            errorCode: 'INTERNAL_ERROR',
+            errorDetails: null
           }
         }
       }
@@ -195,7 +199,16 @@ export function registerArchiveHandlers(): void {
               }
             : {
                 success: false,
-                error: result.error?.message ?? '删除电子档案失败'
+                error: result.error?.message ?? '删除电子档案失败',
+                errorCode: result.error?.code ?? 'INTERNAL_ERROR',
+                errorDetails: result.error?.details ?? null,
+                requiresRecordDeletionConfirmation:
+                  result.error?.code === 'RISK_CONFIRMATION_REQUIRED',
+                missingPhysicalPackage: result.error?.details?.missingPhysicalPackage === true,
+                packagePath:
+                  typeof result.error?.details?.packagePath === 'string'
+                    ? result.error.details.packagePath
+                    : undefined
               }
         }
       )

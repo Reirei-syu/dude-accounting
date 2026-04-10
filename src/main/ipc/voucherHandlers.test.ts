@@ -9,7 +9,9 @@ const voucherHandlerMocks = vi.hoisted(() => {
       handlers.set(channel, handler)
     }),
     getDatabase: vi.fn(() => ({ tag: 'db' })),
-    withIpcTelemetry: vi.fn(async (_options: unknown, operation: () => unknown) => await operation()),
+    withIpcTelemetry: vi.fn(
+      async (_options: unknown, operation: () => unknown) => await operation()
+    ),
     getNextVoucherNumberCommand: vi.fn(),
     createVoucherCommand: vi.fn(),
     updateVoucherCommand: vi.fn(),
@@ -76,7 +78,9 @@ describe('voucher IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '仅选择 2 张凭证时才可交换位置'
+      error: '仅选择 2 张凭证时才可交换位置',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
   })
 
@@ -98,7 +102,9 @@ describe('voucher IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '请选择凭证'
+      error: '请选择凭证',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
     })
   })
 })

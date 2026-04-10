@@ -231,6 +231,22 @@ export default function MainLayout(): JSX.Element {
         riskAcknowledged: deleteRiskAcknowledged
       })
       if (!result.success) {
+        if (result.errorCode === 'RISK_CONFIRMATION_REQUIRED' && window.electron) {
+          try {
+            const refreshedRisk = await window.api.ledger.getDeletionRisk(currentLedger.id)
+            if (refreshedRisk.success) {
+              setDeleteRisk({
+                validatedBackupCount: refreshedRisk.validatedBackupCount ?? 0,
+                validatedArchiveCount: refreshedRisk.validatedArchiveCount ?? 0,
+                missingValidatedBackup: refreshedRisk.missingValidatedBackup === true,
+                missingValidatedArchive: refreshedRisk.missingValidatedArchive === true
+              })
+              setDeleteRiskAcknowledged(false)
+            }
+          } catch {
+            // keep original backend error message when risk refresh fails
+          }
+        }
         window.alert(result.error || '删除账套失败')
         return
       }
@@ -270,7 +286,10 @@ export default function MainLayout(): JSX.Element {
           currentLedger?.id ?? null,
           Number.isInteger(preferredLedgerId) && preferredLedgerId > 0 ? preferredLedgerId : null
         )
-        if (nextLedger?.id !== currentLedger?.id || (nextLedger === null && currentLedger !== null)) {
+        if (
+          nextLedger?.id !== currentLedger?.id ||
+          (nextLedger === null && currentLedger !== null)
+        ) {
           setCurrentLedger(nextLedger)
         }
 
@@ -287,7 +306,15 @@ export default function MainLayout(): JSX.Element {
     }
 
     void loadLedgers()
-  }, [currentLedger?.id, openTab, setCurrentLedger, setLedgers, tabs.length, user?.id, user?.isAdmin])
+  }, [
+    currentLedger?.id,
+    openTab,
+    setCurrentLedger,
+    setLedgers,
+    tabs.length,
+    user?.id,
+    user?.isAdmin
+  ])
 
   return (
     <div
@@ -380,11 +407,7 @@ export default function MainLayout(): JSX.Element {
             >
               我的偏好
             </button>
-            <button
-              type="button"
-              className="main-logout-btn"
-              onClick={() => void handleLogout()}
-            >
+            <button type="button" className="main-logout-btn" onClick={() => void handleLogout()}>
               {userDisplayName} | 退出登录
             </button>
           </div>
@@ -501,15 +524,17 @@ export default function MainLayout(): JSX.Element {
                 {deleteRisk && (
                   <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                     <div className="font-semibold">删除前风险提示</div>
-                    <div className="mt-2">
-                      已校验账套备份：{deleteRisk.validatedBackupCount} 份
-                    </div>
+                    <div className="mt-2">已校验账套备份：{deleteRisk.validatedBackupCount} 份</div>
                     <div>已校验电子档案导出：{deleteRisk.validatedArchiveCount} 份</div>
                     {deleteRisk.missingValidatedBackup && (
-                      <div className="mt-2">当前账套缺少已校验账套备份，删除后将无法通过账套包回滚。</div>
+                      <div className="mt-2">
+                        当前账套缺少已校验账套备份，删除后将无法通过账套包回滚。
+                      </div>
                     )}
                     {deleteRisk.missingValidatedArchive && (
-                      <div className="mt-1">当前账套缺少已校验电子档案导出，删除后将失去归档留存保障。</div>
+                      <div className="mt-1">
+                        当前账套缺少已校验电子档案导出，删除后将失去归档留存保障。
+                      </div>
                     )}
                   </div>
                 )}

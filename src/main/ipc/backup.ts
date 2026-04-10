@@ -14,7 +14,6 @@ import {
 import {
   resolveBackupArtifactPaths,
   restoreBackupArtifact,
-  type BackupManifest,
   validateBackupArtifact
 } from '../services/backupRecovery'
 import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
@@ -63,8 +62,18 @@ async function pickDirectory(
   }
 }
 
-function readBackupManifest(manifestPath: string): BackupManifest {
-  return JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as BackupManifest
+function buildUnsupportedLedgerRestoreResponse(details: Record<string, unknown>): {
+  success: false
+  error: string
+  errorCode: 'VALIDATION_ERROR'
+  errorDetails: Record<string, unknown>
+} {
+  return {
+    success: false,
+    error: '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+    errorCode: 'VALIDATION_ERROR',
+    errorDetails: details
+  }
 }
 
 export function registerBackupHandlers(): void {
@@ -320,7 +329,16 @@ export function registerBackupHandlers(): void {
               }
             : {
                 success: false,
-                error: result.error?.message ?? '删除备份失败'
+                error: result.error?.message ?? '删除备份失败',
+                errorCode: result.error?.code ?? 'INTERNAL_ERROR',
+                errorDetails: result.error?.details ?? null,
+                requiresRecordDeletionConfirmation:
+                  result.error?.code === 'RISK_CONFIRMATION_REQUIRED',
+                missingPhysicalPackage: result.error?.details?.missingPhysicalPackage === true,
+                packagePath:
+                  typeof result.error?.details?.packagePath === 'string'
+                    ? result.error.details.packagePath
+                    : undefined
               }
         }
       )
@@ -378,6 +396,12 @@ export function registerBackupHandlers(): void {
               }
 
               requireLedgerAccess(event, db, row.ledger_id)
+              if (row.package_type === 'ledger_backup') {
+                return buildUnsupportedLedgerRestoreResponse({
+                  backupId: payload.backupId,
+                  packageType: row.package_type
+                })
+              }
               backupPath = row.backup_path
               manifestPath = row.manifest_path
               ledgerId = row.ledger_id
@@ -396,7 +420,17 @@ export function registerBackupHandlers(): void {
 
               rememberPathPreference(db, BACKUP_LAST_DIR_KEY, path.dirname(picked.directoryPath))
               const resolved = resolveBackupArtifactPaths(picked.directoryPath)
-              const manifest = readBackupManifest(resolved.manifestPath)
+              const manifest = JSON.parse(fs.readFileSync(resolved.manifestPath, 'utf8')) as {
+                checksum: string
+                ledgerId?: number | null
+                packageType?: string
+              }
+              if (manifest.packageType === 'ledger_backup') {
+                return buildUnsupportedLedgerRestoreResponse({
+                  packagePath: picked.directoryPath,
+                  packageType: 'ledger_backup'
+                })
+              }
 
               backupPath = resolved.backupPath
               manifestPath = resolved.manifestPath

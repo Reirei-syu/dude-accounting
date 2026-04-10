@@ -23,6 +23,30 @@ import {
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
 
+function toLegacyFailure(
+  error:
+    | {
+        message?: string | null
+        code?: string | null
+        details?: Record<string, unknown> | null
+      }
+    | null
+    | undefined,
+  fallbackMessage: string
+): {
+  success: false
+  error: string
+  errorCode: string
+  errorDetails: Record<string, unknown> | null
+} {
+  return {
+    success: false,
+    error: error?.message ?? fallbackMessage,
+    errorCode: error?.code ?? 'INTERNAL_ERROR',
+    errorDetails: error?.details ?? null
+  }
+}
+
 export function registerReportingHandlers(): void {
   ipcMain.handle('reporting:list', (event, filters: ReportListFilters) =>
     withIpcTelemetry(
@@ -93,12 +117,17 @@ export function registerReportingHandlers(): void {
         async () => {
           try {
             const db = getDatabase()
-            const detail = (
-              await getReportDetailCommand(createCommandContextFromEvent(event), {
+            const detailResult = await getReportDetailCommand(
+              createCommandContextFromEvent(event),
+              {
                 snapshotId: payload.snapshotId,
                 ledgerId: payload.ledgerId
-              })
-            ).data as ReportSnapshotDetail
+              }
+            )
+            if (!isCommandSuccess(detailResult)) {
+              return toLegacyFailure(detailResult.error, '获取报表详情失败')
+            }
+            const detail: ReportSnapshotDetail = detailResult.data
             const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
             const defaultPath = buildReportExportDefaultPath(preferredDir, detail, payload.format)
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
@@ -126,10 +155,7 @@ export function registerReportingHandlers(): void {
               filePath: saveResult.filePath
             })
             if (!isCommandSuccess(result)) {
-              return {
-                success: false,
-                error: result.error?.message ?? '导出报表失败'
-              }
+              return toLegacyFailure(result.error, '导出报表失败')
             }
             const exportPath = result.data.filePath
             rememberReportExportDir(db, exportPath)
@@ -141,7 +167,9 @@ export function registerReportingHandlers(): void {
           } catch (error) {
             return {
               success: false,
-              error: error instanceof Error ? error.message : '导出报表失败'
+              error: error instanceof Error ? error.message : '导出报表失败',
+              errorCode: 'INTERNAL_ERROR',
+              errorDetails: null
             }
           }
         }
@@ -174,10 +202,15 @@ export function registerReportingHandlers(): void {
             const db = getDatabase()
 
             if (!Array.isArray(payload.snapshotIds) || payload.snapshotIds.length === 0) {
-              return { success: false, error: '请先选择至少一张报表' }
+              return {
+                success: false,
+                error: '请先选择至少一张报表',
+                errorCode: 'VALIDATION_ERROR',
+                errorDetails: null
+              }
             }
 
-            await Promise.all(
+            const detailResults = await Promise.all(
               payload.snapshotIds.map((snapshotId) =>
                 getReportDetailCommand(createCommandContextFromEvent(event), {
                   snapshotId,
@@ -185,6 +218,10 @@ export function registerReportingHandlers(): void {
                 })
               )
             )
+            const failedDetailResult = detailResults.find((result) => !isCommandSuccess(result))
+            if (failedDetailResult && !isCommandSuccess(failedDetailResult)) {
+              return toLegacyFailure(failedDetailResult.error, '获取报表详情失败')
+            }
             const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const openResult = payload.directoryPath
@@ -209,10 +246,7 @@ export function registerReportingHandlers(): void {
               directoryPath
             })
             if (!isCommandSuccess(result)) {
-              return {
-                success: false,
-                error: result.error?.message ?? '批量导出报表失败'
-              }
+              return toLegacyFailure(result.error, '批量导出报表失败')
             }
             const filePaths = result.data.filePaths
             rememberReportExportDir(db, directoryPath)
@@ -225,7 +259,9 @@ export function registerReportingHandlers(): void {
           } catch (error) {
             return {
               success: false,
-              error: error instanceof Error ? error.message : '批量导出报表失败'
+              error: error instanceof Error ? error.message : '批量导出报表失败',
+              errorCode: 'INTERNAL_ERROR',
+              errorDetails: null
             }
           }
         }

@@ -11,11 +11,7 @@ import {
   previewPLCarryForward,
   savePLCarryForwardRules
 } from '../services/plCarryForward'
-import {
-  requireCommandActor,
-  requireCommandLedgerAccess,
-  requireCommandPermission
-} from './authz'
+import { requireCommandActor, requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
@@ -49,10 +45,9 @@ function carryForwardYear(
   const endPeriod = `${year}-12`
   const nextPeriod = `${year + 1}-01`
 
-  context.db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
-    ledgerId,
-    nextPeriod
-  )
+  context.db
+    .prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)')
+    .run(ledgerId, nextPeriod)
 
   const openingRows = context.db
     .prepare(
@@ -143,6 +138,12 @@ export async function getPeriodStatusCommand(
   payload: { ledgerId: number; period: string }
 ): Promise<CommandResult<ReturnType<typeof getPeriodStatusSummary>>> {
   return withCommandResult(context, () => {
+    if (!Number.isInteger(payload.ledgerId) || payload.ledgerId <= 0) {
+      throw new Error('请先选择账套')
+    }
+    if (typeof payload.period !== 'string' || !payload.period.trim()) {
+      throw new Error('请先选择期间')
+    }
     requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
     return getPeriodStatusSummary(context.db, payload.ledgerId, payload.period)
@@ -152,9 +153,7 @@ export async function getPeriodStatusCommand(
 export async function closePeriodCommand(
   context: CommandContext,
   payload: { ledgerId: number; period: string }
-): Promise<
-  CommandResult<{ carriedForward: boolean; nextPeriod: string; carriedCount: number }>
-> {
+): Promise<CommandResult<{ carriedForward: boolean; nextPeriod: string; carriedCount: number }>> {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'bookkeeping')
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
@@ -166,19 +165,20 @@ export async function closePeriodCommand(
     if (!ledger) {
       throw new Error('账套不存在')
     }
-    assertPLCarryForwardCompleted(context.db, { ledgerId: payload.ledgerId, period: payload.period })
+    assertPLCarryForwardCompleted(context.db, {
+      ledgerId: payload.ledgerId,
+      period: payload.period
+    })
 
     let carriedForward = false
     let carriedCount = 0
     context.db.transaction(() => {
-      context.db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
-        payload.ledgerId,
-        payload.period
-      )
-      context.db.prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)').run(
-        payload.ledgerId,
-        nextPeriod
-      )
+      context.db
+        .prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)')
+        .run(payload.ledgerId, payload.period)
+      context.db
+        .prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)')
+        .run(payload.ledgerId, nextPeriod)
       const status = context.db
         .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
         .get(payload.ledgerId, payload.period) as { is_closed: number } | undefined

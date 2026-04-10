@@ -8,6 +8,7 @@ import {
   shouldShowExpandButton
 } from './backupCardLayout'
 import { getArchivePackageName, getBackupPackageName } from './backupRecordDisplay'
+import { buildValidationFeedback } from './backupValidationFeedback'
 import {
   getArchiveYearOptions,
   getBackupPeriodOptions,
@@ -94,10 +95,7 @@ export default function Backup(): JSX.Element {
   const canOperate = Boolean(window.electron && currentLedger)
   const backupPeriodOptions = useMemo(() => getBackupPeriodOptions(periods), [periods])
   const archiveYearOptions = useMemo(() => getArchiveYearOptions(periods), [periods])
-  const latestBackupIds = useMemo(
-    () => getLatestRecordIdsByGroup(backups, () => 'all'),
-    [backups]
-  )
+  const latestBackupIds = useMemo(() => getLatestRecordIdsByGroup(backups, () => 'all'), [backups])
   const latestArchiveIds = useMemo(
     () => getLatestRecordIdsByGroup(archives, () => 'all'),
     [archives]
@@ -188,17 +186,19 @@ export default function Backup(): JSX.Element {
   const validateBackup = async (backupId: number): Promise<void> => {
     setMessage(null)
     const result = await window.api.backup.validate(backupId)
-    if (!result.success) {
-      setMessage({ type: 'error', text: result.error || '备份校验失败' })
-      return
+    const feedback = buildValidationFeedback(result, '备份包校验通过。', '备份校验失败')
+    setMessage(feedback.message)
+    if (feedback.shouldReload) {
+      await loadData()
     }
-
-    setMessage({ type: 'success', text: '备份包校验通过。' })
-    await loadData()
   }
 
   const deleteBackup = async (backup: BackupRow): Promise<void> => {
-    if (!window.confirm(`确认删除备份“${getBackupPackageName(backup.backup_path)}”吗？仅旧版本允许删除。`)) {
+    if (
+      !window.confirm(
+        `确认删除备份“${getBackupPackageName(backup.backup_path)}”吗？仅旧版本允许删除。`
+      )
+    ) {
       return
     }
 
@@ -223,7 +223,9 @@ export default function Backup(): JSX.Element {
 
     setMessage({
       type: 'success',
-      text: result.deletedPhysicalPackage ? '旧版本备份及其实体包已删除。' : '路径下备份包已不存在，空壳记录已删除。'
+      text: result.deletedPhysicalPackage
+        ? '旧版本备份及其实体包已删除。'
+        : '路径下备份包已不存在，空壳记录已删除。'
     })
     await loadData()
   }
@@ -311,17 +313,19 @@ export default function Backup(): JSX.Element {
   const validateArchive = async (exportId: number): Promise<void> => {
     setMessage(null)
     const result = await window.api.archive.validate(exportId)
-    if (!result.success) {
-      setMessage({ type: 'error', text: result.error || '电子档案校验失败' })
-      return
+    const feedback = buildValidationFeedback(result, '电子档案导出包校验通过。', '电子档案校验失败')
+    setMessage(feedback.message)
+    if (feedback.shouldReload) {
+      await loadData()
     }
-
-    setMessage({ type: 'success', text: '电子档案导出包校验通过。' })
-    await loadData()
   }
 
   const deleteArchive = async (archive: ArchiveRow): Promise<void> => {
-    if (!window.confirm(`确认删除归档“${getArchivePackageName(archive.export_path)}”吗？仅旧版本允许删除。`)) {
+    if (
+      !window.confirm(
+        `确认删除归档“${getArchivePackageName(archive.export_path)}”吗？仅旧版本允许删除。`
+      )
+    ) {
       return
     }
 
@@ -346,7 +350,9 @@ export default function Backup(): JSX.Element {
 
     setMessage({
       type: 'success',
-      text: result.deletedPhysicalPackage ? '旧版本电子档案及其实体包已删除。' : '路径下档案包已不存在，空壳记录已删除。'
+      text: result.deletedPhysicalPackage
+        ? '旧版本电子档案及其实体包已删除。'
+        : '路径下档案包已不存在，空壳记录已删除。'
     })
     await loadData()
   }
@@ -403,10 +409,7 @@ export default function Backup(): JSX.Element {
         >
           {formatBackupCardTitle(backup.backup_period)}
         </div>
-        <div
-          className="mt-2 text-sm text-center"
-          style={{ color: 'var(--color-text-muted)' }}
-        >
+        <div className="mt-2 text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
           {backup.created_at}
         </div>
         <div className="mt-1 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -452,10 +455,7 @@ export default function Backup(): JSX.Element {
         >
           {formatArchiveCardTitle(archive.fiscal_year)}
         </div>
-        <div
-          className="mt-2 text-sm text-center"
-          style={{ color: 'var(--color-text-muted)' }}
-        >
+        <div className="mt-2 text-sm text-center" style={{ color: 'var(--color-text-muted)' }}>
           {archive.created_at}
         </div>
         <div className="mt-3 grid grid-cols-4 gap-2">
@@ -493,7 +493,10 @@ export default function Backup(): JSX.Element {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          <label
+            className="flex items-center gap-2 text-sm"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
             备份期间（可选）
             <select
               className="glass-input px-3 py-2 text-sm"
@@ -513,7 +516,10 @@ export default function Backup(): JSX.Element {
             </select>
           </label>
 
-          <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+          <label
+            className="flex items-center gap-2 text-sm"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
             归档年度
             <select
               className="glass-input px-3 py-2 text-sm"
@@ -533,7 +539,11 @@ export default function Backup(): JSX.Element {
             </select>
           </label>
 
-          <button className="glass-btn-secondary" onClick={() => void createBackup()} disabled={!canOperate}>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void createBackup()}
+            disabled={!canOperate}
+          >
             创建备份
           </button>
           <button
@@ -543,10 +553,18 @@ export default function Backup(): JSX.Element {
           >
             从路径导入账套
           </button>
-          <button className="glass-btn-secondary" onClick={() => void createArchive()} disabled={!canOperate}>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void createArchive()}
+            disabled={!canOperate}
+          >
             创建归档
           </button>
-          <button className="glass-btn-secondary" onClick={() => void loadData()} disabled={loading}>
+          <button
+            className="glass-btn-secondary"
+            onClick={() => void loadData()}
+            disabled={loading}
+          >
             刷新
           </button>
         </div>
@@ -556,7 +574,10 @@ export default function Backup(): JSX.Element {
         <section className="glass-panel-light p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+              <h3
+                className="text-base font-semibold"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
                 账套备份包
               </h3>
               {shouldShowExpandButton(backups.length) && (
@@ -581,7 +602,10 @@ export default function Backup(): JSX.Element {
             {visibleBackups.map(renderBackupCard)}
 
             {backups.length === 0 && (
-              <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+              <div
+                className="text-sm py-8 text-center"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
                 当前账套暂无备份记录
               </div>
             )}
@@ -591,7 +615,10 @@ export default function Backup(): JSX.Element {
         <section className="glass-panel-light p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+              <h3
+                className="text-base font-semibold"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
                 电子档案导出
               </h3>
               {shouldShowExpandButton(archives.length) && (
@@ -613,7 +640,10 @@ export default function Backup(): JSX.Element {
             {visibleArchives.map(renderArchiveCard)}
 
             {archives.length === 0 && (
-              <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+              <div
+                className="text-sm py-8 text-center"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
                 当前账套暂无电子档案导出记录
               </div>
             )}
@@ -640,7 +670,10 @@ export default function Backup(): JSX.Element {
           <div className="glass-panel w-full max-w-5xl max-h-[86vh] p-5 flex flex-col gap-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
                   {recordBrowser.type === 'backup' ? '账套备份包全部记录' : '电子档案导出全部记录'}
                 </h3>
                 <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -659,7 +692,9 @@ export default function Backup(): JSX.Element {
             </div>
 
             <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              {recordBrowser.type === 'backup' ? `${backups.length} 条记录` : `${archives.length} 条记录`}
+              {recordBrowser.type === 'backup'
+                ? `${backups.length} 条记录`
+                : `${archives.length} 条记录`}
             </div>
 
             <div className="grid gap-3 md:grid-cols-2 overflow-auto pr-1">
@@ -669,13 +704,19 @@ export default function Backup(): JSX.Element {
             </div>
 
             {recordBrowser.type === 'backup' && backups.length === 0 && (
-              <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+              <div
+                className="text-sm py-8 text-center"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
                 当前账套暂无备份记录
               </div>
             )}
 
             {recordBrowser.type === 'archive' && archives.length === 0 && (
-              <div className="text-sm py-8 text-center" style={{ color: 'var(--color-text-muted)' }}>
+              <div
+                className="text-sm py-8 text-center"
+                style={{ color: 'var(--color-text-muted)' }}
+              >
                 当前账套暂无电子档案导出记录
               </div>
             )}
@@ -691,7 +732,10 @@ export default function Backup(): JSX.Element {
           <div className="glass-panel w-full max-w-2xl p-5 flex flex-col gap-4">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                <h3
+                  className="text-lg font-semibold"
+                  style={{ color: 'var(--color-text-primary)' }}
+                >
                   {detailModal.title}
                 </h3>
                 <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>

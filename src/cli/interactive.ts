@@ -8,6 +8,7 @@ import { resolveCliPayload } from './payload'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
+import { getCommandMetadata } from '../main/commands/catalog'
 
 export interface InteractiveShellState {
   outputMode: CommandOutputMode
@@ -84,62 +85,14 @@ const builtinCommands: ShellBuiltInCommand[] = [
   { name: 'unset period', aliases: ['清除期间'], description: '清除当前期间' }
 ]
 
-const commandSpecs: CliCommandSpec[] = [
-  {
-    domain: 'auth',
-    action: 'login',
-    aliases: ['登录'],
-    description: '登录当前 CLI 会话'
-  },
-  {
-    domain: 'auth',
-    action: 'logout',
-    aliases: ['退出登录'],
-    description: '退出当前 CLI 登录态'
-  },
-  {
-    domain: 'auth',
-    action: 'whoami',
-    aliases: ['我是谁'],
-    description: '查看当前登录用户'
-  },
-  {
-    domain: 'ledger',
-    action: 'list',
-    aliases: ['账套列表'],
-    description: '查看当前用户可访问的账套列表'
-  },
-  {
-    domain: 'ledger',
-    action: 'periods',
-    aliases: ['期间列表'],
-    description: '查看当前账套的期间列表'
-  },
-  {
-    domain: 'book',
-    action: 'subject-balances',
-    aliases: ['科目余额表'],
-    description: '按当前账套/期间查询科目余额表'
-  },
-  {
-    domain: 'voucher',
-    action: 'list',
-    aliases: ['凭证列表'],
-    description: '按当前账套/期间查询凭证列表'
-  },
-  {
-    domain: 'report',
-    action: 'list',
-    aliases: ['报表列表'],
-    description: '按当前账套/期间查询已生成报表'
-  },
-  {
-    domain: 'period',
-    action: 'status',
-    aliases: ['期间状态'],
-    description: '查看当前账套当前期间的状态'
-  }
-]
+const commandSpecs: CliCommandSpec[] = getCommandMetadata()
+  .filter((item) => item.aliases.length > 0)
+  .map((item) => ({
+    domain: item.domain,
+    action: item.action,
+    aliases: item.aliases,
+    description: item.description
+  }))
 
 function createSuccessResult<T>(data: T): CommandResult<T> {
   return {
@@ -149,7 +102,10 @@ function createSuccessResult<T>(data: T): CommandResult<T> {
   }
 }
 
-function createErrorResult(message: string, details: Record<string, unknown> | null = null): CommandResult<null> {
+function createErrorResult(
+  message: string,
+  details: Record<string, unknown> | null = null
+): CommandResult<null> {
   return {
     status: 'error',
     data: null,
@@ -294,7 +250,12 @@ function formatStateSummary(state: InteractiveShellState): string {
   return parts.join(', ')
 }
 
-function buildInteractiveHelpResult() {
+function buildInteractiveHelpResult(): CommandResult<{
+  entrypoints: string[]
+  builtinCommands: Array<{ name: string; aliases: string[]; description: string }>
+  commandAliases: Array<{ alias: string; command: string; description: string }>
+  rawCommands: string[]
+}> {
   return createSuccessResult({
     entrypoints: ['dudeacc', 'dude-accounting'],
     builtinCommands: builtinCommands.map((item) => ({
@@ -360,9 +321,7 @@ export function shouldEnterInteractiveShell(
     return false
   }
 
-  return Boolean(
-    terminal.forceInteractive || (terminal.stdinIsTTY && terminal.stdoutIsTTY)
-  )
+  return Boolean(terminal.forceInteractive || (terminal.stdinIsTTY && terminal.stdoutIsTTY))
 }
 
 export function resolveInteractiveCommand(line: string): ResolvedInteractiveInput {
@@ -465,11 +424,7 @@ export function applyInteractiveContext(
         ? payload.period
         : state.period
 
-    if (
-      (!payload.startDate || !payload.endDate) &&
-      derivedPeriod &&
-      isValidPeriod(derivedPeriod)
-    ) {
+    if ((!payload.startDate || !payload.endDate) && derivedPeriod && isValidPeriod(derivedPeriod)) {
       const { startDate, endDate } = toPeriodDateRange(derivedPeriod)
       payload.startDate = startDate
       payload.endDate = endDate
@@ -880,7 +835,10 @@ export async function runInteractiveCli(
   const rl = readline.createInterface({
     input,
     output,
-    terminal: Boolean((input as Readable & { isTTY?: boolean }).isTTY && (output as Writable & { isTTY?: boolean }).isTTY)
+    terminal: Boolean(
+      (input as Readable & { isTTY?: boolean }).isTTY &&
+      (output as Writable & { isTTY?: boolean }).isTTY
+    )
   })
 
   let state: InteractiveShellState = {
@@ -908,9 +866,10 @@ export async function runInteractiveCli(
           }
 
           if (resolved.name === 'use period' && !builtinTokens[2]) {
-            const ledgerId = typeof state.ledgerId === 'number'
-              ? state.ledgerId
-              : await promptForLedgerId(runtime, rl, output, state.outputMode, executeCommand)
+            const ledgerId =
+              typeof state.ledgerId === 'number'
+                ? state.ledgerId
+                : await promptForLedgerId(runtime, rl, output, state.outputMode, executeCommand)
             if (typeof state.ledgerId !== 'number') {
               state = { ...state, ledgerId }
             }
@@ -930,7 +889,7 @@ export async function runInteractiveCli(
           continue
         }
 
-        let commandInput: ResolvedInteractiveCommand = resolved
+        const commandInput: ResolvedInteractiveCommand = resolved
         let prepared = applyInteractiveContext(commandInput, state)
         const promptPlan = getInteractivePromptPlan(prepared, state)
 

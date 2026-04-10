@@ -29,7 +29,11 @@ import {
   readWallpaperSourceAsDataUrl,
   renderWallpaperCrop
 } from '../services/wallpaperCropService'
-import { exportDiagnosticLogs, getErrorLogStatus } from '../services/errorLog'
+import {
+  exportDiagnosticLogs,
+  getErrorLogStatus,
+  listDiagnosticLogFiles
+} from '../services/errorLog'
 import {
   resetDiagnosticsLogDirectory,
   setDiagnosticsLogDirectory
@@ -46,9 +50,7 @@ type StandardType = 'enterprise' | 'npo'
 
 function getTemplateDefaultPath(standardType: StandardType): string {
   const fileName =
-    standardType === 'enterprise'
-      ? '企业一级科目导入模板.xlsx'
-      : '民非一级科目导入模板.xlsx'
+    standardType === 'enterprise' ? '企业一级科目导入模板.xlsx' : '民非一级科目导入模板.xlsx'
   return path.join(app.getPath('documents'), 'Dude Accounting', '导入模板', fileName)
 }
 
@@ -72,7 +74,9 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:getUserPreferences', (event) => {
     const user = requireAuth(event)
-    const rows = db.prepare('SELECT key, value FROM user_preferences WHERE user_id = ?').all(user.id) as {
+    const rows = db
+      .prepare('SELECT key, value FROM user_preferences WHERE user_id = ?')
+      .all(user.id) as {
       key: string
       value: string
     }[]
@@ -206,6 +210,16 @@ export function registerSettingsHandlers(): void {
     async (event, payload?: { directoryPath?: string }) => {
       try {
         requirePermission(event, 'system_settings')
+        if (listDiagnosticLogFiles(app.getPath('userData')).length === 0) {
+          return {
+            success: false,
+            error: '暂无可导出的日志文件',
+            errorCode: 'VALIDATION_ERROR',
+            errorDetails: {
+              reason: 'NO_DIAGNOSTIC_LOGS'
+            }
+          }
+        }
         const browserWindow = BrowserWindow.fromWebContents(event.sender)
         const openResult = payload?.directoryPath
           ? { canceled: false, filePaths: [payload.directoryPath] }
@@ -232,7 +246,9 @@ export function registerSettingsHandlers(): void {
       } catch (error) {
         return {
           success: false,
-          error: error instanceof Error ? error.message : '导出日志文件失败'
+          error: error instanceof Error ? error.message : '导出日志文件失败',
+          errorCode: 'INTERNAL_ERROR',
+          errorDetails: null
         }
       }
     }
@@ -324,19 +340,20 @@ export function registerSettingsHandlers(): void {
     ) => {
       try {
         const user = requireAuth(event)
-        const rendered = 'bytes' in payload
-          ? {
-              bytes: Buffer.from(payload.bytes),
-              appliedExtension: payload.extension,
-              analysis: payload.sourcePath ? analyzeWallpaperSource(payload.sourcePath) : null,
-              viewport: null
-            }
-          : renderWallpaperCrop({
-              sourcePath: payload.sourcePath,
-              extension: payload.extension,
-              viewport: payload.viewport,
-              useSuggestedViewport: payload.useSuggestedViewport
-            })
+        const rendered =
+          'bytes' in payload
+            ? {
+                bytes: Buffer.from(payload.bytes),
+                appliedExtension: payload.extension,
+                analysis: payload.sourcePath ? analyzeWallpaperSource(payload.sourcePath) : null,
+                viewport: null
+              }
+            : renderWallpaperCrop({
+                sourcePath: payload.sourcePath,
+                extension: payload.extension,
+                viewport: payload.viewport,
+                useSuggestedViewport: payload.useSuggestedViewport
+              })
 
         const nextState = replaceUserWallpaperFromBuffer(
           db,
@@ -653,7 +670,9 @@ export function registerSettingsHandlers(): void {
           userId: user.id,
           username: user.username,
           module: 'settings',
-          action: payload.templateId ? 'update_independent_custom_subject_template' : 'create_independent_custom_subject_template',
+          action: payload.templateId
+            ? 'update_independent_custom_subject_template'
+            : 'create_independent_custom_subject_template',
           targetType: 'independent_custom_subject_template',
           targetId: savedTemplate.id,
           details: {
@@ -706,35 +725,38 @@ export function registerSettingsHandlers(): void {
     }
   })
 
-  ipcMain.handle('settings:clearIndependentCustomSubjectTemplateEntries', (event, templateId: string) => {
-    try {
-      const user = requireAdmin(event)
-      const clearedTemplate = clearIndependentCustomSubjectTemplateEntries(db, templateId)
+  ipcMain.handle(
+    'settings:clearIndependentCustomSubjectTemplateEntries',
+    (event, templateId: string) => {
+      try {
+        const user = requireAdmin(event)
+        const clearedTemplate = clearIndependentCustomSubjectTemplateEntries(db, templateId)
 
-      appendOperationLog(db, {
-        userId: user.id,
-        username: user.username,
-        module: 'settings',
-        action: 'clear_independent_custom_subject_template_entries',
-        targetType: 'independent_custom_subject_template',
-        targetId: templateId,
-        details: {
-          templateName: clearedTemplate.templateName,
-          baseStandardType: clearedTemplate.baseStandardType
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: 'clear_independent_custom_subject_template_entries',
+          targetType: 'independent_custom_subject_template',
+          targetId: templateId,
+          details: {
+            templateName: clearedTemplate.templateName,
+            baseStandardType: clearedTemplate.baseStandardType
+          }
+        })
+
+        return {
+          success: true,
+          template: clearedTemplate
         }
-      })
-
-      return {
-        success: true,
-        template: clearedTemplate
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '清空自定义模板失败'
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : '清空自定义模板失败'
+        }
       }
     }
-  })
+  )
 
   ipcMain.handle('settings:deleteIndependentCustomSubjectTemplate', (event, templateId: string) => {
     try {
