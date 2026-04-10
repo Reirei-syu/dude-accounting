@@ -4,12 +4,14 @@ import {
   deleteAuxiliaryItem,
   listAuxiliaryItems,
   listSubjects,
+  searchSubjects,
   updateAuxiliaryItem,
   updateSubject
 } from '../services/accountSetup'
 import {
   createCashFlowMapping,
   deleteCashFlowMapping,
+  listCashFlowItems,
   listCashFlowMappings,
   updateCashFlowMapping
 } from '../services/cashFlowMapping'
@@ -53,6 +55,17 @@ export async function createSubjectCommand(
       }
     })
     return { subjectId }
+  })
+}
+
+export async function searchSubjectsCommand(
+  context: CommandContext,
+  payload: { ledgerId: number; keyword: string }
+): Promise<CommandResult<ReturnType<typeof searchSubjects>>> {
+  return withCommandResult(context, () => {
+    requireCommandActor(context.actor)
+    requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
+    return searchSubjects(context.db, payload.ledgerId, payload.keyword)
   })
 }
 
@@ -201,6 +214,17 @@ export async function listCashFlowMappingsCommand(
     requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
     return listCashFlowMappings(context.db, payload.ledgerId)
+  })
+}
+
+export async function listCashFlowItemsCommand(
+  context: CommandContext,
+  payload: { ledgerId: number }
+): Promise<CommandResult<ReturnType<typeof listCashFlowItems>>> {
+  return withCommandResult(context, () => {
+    requireCommandActor(context.actor)
+    requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
+    return listCashFlowItems(context.db, payload.ledgerId)
   })
 }
 

@@ -228,6 +228,27 @@ dude-app.exe --cli <domain> <action> ...
 - `backup restore` 目前仍保留为安装版 Electron 生命周期能力，不支持纯命令行热恢复
 - 推荐人工操作时优先使用 `dudeacc`；脚本和 Agent 继续优先使用 `dude-accounting <domain> <action>`
 
+## CLI 覆盖说明
+
+当前 CLI 已补齐以下原本只在 UI 中可做的能力：
+
+- `initial-balance list/save`
+- `settings system-get/system-set`
+- `settings runtime-defaults-get`
+- `settings preferences-get/preferences-set`
+- `settings diagnostics-status/diagnostics-set-dir/diagnostics-reset-dir/diagnostics-export/diagnostics-open-dir`
+- `settings wallpaper-status/wallpaper-login-status/wallpaper-analyze/wallpaper-apply/wallpaper-restore`
+- `settings subject-template-*`
+- `settings custom-template-*`
+- `print prepare/status/model/update-settings/open-preview/print/export-pdf/dispose`
+- `backup restore`
+
+说明：
+
+- 复杂输入优先推荐 `--payload-file <path>`。
+- `print open-preview`、`print print`、`settings diagnostics-open-dir`、`backup restore` 属于 `desktop-assisted` 命令，依赖本机 Electron 桌面环境。
+- `print export-pdf` 支持显式 `--outputPath`，不再依赖先打开预览窗口。
+
 ## 构建与打包
 
 ### Windows 打包

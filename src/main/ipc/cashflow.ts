@@ -3,26 +3,24 @@ import { getDatabase } from '../database/init'
 import {
   createCashFlowMappingCommand,
   deleteCashFlowMappingCommand,
+  listCashFlowItemsCommand,
   listCashFlowMappingsCommand,
   updateCashFlowMappingCommand
 } from '../commands/accountCommands'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
-import { requireAuth, requireLedgerAccess } from './session'
 
 export function registerCashFlowHandlers(): void {
-  const db = getDatabase()
+  getDatabase()
 
-  ipcMain.handle('cashflow:getItems', (event, ledgerId: number) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, ledgerId)
-    return db
-      .prepare(
-        `SELECT id, code, name, category, direction
-                 FROM cash_flow_items
-                 WHERE ledger_id = ?
-                 ORDER BY code`
-      )
-      .all(ledgerId)
+  ipcMain.handle('cashflow:getItems', async (event, ledgerId: number) => {
+    const result = await listCashFlowItemsCommand(createCommandContextFromEvent(event), {
+      ledgerId
+    })
+    if (isCommandSuccess(result)) {
+      return result.data
+    }
+
+    throw new Error(result.error?.message ?? '获取现金流量项目失败')
   })
 
   ipcMain.handle('cashflow:getMappings', async (event, ledgerId: number) => {

@@ -22,9 +22,13 @@ import {
   getUserWallpaperState,
   replaceUserWallpaperFromBuffer,
   restoreDefaultWallpaper,
-  validateWallpaperSourceFile,
   WALLPAPER_SUPPORTED_FORMATS
 } from '../services/wallpaperPreference'
+import {
+  analyzeWallpaperSource,
+  readWallpaperSourceAsDataUrl,
+  renderWallpaperCrop
+} from '../services/wallpaperCropService'
 import { exportDiagnosticLogs, getErrorLogStatus } from '../services/errorLog'
 import {
   resetDiagnosticsLogDirectory,
@@ -39,17 +43,6 @@ import {
 import { requireAdmin, requireAuth, requirePermission } from './session'
 
 type StandardType = 'enterprise' | 'npo'
-
-function getWallpaperMimeType(extension: string): string {
-  const normalizedExtension = extension.toLowerCase()
-  if (normalizedExtension === 'jpg' || normalizedExtension === 'jpeg') {
-    return 'image/jpeg'
-  }
-  if (normalizedExtension === 'webp') {
-    return 'image/webp'
-  }
-  return 'image/png'
-}
 
 function getTemplateDefaultPath(standardType: StandardType): string {
   const fileName =
@@ -294,14 +287,15 @@ export function registerSettingsHandlers(): void {
       }
 
       const sourcePath = openResult.filePaths[0]
-      const extension = validateWallpaperSourceFile(sourcePath)
-      const sourceDataUrl = `data:${getWallpaperMimeType(extension)};base64,${fs.readFileSync(sourcePath).toString('base64')}`
+      const analysis = analyzeWallpaperSource(sourcePath)
+      const sourceDataUrl = readWallpaperSourceAsDataUrl(sourcePath, analysis.extension)
 
       return {
         success: true,
         sourcePath,
         sourceDataUrl,
-        extension
+        extension: analysis.extension,
+        analysis
       }
     } catch (error) {
       return {
@@ -315,20 +309,41 @@ export function registerSettingsHandlers(): void {
     'settings:applyWallpaperCrop',
     (
       event,
-      payload: {
-        extension: string
-        bytes: number[]
-        sourcePath?: string
-      }
+      payload:
+        | {
+            extension: string
+            bytes: number[]
+            sourcePath?: string
+          }
+        | {
+            sourcePath: string
+            extension?: string
+            viewport?: import('../../shared/wallpaperCrop').CropViewportState
+            useSuggestedViewport?: boolean
+          }
     ) => {
       try {
         const user = requireAuth(event)
-        const state = replaceUserWallpaperFromBuffer(
+        const rendered = 'bytes' in payload
+          ? {
+              bytes: Buffer.from(payload.bytes),
+              appliedExtension: payload.extension,
+              analysis: payload.sourcePath ? analyzeWallpaperSource(payload.sourcePath) : null,
+              viewport: null
+            }
+          : renderWallpaperCrop({
+              sourcePath: payload.sourcePath,
+              extension: payload.extension,
+              viewport: payload.viewport,
+              useSuggestedViewport: payload.useSuggestedViewport
+            })
+
+        const nextState = replaceUserWallpaperFromBuffer(
           db,
           app.getPath('userData'),
           user.id,
-          Buffer.from(payload.bytes),
-          payload.extension
+          rendered.bytes,
+          rendered.appliedExtension
         )
 
         appendOperationLog(db, {
@@ -340,13 +355,18 @@ export function registerSettingsHandlers(): void {
           targetId: user.id,
           details: {
             sourcePath: payload.sourcePath ?? null,
-            wallpaperPath: state.wallpaperPath
+            wallpaperPath: nextState.wallpaperPath,
+            appliedExtension: rendered.appliedExtension,
+            viewport: rendered.viewport
           }
         })
 
         return {
           success: true,
-          state
+          state: nextState,
+          analysis: rendered.analysis,
+          viewport: rendered.viewport,
+          appliedExtension: rendered.appliedExtension
         }
       } catch (error) {
         return {

@@ -202,7 +202,20 @@ const api = {
     exportDiagnosticsLogs: (payload?: { directoryPath?: string }) =>
       ipcRenderer.invoke('settings:exportDiagnosticsLogs', payload),
     chooseWallpaper: () => ipcRenderer.invoke('settings:chooseWallpaper'),
-    applyWallpaperCrop: (payload: { extension: string; bytes: number[]; sourcePath?: string }) =>
+    applyWallpaperCrop: (payload:
+      | { extension: string; bytes: number[]; sourcePath?: string }
+      | {
+          sourcePath: string
+          extension?: string
+          viewport?: {
+            scale: number
+            minScale: number
+            maxScale: number
+            offsetX: number
+            offsetY: number
+          }
+          useSuggestedViewport?: boolean
+        }) =>
       ipcRenderer.invoke('settings:applyWallpaperCrop', payload),
     restoreDefaultWallpaper: () => ipcRenderer.invoke('settings:restoreDefaultWallpaper'),
     getSubjectTemplate: (standardType: 'enterprise' | 'npo') =>

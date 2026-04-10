@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import fsPromises from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -25,16 +27,22 @@ import {
 } from '../services/printLayout'
 import { buildTableMeasurementHtml } from '../services/printMeasurement'
 import { buildPagedPrintPreviewHtml } from '../services/printPreviewShell'
+import { requestEmbeddedCliKeepAlive } from '../runtime/embeddedCliState'
+import { requireCommandActor, requireCommandLedgerAccess } from '../commands/authz'
+import type { CommandActor } from '../commands/types'
 import { requireAuth, requireLedgerAccess } from './session'
 
-type PrintJobStatus = 'preparing' | 'ready' | 'failed'
-type PrintCommandPayload =
+export type PrintJobStatus = 'preparing' | 'ready' | 'failed'
+export type PrintCommandPayload =
   | string
   | {
       jobId: string
+      outputPath?: string
+      silent?: boolean
+      deviceName?: string
     }
 
-type PrintPreparePayload =
+export type PrintPreparePayload =
   | {
       type: 'report'
       ledgerId?: number
@@ -90,31 +98,113 @@ interface PrintJobRecord {
 const printJobs = new Map<string, PrintJobRecord>()
 const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
 
+function getPrintJobDirectory(): string {
+  return path.join(app.getPath('userData'), 'print-jobs')
+}
+
+function getPrintJobFilePath(jobId: string): string {
+  return path.join(getPrintJobDirectory(), `${jobId}.json`)
+}
+
+function savePrintJob(job: PrintJobRecord): void {
+  printJobs.set(job.id, job)
+  fs.mkdirSync(getPrintJobDirectory(), { recursive: true })
+  fs.writeFileSync(
+    getPrintJobFilePath(job.id),
+    JSON.stringify({
+      ...job,
+      previewWebContentsId: null
+    }),
+    'utf8'
+  )
+}
+
+function loadPrintJob(jobId: string): PrintJobRecord | null {
+  const cached = printJobs.get(jobId)
+  if (cached) {
+    return cached
+  }
+
+  const filePath = getPrintJobFilePath(jobId)
+  if (!fs.existsSync(filePath)) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as Omit<
+      PrintJobRecord,
+      'previewWebContentsId'
+    > & { previewWebContentsId?: number | null }
+    const job: PrintJobRecord = {
+      ...parsed,
+      previewWebContentsId: null
+    }
+    printJobs.set(jobId, job)
+    return job
+  } catch {
+    return null
+  }
+}
+
+function deletePrintJob(jobId: string): void {
+  printJobs.delete(jobId)
+  const filePath = getPrintJobFilePath(jobId)
+  if (fs.existsSync(filePath)) {
+    fs.rmSync(filePath, { force: true })
+  }
+}
+
 export function resolvePrintCommandPayload(payload: PrintCommandPayload): {
   jobId: string
+  outputPath?: string
+  silent?: boolean
+  deviceName?: string
 } {
   if (typeof payload === 'string') {
     return { jobId: payload }
   }
   return {
-    jobId: payload.jobId
+    jobId: payload.jobId,
+    outputPath: payload.outputPath,
+    silent: payload.silent,
+    deviceName: payload.deviceName
   }
 }
 
 function pruneExpiredPrintJobs(now: number = Date.now()): void {
+  const jobDirectory = getPrintJobDirectory()
+
   for (const [jobId, job] of printJobs) {
-    if (now - job.lastAccessAt <= PRINT_JOB_TTL_MS) {
+    if (now - job.lastAccessAt > PRINT_JOB_TTL_MS) {
+      const previewWindow =
+        job.previewWebContentsId === null
+          ? null
+          : BrowserWindow.getAllWindows().find(
+              (window) => window.webContents.id === job.previewWebContentsId
+            ) ?? null
+      previewWindow?.close()
+      deletePrintJob(jobId)
+    }
+  }
+
+  if (!fs.existsSync(jobDirectory)) {
+    return
+  }
+
+  for (const entry of fs.readdirSync(jobDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) {
       continue
     }
 
-    const previewWindow =
-      job.previewWebContentsId === null
-        ? null
-        : BrowserWindow.getAllWindows().find(
-            (window) => window.webContents.id === job.previewWebContentsId
-          ) ?? null
-    previewWindow?.close()
-    printJobs.delete(jobId)
+    const filePath = path.join(jobDirectory, entry.name)
+    try {
+      const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { lastAccessAt?: number }
+      if (typeof parsed.lastAccessAt === 'number' && now - parsed.lastAccessAt > PRINT_JOB_TTL_MS) {
+        fs.rmSync(filePath, { force: true })
+      }
+    } catch {
+      fs.rmSync(filePath, { force: true })
+    }
   }
 }
 
@@ -238,6 +328,52 @@ function buildPreviewModel(job: PrintJobRecord): (PrintLayoutResult & { layoutVe
 
 function getPrintExportDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '打印导出')
+}
+
+async function createPreviewWindowForJob(input: {
+  jobId: string
+  previewModel: PrintLayoutResult & { layoutVersion: number }
+  show: boolean
+  trackPreviewWindow: boolean
+}): Promise<BrowserWindow> {
+  const previewWindow = new BrowserWindow({
+    width: 1120,
+    height: 860,
+    show: input.show,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  if (!input.show) {
+    previewWindow.setBounds({ x: -10000, y: -10000, width: 1120, height: 860 })
+    previewWindow.setSkipTaskbar(true)
+  }
+
+  if (input.trackPreviewWindow) {
+    previewWindow.on('closed', () => {
+      const currentJob = loadPrintJob(input.jobId)
+      if (currentJob) {
+        currentJob.previewWebContentsId = null
+        savePrintJob(currentJob)
+      }
+    })
+  }
+
+  const previewHtml = buildPagedPrintPreviewHtml(input.jobId, input.previewModel)
+  await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`)
+
+  if (input.trackPreviewWindow) {
+    const currentJob = loadPrintJob(input.jobId)
+    if (currentJob) {
+      currentJob.previewWebContentsId = previewWindow.webContents.id
+      savePrintJob(currentJob)
+    }
+  }
+
+  return previewWindow
 }
 
 export async function measureTableRowGroups(
@@ -817,11 +953,12 @@ function createPrintDocument(
 
 function getPreviewWindow(jobId: string): BrowserWindow | null {
   pruneExpiredPrintJobs()
-  const job = printJobs.get(jobId)
+  const job = loadPrintJob(jobId)
   if (!job?.previewWebContentsId) {
     return null
   }
   job.lastAccessAt = Date.now()
+  savePrintJob(job)
   return (
     BrowserWindow.getAllWindows().find(
       (window) => window.webContents.id === job.previewWebContentsId
@@ -831,11 +968,12 @@ function getPreviewWindow(jobId: string): BrowserWindow | null {
 
 function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJobRecord | null {
   pruneExpiredPrintJobs()
-  const job = printJobs.get(jobId)
+  const job = loadPrintJob(jobId)
   if (!job) {
     return null
   }
   job.lastAccessAt = Date.now()
+  savePrintJob(job)
 
   if (job.previewWebContentsId === event.sender.id) {
     return job
@@ -858,7 +996,7 @@ async function openPreviewWindow(
     return
   }
 
-  const job = printJobs.get(jobId)
+  const job = loadPrintJob(jobId)
   if (!job) {
     throw new Error('打印任务不存在')
   }
@@ -867,27 +1005,393 @@ async function openPreviewWindow(
     throw new Error(job.error ?? '打印任务尚未完成')
   }
 
-  const previewWindow = new BrowserWindow({
-    width: 1120,
-    height: 860,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false
+  await createPreviewWindowForJob({
+    jobId,
+    previewModel,
+    show: true,
+    trackPreviewWindow: true
+  })
+}
+
+function getAccessiblePrintJobForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  jobId: string
+): PrintJobRecord | null {
+  pruneExpiredPrintJobs()
+  const currentActor = requireCommandActor(actor)
+  const job = loadPrintJob(jobId)
+  if (!job) {
+    return null
+  }
+
+  if (job.ledgerId !== null) {
+    requireCommandLedgerAccess(db, actor, job.ledgerId)
+  }
+  if (job.createdBy !== currentActor.id && !currentActor.isAdmin) {
+    throw new Error('无权访问该打印任务')
+  }
+
+  job.lastAccessAt = Date.now()
+  savePrintJob(job)
+  return job
+}
+
+function assertPrintPrepareAccess(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  payload: PrintPreparePayload
+): void {
+  requireCommandActor(actor)
+
+  if (payload.type === 'report') {
+    const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+    requireCommandLedgerAccess(db, actor, detail.ledger_id)
+    return
+  }
+
+  if (payload.type === 'batch' && payload.batchType === 'report') {
+    for (const snapshotId of payload.snapshotIds) {
+      const detail = getReportSnapshotDetail(db, snapshotId, payload.ledgerId)
+      requireCommandLedgerAccess(db, actor, detail.ledger_id)
     }
+    return
+  }
+
+  if (payload.type === 'book') {
+    requireCommandLedgerAccess(db, actor, payload.ledgerId)
+    return
+  }
+
+  if (payload.type !== 'voucher') {
+    throw new Error('不支持的打印任务类型')
+  }
+
+  const placeholders = payload.voucherIds.map(() => '?').join(', ')
+  const vouchers = db
+    .prepare(`SELECT DISTINCT ledger_id FROM vouchers WHERE id IN (${placeholders})`)
+    .all(...payload.voucherIds) as Array<{ ledger_id: number }>
+  if (vouchers.length === 0) {
+    throw new Error('凭证不存在')
+  }
+  for (const voucher of vouchers) {
+    requireCommandLedgerAccess(db, actor, voucher.ledger_id)
+  }
+}
+
+export async function preparePrintJobForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  payload: PrintPreparePayload
+): Promise<{ jobId: string }> {
+  const currentActor = requireCommandActor(actor)
+  pruneExpiredPrintJobs()
+  assertPrintPrepareAccess(db, actor, payload)
+
+  const jobId = randomUUID()
+  const initialBookType = payload.type === 'book' ? payload.bookType : null
+  const preferenceKey = getPreviewPreferenceKey(initialBookType)
+  savePrintJob({
+    id: jobId,
+    type: payload.type === 'batch' ? 'batch' : payload.type,
+    bookType: initialBookType,
+    preferenceKey,
+    title: '打印任务',
+    ledgerId:
+      payload.type === 'book'
+        ? payload.ledgerId
+        : payload.type === 'voucher'
+          ? (payload.ledgerId ?? null)
+          : (payload.ledgerId ?? null),
+    createdBy: currentActor.id,
+    createdAt: Date.now(),
+    lastAccessAt: Date.now(),
+    status: 'preparing',
+    orientation: 'portrait',
+    settings: buildDefaultPreviewSettings('portrait'),
+    sourceDocument: null,
+    layoutResult: null,
+    layoutVersion: 0,
+    error: null,
+    previewWebContentsId: null
   })
 
-  const previewHtml = buildPagedPrintPreviewHtml(jobId, previewModel)
-  previewWindow.on('closed', () => {
-    const currentJob = printJobs.get(jobId)
-    if (currentJob) {
-      currentJob.previewWebContentsId = null
+  const finalizeJob = async () => {
+    const job = loadPrintJob(jobId)
+    if (!job) return
+    try {
+      const prepared = createPrintDocument(db, payload)
+      const settings = loadPersistedPreviewSettings(
+        db,
+        currentActor.id,
+        preferenceKey,
+        prepared.orientation
+      )
+      const layoutResult = await layoutPrintDocument(prepared.document, settings)
+      job.type = prepared.type
+      job.title = prepared.title
+      job.ledgerId = prepared.ledgerId
+      job.orientation = settings.orientation
+      job.settings = settings
+      job.sourceDocument = prepared.document
+      job.layoutResult = layoutResult
+      job.layoutVersion = 1
+      job.status = 'ready'
+      job.error = null
+      savePrintJob(job)
+    } catch (error) {
+      job.status = 'failed'
+      job.error = error instanceof Error ? error.message : '生成打印任务失败'
+      job.layoutResult = null
+      savePrintJob(job)
     }
+  }
+
+  if (currentActor.source === 'cli') {
+    await finalizeJob()
+  } else {
+    void Promise.resolve().then(finalizeJob)
+  }
+
+  return { jobId }
+}
+
+export function getPrintJobStatusForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  jobId: string
+): {
+  status: PrintJobStatus
+  title: string
+  error: string | null
+  pageCount: number
+  layoutVersion: number
+  layoutError: string | null
+} | null {
+  const job = getAccessiblePrintJobForActor(db, actor, jobId)
+  if (!job) {
+    return null
+  }
+
+  return {
+    status: job.status,
+    title: job.title,
+    error: job.error,
+    pageCount: job.layoutResult?.pageCount ?? 0,
+    layoutVersion: job.layoutVersion,
+    layoutError: job.error
+  }
+}
+
+export function getPrintPreviewModelForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  jobId: string
+): (PrintLayoutResult & { layoutVersion: number }) | null {
+  const job = getAccessiblePrintJobForActor(db, actor, jobId)
+  if (!job) {
+    return null
+  }
+
+  return buildPreviewModel(job)
+}
+
+export async function updatePrintPreviewSettingsForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  payload: { jobId: string; settings: Partial<PrintPreviewSettings> }
+): Promise<(PrintLayoutResult & { layoutVersion: number }) | null> {
+  const job = getAccessiblePrintJobForActor(db, actor, payload.jobId)
+  if (!job || !job.sourceDocument) {
+    return null
+  }
+
+  const nextSettings = normalizePrintPreviewSettings(payload.settings, job.settings.orientation)
+  const layoutResult = await layoutPrintDocument(job.sourceDocument, nextSettings)
+  job.settings = nextSettings
+  job.orientation = nextSettings.orientation
+  job.layoutResult = layoutResult
+  job.layoutVersion += 1
+  job.error = null
+  if (job.preferenceKey) {
+    persistPreviewSettings(db, job.createdBy, job.preferenceKey, nextSettings)
+  }
+  savePrintJob(job)
+  return buildPreviewModel(job)
+}
+
+export async function openPrintPreviewForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  jobId: string,
+  options?: { keepAlive?: boolean }
+): Promise<boolean> {
+  const job = getAccessiblePrintJobForActor(db, actor, jobId)
+  if (!job || job.status !== 'ready' || !job.layoutResult) {
+    return false
+  }
+
+  if (options?.keepAlive) {
+    requestEmbeddedCliKeepAlive()
+  }
+  await openPreviewWindow(jobId)
+  return true
+}
+
+export async function printPreparedJobForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  payload: PrintCommandPayload
+): Promise<{ success: boolean; error?: string } | null> {
+  const command = resolvePrintCommandPayload(payload)
+  const job = getAccessiblePrintJobForActor(db, actor, command.jobId)
+  if (!job) {
+    return null
+  }
+
+  return printJobToSystem(command.jobId, {
+    silent: command.silent,
+    deviceName: command.deviceName
   })
-  await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`)
-  const currentJob = printJobs.get(jobId)
-  if (currentJob) {
-    currentJob.previewWebContentsId = previewWindow.webContents.id
+}
+
+export async function exportPreparedJobPdfForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  payload: PrintCommandPayload,
+  defaultOutputPath?: string
+): Promise<{ filePath: string } | null> {
+  const command = resolvePrintCommandPayload(payload)
+  const job = getAccessiblePrintJobForActor(db, actor, command.jobId)
+  if (!job) {
+    return null
+  }
+
+  const outputPath = command.outputPath ?? defaultOutputPath
+  if (!outputPath) {
+    throw new Error('缺少 PDF 输出路径')
+  }
+
+  const filePath = await exportPrintJobPdfToPath(command.jobId, outputPath)
+  return { filePath }
+}
+
+export function disposePrintJobForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  jobId: string
+): boolean {
+  const job = getAccessiblePrintJobForActor(db, actor, jobId)
+  if (!job) {
+    return false
+  }
+
+  const previewWindow = getPreviewWindow(jobId)
+  previewWindow?.close()
+  deletePrintJob(jobId)
+  return true
+}
+
+async function acquirePrintWindow(
+  jobId: string,
+  options: { show: boolean; trackPreviewWindow: boolean }
+): Promise<{
+  job: PrintJobRecord
+  window: BrowserWindow
+  temporary: boolean
+}> {
+  const job = loadPrintJob(jobId)
+  if (!job) {
+    throw new Error('打印任务不存在')
+  }
+
+  const previewModel = buildPreviewModel(job)
+  if (!previewModel) {
+    throw new Error(job.error ?? '打印任务尚未完成')
+  }
+
+  const existingPreviewWindow = getPreviewWindow(jobId)
+  if (existingPreviewWindow) {
+    return {
+      job,
+      window: existingPreviewWindow,
+      temporary: false
+    }
+  }
+
+  const temporaryWindow = await createPreviewWindowForJob({
+    jobId,
+    previewModel,
+    show: options.show,
+    trackPreviewWindow: options.trackPreviewWindow
+  })
+
+  return {
+    job,
+    window: temporaryWindow,
+    temporary: true
+  }
+}
+
+async function exportPrintJobPdfToPath(jobId: string, outputPath: string): Promise<string> {
+  const acquired = await acquirePrintWindow(jobId, {
+    show: false,
+    trackPreviewWindow: false
+  })
+
+  try {
+    const pdfBuffer = await acquired.window.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      landscape: acquired.job.orientation === 'landscape',
+      margins: {
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0
+      }
+    })
+
+    await fsPromises.mkdir(path.dirname(outputPath), { recursive: true })
+    await fsPromises.writeFile(outputPath, pdfBuffer)
+    return outputPath
+  } finally {
+    if (acquired.temporary) {
+      acquired.window.close()
+    }
+  }
+}
+
+async function printJobToSystem(
+  jobId: string,
+  options?: {
+    silent?: boolean
+    deviceName?: string
+  }
+): Promise<{ success: boolean; error?: string }> {
+  const acquired = await acquirePrintWindow(jobId, {
+    show: !options?.silent,
+    trackPreviewWindow: false
+  })
+
+  try {
+    return await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      acquired.window.webContents.print(
+        {
+          printBackground: true,
+          landscape: acquired.job.orientation === 'landscape',
+          silent: options?.silent === true,
+          deviceName: options?.deviceName
+        },
+        (success, failureReason) => {
+          resolve(success ? { success: true } : { success: false, error: failureReason })
+        }
+      )
+    })
+  } finally {
+    if (acquired.temporary) {
+      acquired.window.close()
+    }
   }
 }
 
@@ -923,7 +1427,7 @@ export function registerPrintHandlers(): void {
     const jobId = randomUUID()
     const initialBookType = payload.type === 'book' ? payload.bookType : null
     const preferenceKey = getPreviewPreferenceKey(initialBookType)
-    printJobs.set(jobId, {
+    savePrintJob({
       id: jobId,
       type: payload.type === 'batch' ? 'batch' : payload.type,
       bookType: initialBookType,
@@ -949,7 +1453,7 @@ export function registerPrintHandlers(): void {
     })
 
     void Promise.resolve().then(async () => {
-      const job = printJobs.get(jobId)
+      const job = loadPrintJob(jobId)
       if (!job) return
       try {
         const prepared = createPrintDocument(db, payload)
@@ -970,10 +1474,12 @@ export function registerPrintHandlers(): void {
         job.layoutVersion = 1
         job.status = 'ready'
         job.error = null
+        savePrintJob(job)
       } catch (error) {
         job.status = 'failed'
         job.error = error instanceof Error ? error.message : '生成打印任务失败'
         job.layoutResult = null
+        savePrintJob(job)
       }
     })
 
@@ -1053,12 +1559,14 @@ export function registerPrintHandlers(): void {
         if (job.preferenceKey) {
           persistPreviewSettings(db, job.createdBy, job.preferenceKey, nextSettings)
         }
+        savePrintJob(job)
         return {
           success: true,
           model: buildPreviewModel(job)
         }
       } catch (error) {
         job.error = error instanceof Error ? error.message : '更新打印预览失败'
+        savePrintJob(job)
         return {
           success: false,
           error: job.error
@@ -1099,6 +1607,12 @@ export function registerPrintHandlers(): void {
       return { success: false, error: '打印任务不存在' }
     }
 
+    return printJobToSystem(command.jobId, {
+      silent: command.silent,
+      deviceName: command.deviceName
+    })
+
+    /*
     const previewWindow = getPreviewWindow(command.jobId)
     if (!previewWindow) {
       return { success: false, error: '请先打开打印预览' }
@@ -1115,6 +1629,7 @@ export function registerPrintHandlers(): void {
         }
       )
     })
+    */
   })
 
   ipcMain.handle('print:exportPdf', async (event, payload: PrintCommandPayload) => {
@@ -1130,6 +1645,28 @@ export function registerPrintHandlers(): void {
       return { success: false, error: '打印任务不存在' }
     }
 
+    const browserWindow = BrowserWindow.fromWebContents(event.sender)
+    const defaultPath = path.join(getPrintExportDir(), `${sanitizeFileName(job.title)}.pdf`)
+    const saveResult = command.outputPath
+      ? { canceled: false, filePath: command.outputPath }
+      : browserWindow
+        ? await dialog.showSaveDialog(browserWindow, {
+            defaultPath,
+            filters: [{ name: 'PDF 鏂囨。', extensions: ['pdf'] }]
+          })
+        : await dialog.showSaveDialog({
+            defaultPath,
+            filters: [{ name: 'PDF 鏂囨。', extensions: ['pdf'] }]
+          })
+
+    if (saveResult.canceled || !saveResult.filePath) {
+      return { success: false, cancelled: true }
+    }
+
+    const filePath = await exportPrintJobPdfToPath(command.jobId, saveResult.filePath)
+    return { success: true, filePath }
+
+    /*
     const previewWindow = getPreviewWindow(command.jobId)
     if (!previewWindow) {
       return { success: false, error: '请先打开打印预览' }
@@ -1171,6 +1708,7 @@ export function registerPrintHandlers(): void {
     )
 
     return { success: true, filePath: saveResult.filePath }
+    */
   })
 
   ipcMain.handle('print:dispose', (event, jobId: string) => {
@@ -1187,7 +1725,7 @@ export function registerPrintHandlers(): void {
 
     const previewWindow = getPreviewWindow(jobId)
     previewWindow?.close()
-    printJobs.delete(jobId)
+    deletePrintJob(jobId)
     return { success: true }
   })
 }

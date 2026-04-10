@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { getDatabasePath } from '../database/init'
+import { closeDatabase, getDatabasePath, initializeDatabase } from '../database/init'
 import {
   createBackupPackageRecord,
   deleteBackupPackageRecord,
@@ -13,6 +13,7 @@ import {
   createLedgerBackupArtifact,
   importLedgerBackupArtifact,
   resolveBackupArtifactPaths,
+  restoreBackupArtifact,
   type BackupManifest,
   validateBackupArtifact,
   validateLedgerBackupArtifact
@@ -23,7 +24,13 @@ import {
   getBackupPhysicalPackageStatus
 } from '../services/packageDeletion'
 import { rememberPathPreference } from '../services/pathPreference'
+import {
+  clearPendingRestoreLog,
+  getPendingRestoreLogPath,
+  writePendingRestoreLog
+} from '../services/pendingRestoreLog'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
+import { requestEmbeddedCliRelaunch } from '../runtime/embeddedCliState'
 import {
   requireCommandAdmin,
   requireCommandLedgerAccess,
@@ -375,11 +382,12 @@ export async function restoreBackupCommand(
   payload: { backupId?: number; packagePath?: string }
 ): Promise<CommandResult<{ restartRequired: true; backupPath: string }>> {
   return withCommandResult(context, () => {
-    requireCommandAdmin(context.actor)
+    const actor = requireCommandAdmin(context.actor)
 
     let backupPath = ''
     let manifestPath: string | null = null
     let expectedChecksum = ''
+    let ledgerId: number | null = null
 
     if (typeof payload.backupId === 'number') {
       const row = getBackupPackageById(context.db, payload.backupId)
@@ -390,6 +398,7 @@ export async function restoreBackupCommand(
       backupPath = row.backup_path
       manifestPath = row.manifest_path
       expectedChecksum = row.checksum
+      ledgerId = row.ledger_id
     } else {
       const packagePath = payload.packagePath?.trim()
       if (!packagePath) {
@@ -400,6 +409,7 @@ export async function restoreBackupCommand(
       backupPath = resolved.backupPath
       manifestPath = resolved.manifestPath
       expectedChecksum = manifest.checksum
+      ledgerId = manifest.ledgerId ?? null
     }
 
     const validation = validateBackupArtifact(backupPath, expectedChecksum, manifestPath)
@@ -410,6 +420,40 @@ export async function restoreBackupCommand(
         { backupPath, manifestPath },
         2
       )
+    }
+
+    const pendingRestoreLogPath = getPendingRestoreLogPath(context.runtime.userDataPath)
+    let databaseClosed = false
+    try {
+      writePendingRestoreLog(pendingRestoreLogPath, {
+        userId: actor.id,
+        username: actor.username,
+        ledgerId,
+        targetType: typeof payload.backupId === 'number' ? 'backup_package' : 'backup_package_path',
+        targetId:
+          typeof payload.backupId === 'number' ? payload.backupId : payload.packagePath ?? null,
+        backupPath,
+        manifestPath,
+        backupMode: 'system_db_snapshot'
+      })
+
+      closeDatabase()
+      databaseClosed = true
+      restoreBackupArtifact({
+        backupPath,
+        targetPath: getDatabasePath()
+      })
+      requestEmbeddedCliRelaunch()
+      return {
+        restartRequired: true as const,
+        backupPath
+      }
+    } catch (error) {
+      clearPendingRestoreLog(pendingRestoreLogPath)
+      if (databaseClosed) {
+        initializeDatabase()
+      }
+      throw error
     }
 
     throw new CommandError(

@@ -23,6 +23,14 @@ export type CashFlowAutoEntry = {
   isCashFlow: boolean
 }
 
+export type CashFlowItemRow = {
+  id: number
+  code: string
+  name: string
+  category: 'operating' | 'investing' | 'financing'
+  direction: 'inflow' | 'outflow'
+}
+
 export type CashFlowAutoRule = {
   subjectCode: string
   counterpartSubjectCode: string
@@ -113,6 +121,21 @@ export function listCashFlowMappings(
        ORDER BY m.subject_code, m.counterpart_subject_code, m.entry_direction`
     )
     .all(ledgerId) as CashFlowMappingRow[]
+}
+
+export function listCashFlowItems(
+  db: Database.Database,
+  ledgerId: number
+): CashFlowItemRow[] {
+  requireLedger(db, ledgerId)
+  return db
+    .prepare(
+      `SELECT id, code, name, category, direction
+         FROM cash_flow_items
+        WHERE ledger_id = ?
+        ORDER BY code`
+    )
+    .all(ledgerId) as CashFlowItemRow[]
 }
 
 export function createCashFlowMapping(

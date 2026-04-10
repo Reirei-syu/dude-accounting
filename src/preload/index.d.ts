@@ -309,12 +309,46 @@ interface SettingsAPI {
     sourcePath?: string
     sourceDataUrl?: string
     extension?: string
+    analysis?: {
+      sourcePath: string
+      extension: string
+      naturalWidth: number
+      naturalHeight: number
+      contentBounds: {
+        left: number
+        top: number
+        right: number
+        bottom: number
+      }
+      suggestedViewport: {
+        scale: number
+        minScale: number
+        maxScale: number
+        offsetX: number
+        offsetY: number
+      }
+      outputWidth: number
+      outputHeight: number
+    }
   }>
-  applyWallpaperCrop: (payload: {
-    extension: string
-    bytes: number[]
-    sourcePath?: string
-  }) => Promise<{
+  applyWallpaperCrop: (payload:
+    | {
+        extension: string
+        bytes: number[]
+        sourcePath?: string
+      }
+    | {
+        sourcePath: string
+        extension?: string
+        viewport?: {
+          scale: number
+          minScale: number
+          maxScale: number
+          offsetX: number
+          offsetY: number
+        }
+        useSuggestedViewport?: boolean
+      }) => Promise<{
     success: boolean
     error?: string
     state?: {
@@ -326,6 +360,35 @@ interface SettingsAPI {
       maxFileSizeMb: number
       supportedFormats: string[]
     }
+    analysis?: {
+      sourcePath: string
+      extension: string
+      naturalWidth: number
+      naturalHeight: number
+      contentBounds: {
+        left: number
+        top: number
+        right: number
+        bottom: number
+      }
+      suggestedViewport: {
+        scale: number
+        minScale: number
+        maxScale: number
+        offsetX: number
+        offsetY: number
+      }
+      outputWidth: number
+      outputHeight: number
+    } | null
+    viewport?: {
+      scale: number
+      minScale: number
+      maxScale: number
+      offsetX: number
+      offsetY: number
+    } | null
+    appliedExtension?: string
   }>
   restoreDefaultWallpaper: () => Promise<{
     success: boolean

@@ -20,8 +20,10 @@ import {
   deleteCashFlowMappingCommand,
   deleteSubjectCommand,
   listAuxiliaryItemsCommand,
+  listCashFlowItemsCommand,
   listCashFlowMappingsCommand,
   listSubjectsCommand,
+  searchSubjectsCommand,
   updateAuxiliaryItemCommand,
   updateCashFlowMappingCommand,
   updateSubjectCommand
@@ -82,6 +84,40 @@ import {
   listSubjectBalancesCommand
 } from '../main/commands/reportingCommands'
 import {
+  listInitialBalancesCommand,
+  saveInitialBalancesCommand
+} from '../main/commands/initialBalanceCommands'
+import {
+  analyzeWallpaperCommand,
+  applyWallpaperCommand,
+  clearCustomTemplateEntriesCommand,
+  clearSubjectTemplateCommand,
+  deleteCustomTemplateCommand,
+  downloadSubjectTemplateCommand,
+  exportDiagnosticsLogsCommand,
+  getCustomTemplateCommand,
+  getDiagnosticsStatusCommand,
+  getLoginWallpaperStateCommand,
+  getRuntimeDefaultsCommand,
+  getSubjectTemplateCommand,
+  getSubjectTemplateReferenceCommand,
+  getSystemParamsCommand,
+  getUserPreferencesCommand,
+  getWallpaperStateCommand,
+  importCustomTemplateCommand,
+  importSubjectTemplateCommand,
+  listCustomTemplatesCommand,
+  openDiagnosticsDirectoryCommand,
+  parseSubjectTemplateImportCommand,
+  resetDiagnosticsDirectoryCommand,
+  restoreWallpaperCommand,
+  saveCustomTemplateCommand,
+  saveSubjectTemplateCommand,
+  setDiagnosticsDirectoryCommand,
+  setSystemParamCommand,
+  setUserPreferencesCommand
+} from '../main/commands/settingsCommands'
+import {
   createVoucherCommand,
   getNextVoucherNumberCommand,
   getVoucherEntriesCommand,
@@ -91,10 +127,21 @@ import {
   voucherBatchActionCommand
 } from '../main/commands/voucherCommands'
 import {
+  disposePrintJobCommand,
+  exportPreparedJobPdfCommand,
+  getPrintJobStatusCommand,
+  getPrintPreviewModelCommand,
+  openPrintPreviewCommand,
+  preparePrintCommand,
+  printPreparedJobCommand,
+  updatePrintPreviewSettingsCommand
+} from '../main/commands/printCommands'
+import {
   clearCliSession,
   requireCliSession,
   saveCliSession
 } from './sessionStore'
+import { findCommandMetadata, listCommandKeys } from '../main/commands/catalog'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
@@ -209,6 +256,8 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
   subject: {
     list: async (runtime, payload, outputMode, token) =>
       listSubjectsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    search: async (runtime, payload, outputMode, token) =>
+      searchSubjectsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     create: async (runtime, payload, outputMode, token) =>
       createSubjectCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     update: async (runtime, payload, outputMode, token) =>
@@ -227,6 +276,8 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       deleteAuxiliaryItemCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
   cashflow: {
+    items: async (runtime, payload, outputMode, token) =>
+      listCashFlowItemsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     list: async (runtime, payload, outputMode, token) =>
       listCashFlowMappingsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     create: async (runtime, payload, outputMode, token) =>
@@ -252,6 +303,12 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     batch: async (runtime, payload, outputMode, token) =>
       voucherBatchActionCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
+  'initial-balance': {
+    list: async (runtime, payload, outputMode, token) =>
+      listInitialBalancesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    save: async (runtime, payload, outputMode, token) =>
+      saveInitialBalancesCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+  },
   period: {
     status: async (runtime, payload, outputMode, token) =>
       getPeriodStatusCommand(createAuthedContext(runtime, outputMode, token), payload as never),
@@ -269,6 +326,82 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       previewCarryForwardCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     execute: async (runtime, payload, outputMode, token) =>
       executeCarryForwardCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+  },
+  settings: {
+    'system-get': async (runtime, _payload, outputMode, token) =>
+      getSystemParamsCommand(createAuthedContext(runtime, outputMode, token)),
+    'system-set': async (runtime, payload, outputMode, token) =>
+      setSystemParamCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'runtime-defaults-get': async (runtime, _payload, outputMode, token) =>
+      getRuntimeDefaultsCommand(createAuthedContext(runtime, outputMode, token)),
+    'preferences-get': async (runtime, _payload, outputMode, token) =>
+      getUserPreferencesCommand(createAuthedContext(runtime, outputMode, token)),
+    'preferences-set': async (runtime, payload, outputMode, token) =>
+      setUserPreferencesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'diagnostics-status': async (runtime, _payload, outputMode, token) =>
+      getDiagnosticsStatusCommand(createAuthedContext(runtime, outputMode, token)),
+    'diagnostics-set-dir': async (runtime, payload, outputMode, token) =>
+      setDiagnosticsDirectoryCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'diagnostics-reset-dir': async (runtime, _payload, outputMode, token) =>
+      resetDiagnosticsDirectoryCommand(createAuthedContext(runtime, outputMode, token)),
+    'diagnostics-export': async (runtime, payload, outputMode, token) =>
+      exportDiagnosticsLogsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'diagnostics-open-dir': async (runtime, _payload, outputMode, token) =>
+      openDiagnosticsDirectoryCommand(createAuthedContext(runtime, outputMode, token)),
+    'wallpaper-status': async (runtime, _payload, outputMode, token) =>
+      getWallpaperStateCommand(createAuthedContext(runtime, outputMode, token)),
+    'wallpaper-login-status': async (runtime, _payload, outputMode, token) =>
+      getLoginWallpaperStateCommand(createAuthedContext(runtime, outputMode, token)),
+    'wallpaper-analyze': async (runtime, payload, outputMode, token) =>
+      analyzeWallpaperCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'wallpaper-apply': async (runtime, payload, outputMode, token) =>
+      applyWallpaperCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'wallpaper-restore': async (runtime, _payload, outputMode, token) =>
+      restoreWallpaperCommand(createAuthedContext(runtime, outputMode, token)),
+    'subject-template-get': async (runtime, payload, outputMode, token) =>
+      getSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'subject-template-reference': async (runtime, payload, outputMode, token) =>
+      getSubjectTemplateReferenceCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'subject-template-parse-import': async (runtime, payload, outputMode, token) =>
+      parseSubjectTemplateImportCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'subject-template-save': async (runtime, payload, outputMode, token) =>
+      saveSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'subject-template-import': async (runtime, payload, outputMode, token) =>
+      importSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'subject-template-download': async (runtime, payload, outputMode, token) =>
+      downloadSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'subject-template-clear': async (runtime, payload, outputMode, token) =>
+      clearSubjectTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'custom-template-list': async (runtime, _payload, outputMode, token) =>
+      listCustomTemplatesCommand(createAuthedContext(runtime, outputMode, token)),
+    'custom-template-get': async (runtime, payload, outputMode, token) =>
+      getCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'custom-template-save': async (runtime, payload, outputMode, token) =>
+      saveCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'custom-template-import': async (runtime, payload, outputMode, token) =>
+      importCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'custom-template-clear-entries': async (runtime, payload, outputMode, token) =>
+      clearCustomTemplateEntriesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'custom-template-delete': async (runtime, payload, outputMode, token) =>
+      deleteCustomTemplateCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+  },
+  print: {
+    prepare: async (runtime, payload, outputMode, token) =>
+      preparePrintCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    status: async (runtime, payload, outputMode, token) =>
+      getPrintJobStatusCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    model: async (runtime, payload, outputMode, token) =>
+      getPrintPreviewModelCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'update-settings': async (runtime, payload, outputMode, token) =>
+      updatePrintPreviewSettingsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'open-preview': async (runtime, payload, outputMode, token) =>
+      openPrintPreviewCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    print: async (runtime, payload, outputMode, token) =>
+      printPreparedJobCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'export-pdf': async (runtime, payload, outputMode, token) =>
+      exportPreparedJobPdfCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    dispose: async (runtime, payload, outputMode, token) =>
+      disposePrintJobCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
   report: {
     list: async (runtime, payload, outputMode, token) =>
@@ -339,9 +472,7 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
 }
 
 export function listCommands(): string[] {
-  return Object.entries(registry).flatMap(([domain, actions]) =>
-    Object.keys(actions).map((action) => `${domain} ${action}`)
-  )
+  return listCommandKeys()
 }
 
 export async function executeCliCommand(
@@ -359,6 +490,12 @@ export async function executeCliCommand(
       },
       2
     )
+  }
+
+  const metadata = findCommandMetadata(invocation.domain, invocation.action)
+  if (metadata?.requiresSession === false && invocation.token) {
+    // public commands ignore inherited token to avoid misleading state carry-over
+    invocation = { ...invocation, token: undefined }
   }
 
   return executor(runtime, invocation.payload, invocation.outputMode, invocation.token)

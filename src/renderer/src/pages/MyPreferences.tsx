@@ -4,24 +4,12 @@ import wallpaper from '../assets/wallpaper.png'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { HOME_TAB_PRESETS } from '../stores/uiStore'
 import { useWallpaperStore } from '../stores/wallpaperStore'
-import {
-  calculateInitialCropViewport,
-  clampCropViewport,
-  detectContentBounds,
-  type ContentBounds,
-  type CropViewportState
-} from './wallpaperCrop'
+import { clampCropViewport, type ContentBounds, type CropViewportState } from './wallpaperCrop'
 
 const CROP_FRAME_WIDTH = 640
 const CROP_FRAME_HEIGHT = 360
 const OUTPUT_WIDTH = 1920
 const OUTPUT_HEIGHT = 1080
-
-interface CropDialogState {
-  sourcePath: string
-  sourceDataUrl: string
-  extension: string
-}
 
 interface CropImageState {
   naturalWidth: number
@@ -30,15 +18,11 @@ interface CropImageState {
   initialViewport: CropViewportState
 }
 
-function getCanvasMimeType(extension: string): string {
-  const normalizedExtension = extension.toLowerCase()
-  if (normalizedExtension === 'jpg' || normalizedExtension === 'jpeg') {
-    return 'image/jpeg'
-  }
-  if (normalizedExtension === 'webp') {
-    return 'image/webp'
-  }
-  return 'image/png'
+interface CropDialogState {
+  sourcePath: string
+  sourceDataUrl: string
+  extension: string
+  imageState: CropImageState
 }
 
 export default function MyPreferences(): JSX.Element {
@@ -53,9 +37,7 @@ export default function MyPreferences(): JSX.Element {
   const [cropDialog, setCropDialog] = useState<CropDialogState | null>(null)
   const [cropImageState, setCropImageState] = useState<CropImageState | null>(null)
   const [cropViewport, setCropViewport] = useState<CropViewportState | null>(null)
-  const [cropLoading, setCropLoading] = useState(false)
   const [cropSaving, setCropSaving] = useState(false)
-  const imageRef = useRef<HTMLImageElement | null>(null)
   const dragRef = useRef<{
     pointerId: number
     startX: number
@@ -107,61 +89,11 @@ export default function MyPreferences(): JSX.Element {
     if (!cropDialog) {
       setCropImageState(null)
       setCropViewport(null)
-      setCropLoading(false)
       return
     }
 
-    let cancelled = false
-    setCropLoading(true)
-
-    const image = new Image()
-    image.onload = () => {
-      if (cancelled) return
-
-      const canvas = document.createElement('canvas')
-      canvas.width = image.naturalWidth
-      canvas.height = image.naturalHeight
-      const context = canvas.getContext('2d')
-      if (!context) {
-        setMessage({ type: 'error', text: '初始化裁切工具失败' })
-        setCropLoading(false)
-        return
-      }
-
-      context.drawImage(image, 0, 0)
-      const imageData = context.getImageData(0, 0, canvas.width, canvas.height)
-      const contentBounds = detectContentBounds(imageData.data, canvas.width, canvas.height)
-      const initialViewport = calculateInitialCropViewport({
-        imageWidth: canvas.width,
-        imageHeight: canvas.height,
-        frameWidth: CROP_FRAME_WIDTH,
-        frameHeight: CROP_FRAME_HEIGHT,
-        contentBounds
-      })
-
-      setCropImageState({
-        naturalWidth: canvas.width,
-        naturalHeight: canvas.height,
-        contentBounds,
-        initialViewport
-      })
-      setCropViewport(initialViewport)
-      setCropLoading(false)
-    }
-    image.onerror = () => {
-      if (cancelled) return
-      setMessage({
-        type: 'error',
-        text: `读取图片失败：浏览器无法解码所选 ${cropDialog.extension.toUpperCase()} 图片，可能是图片已损坏、格式异常或文件内容为空。`
-      })
-      setCropDialog(null)
-      setCropLoading(false)
-    }
-    image.src = cropDialog.sourceDataUrl
-
-    return () => {
-      cancelled = true
-    }
+    setCropImageState(cropDialog.imageState)
+    setCropViewport(cropDialog.imageState.initialViewport)
   }, [cropDialog])
 
   const handleSave = async (): Promise<void> => {
@@ -199,7 +131,13 @@ export default function MyPreferences(): JSX.Element {
     try {
       const result = await window.api.settings.chooseWallpaper()
       if (result.cancelled) return
-      if (!result.success || !result.sourcePath || !result.sourceDataUrl || !result.extension) {
+      if (
+        !result.success ||
+        !result.sourcePath ||
+        !result.sourceDataUrl ||
+        !result.extension ||
+        !result.analysis
+      ) {
         setMessage({ type: 'error', text: result.error || '选择壁纸失败' })
         return
       }
@@ -207,7 +145,13 @@ export default function MyPreferences(): JSX.Element {
       setCropDialog({
         sourcePath: result.sourcePath,
         sourceDataUrl: result.sourceDataUrl,
-        extension: result.extension
+        extension: result.extension,
+        imageState: {
+          naturalWidth: result.analysis.naturalWidth,
+          naturalHeight: result.analysis.naturalHeight,
+          contentBounds: result.analysis.contentBounds,
+          initialViewport: result.analysis.suggestedViewport
+        }
       })
     } finally {
       setWallpaperBusy(false)
@@ -294,56 +238,17 @@ export default function MyPreferences(): JSX.Element {
   }
 
   const handleApplyCrop = async (): Promise<void> => {
-    if (!window.electron || !cropDialog || !cropViewport || !imageRef.current) {
+    if (!window.electron || !cropDialog || !cropViewport) {
       return
     }
 
     setCropSaving(true)
     setMessage(null)
     try {
-      const canvas = document.createElement('canvas')
-      canvas.width = OUTPUT_WIDTH
-      canvas.height = OUTPUT_HEIGHT
-      const context = canvas.getContext('2d')
-      if (!context) {
-        throw new Error('初始化裁切画布失败')
-      }
-
-      const sourceX = Math.max(0, -cropViewport.offsetX / cropViewport.scale)
-      const sourceY = Math.max(0, -cropViewport.offsetY / cropViewport.scale)
-      const sourceWidth = CROP_FRAME_WIDTH / cropViewport.scale
-      const sourceHeight = CROP_FRAME_HEIGHT / cropViewport.scale
-
-      if (cropDialog.extension === 'jpg' || cropDialog.extension === 'jpeg') {
-        context.fillStyle = '#ffffff'
-        context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT)
-      }
-
-      context.drawImage(
-        imageRef.current,
-        sourceX,
-        sourceY,
-        sourceWidth,
-        sourceHeight,
-        0,
-        0,
-        OUTPUT_WIDTH,
-        OUTPUT_HEIGHT
-      )
-
-      const blob = await new Promise<Blob | null>((resolve) => {
-        canvas.toBlob(resolve, getCanvasMimeType(cropDialog.extension), 0.92)
-      })
-
-      if (!blob) {
-        throw new Error('导出裁切图片失败')
-      }
-
-      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
       const result = await window.api.settings.applyWallpaperCrop({
+        sourcePath: cropDialog.sourcePath,
         extension: cropDialog.extension,
-        bytes,
-        sourcePath: cropDialog.sourcePath
+        viewport: cropViewport
       })
 
       if (!result.success || !result.state) {
@@ -422,7 +327,7 @@ export default function MyPreferences(): JSX.Element {
               壁纸替换
             </div>
             <div className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-              当前壁纸会同步应用到登录页和主界面。默认动画风格壁纸会永久保留，可随时恢复。
+              当前壁纸会同步应用到登录页和主界面。默认动态风格壁纸会永久保留，可随时恢复。
             </div>
           </div>
           <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -444,7 +349,10 @@ export default function MyPreferences(): JSX.Element {
           >
             <div
               className="h-full min-h-[220px] flex items-end p-4"
-              style={{ background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.08), rgba(15, 23, 42, 0.42))' }}
+              style={{
+                background:
+                  'linear-gradient(180deg, rgba(15, 23, 42, 0.08), rgba(15, 23, 42, 0.42))'
+              }}
             >
               <div
                 className="glass-panel-light px-4 py-3 max-w-lg"
@@ -573,9 +481,8 @@ export default function MyPreferences(): JSX.Element {
                   onPointerUp={handleCropPointerUp}
                   onPointerCancel={handleCropPointerUp}
                 >
-                  {cropDialog && cropViewport && (
+                  {cropViewport && (
                     <img
-                      ref={imageRef}
                       src={cropDialog.sourceDataUrl}
                       alt="壁纸裁切预览"
                       draggable={false}
@@ -592,12 +499,6 @@ export default function MyPreferences(): JSX.Element {
                   )}
 
                   <div className="absolute inset-0 pointer-events-none border border-white/55 rounded-2xl shadow-[inset_0_0_0_9999px_rgba(15,23,42,0.16)]" />
-
-                  {cropLoading && (
-                    <div className="absolute inset-0 flex items-center justify-center text-sm text-white/85">
-                      正在分析图片内容范围...
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -628,7 +529,7 @@ export default function MyPreferences(): JSX.Element {
                     step={0.01}
                     value={cropViewport?.scale ?? 1}
                     onChange={(event) => handleZoomChange(Number(event.target.value))}
-                    disabled={!cropViewport || cropLoading || cropSaving}
+                    disabled={!cropViewport || cropSaving}
                   />
                   <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
                     当前缩放：{cropViewport ? `${cropViewport.scale.toFixed(2)}x` : '--'}
@@ -640,7 +541,7 @@ export default function MyPreferences(): JSX.Element {
                     type="button"
                     className="glass-btn-secondary px-4 py-2"
                     onClick={resetCropViewport}
-                    disabled={!cropImageState || cropLoading || cropSaving}
+                    disabled={!cropImageState || cropSaving}
                   >
                     重置裁切
                   </button>
@@ -648,7 +549,7 @@ export default function MyPreferences(): JSX.Element {
                     type="button"
                     className="glass-btn-secondary px-4 py-2"
                     onClick={() => void handleApplyCrop()}
-                    disabled={!cropViewport || cropLoading || cropSaving}
+                    disabled={!cropViewport || cropSaving}
                   >
                     {cropSaving ? '保存中...' : '应用裁切'}
                   </button>

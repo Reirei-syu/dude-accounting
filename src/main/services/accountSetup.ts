@@ -316,6 +316,51 @@ export function listSubjects(
   }))
 }
 
+export function searchSubjects(
+  db: Database.Database,
+  ledgerId: number,
+  keyword: string
+): Array<
+  Pick<
+    SubjectRecord,
+    'id' | 'ledger_id' | 'code' | 'name' | 'category' | 'balance_direction' | 'is_cash_flow'
+  >
+> {
+  requireLedger(db, ledgerId)
+
+  const normalizedKeyword = keyword.trim()
+  if (!normalizedKeyword) {
+    return []
+  }
+
+  const isNumericKeyword = /^\d+$/.test(normalizedKeyword)
+  const codePattern = `${normalizedKeyword}%`
+  const namePattern = isNumericKeyword ? `${normalizedKeyword}%` : `%${normalizedKeyword}%`
+
+  return db
+    .prepare(
+      `SELECT s.id, s.ledger_id, s.code, s.name, s.category, s.balance_direction, s.is_cash_flow
+         FROM subjects s
+        WHERE s.ledger_id = ?
+          AND (s.code LIKE ? OR s.name LIKE ?)
+          AND NOT EXISTS (
+            SELECT 1
+              FROM subjects child
+             WHERE child.ledger_id = s.ledger_id
+               AND child.code <> s.code
+               AND (child.parent_code = s.code OR child.code LIKE s.code || '%')
+          )
+        ORDER BY s.code
+        LIMIT 20`
+    )
+    .all(ledgerId, codePattern, namePattern) as Array<
+    Pick<
+      SubjectRecord,
+      'id' | 'ledger_id' | 'code' | 'name' | 'category' | 'balance_direction' | 'is_cash_flow'
+    >
+  >
+}
+
 export function createSubject(
   db: Database.Database,
   data: {

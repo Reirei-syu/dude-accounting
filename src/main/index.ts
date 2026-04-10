@@ -30,6 +30,7 @@ import { registerDiagnosticsHandlers } from './ipc/diagnostics'
 import { installGlobalErrorLogging } from './services/errorLog'
 import { getRuntimeUserDataPath } from './services/runtimeAppPaths'
 import { setRuntimeContext } from './runtime/runtimeContext'
+import { consumeEmbeddedCliState } from './runtime/embeddedCliState'
 import { runEmbeddedCli } from '../cli/embedded'
 
 const runtimeUserDataPath = getRuntimeUserDataPath(app.getPath('appData'), is.dev)
@@ -139,7 +140,15 @@ app.whenReady().then(() => {
   const embeddedCliArgv = getEmbeddedCliArgv(process.argv)
   if (embeddedCliArgv) {
     void runEmbeddedCli(embeddedCliArgv).finally(() => {
-      app.quit()
+      const cliState = consumeEmbeddedCliState()
+      if (cliState.relaunchRequested) {
+        app.relaunch()
+        app.exit(0)
+        return
+      }
+      if (!cliState.keepAliveUntilWindowClose) {
+        app.quit()
+      }
     })
     return
   }

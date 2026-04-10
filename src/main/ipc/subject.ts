@@ -4,13 +4,13 @@ import {
   createSubjectCommand,
   deleteSubjectCommand,
   listSubjectsCommand,
+  searchSubjectsCommand,
   updateSubjectCommand
 } from '../commands/accountCommands'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
-import { requireAuth, requireLedgerAccess } from './session'
 
 export function registerSubjectHandlers(): void {
-  const db = getDatabase()
+  getDatabase()
 
   ipcMain.handle('subject:getAll', async (event, ledgerId: number) => {
     const result = await listSubjectsCommand(createCommandContextFromEvent(event), { ledgerId })
@@ -21,35 +21,16 @@ export function registerSubjectHandlers(): void {
     throw new Error(result.error?.message ?? '获取科目列表失败')
   })
 
-  ipcMain.handle('subject:search', (event, ledgerId: number, keyword: string) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, ledgerId)
-    const normalizedKeyword = keyword.trim()
-    if (!normalizedKeyword) {
-      return []
+  ipcMain.handle('subject:search', async (event, ledgerId: number, keyword: string) => {
+    const result = await searchSubjectsCommand(createCommandContextFromEvent(event), {
+      ledgerId,
+      keyword
+    })
+    if (isCommandSuccess(result)) {
+      return result.data
     }
 
-    const isNumericKeyword = /^\d+$/.test(normalizedKeyword)
-    const codePattern = `${normalizedKeyword}%`
-    const namePattern = isNumericKeyword ? `${normalizedKeyword}%` : `%${normalizedKeyword}%`
-
-    return db
-      .prepare(
-        `SELECT s.*
-           FROM subjects s
-          WHERE s.ledger_id = ?
-            AND (s.code LIKE ? OR s.name LIKE ?)
-            AND NOT EXISTS (
-              SELECT 1
-                FROM subjects child
-               WHERE child.ledger_id = s.ledger_id
-                 AND child.code <> s.code
-                 AND (child.parent_code = s.code OR child.code LIKE s.code || '%')
-            )
-          ORDER BY s.code
-          LIMIT 20`
-      )
-      .all(ledgerId, codePattern, namePattern)
+    throw new Error(result.error?.message ?? '搜索科目失败')
   })
 
   ipcMain.handle(
