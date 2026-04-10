@@ -6,11 +6,11 @@ name = "dude-app"
 script = ""
 
 [[actions]]
-name = "Run"
+name = "dev"
 icon = "run"
 command = "npm run dev"
 
 [[actions]]
 name = "CLI"
 icon = "tool"
-command = "npm run cli"
+command = "npm run cli -- --help"

@@ -112,7 +112,21 @@ npm run start
 
 ## CLI 使用方法
 
-当前已提供正式 CLI 入口，命令形态为：
+CLI 的长期架构规则以 `prds/CLI架构设计规范.md` 为准；README 只保留使用说明，不重复维护整套设计规范。
+
+当前已提供两种 CLI 入口：
+
+```bash
+dudeacc
+dude-accounting <domain> <action>
+```
+
+定位区别：
+
+- `dudeacc`：面向人工体验，默认无参数进入交互式命令壳
+- `dude-accounting`：面向脚本、Python subprocess、运维流程和 Agent，保持稳定批处理语法
+
+批处理命令形态仍为：
 
 ```bash
 dude-accounting <domain> <action>
@@ -124,6 +138,7 @@ dude-accounting <domain> <action>
 - 可追加 `--pretty` 切换为人类可读模式
 - 复杂参数建议使用 `--payload-file` 或 `--payload-json`
 - CLI 与桌面 UI 共用同一份本机数据目录，不会分裂出第二套运行时
+- 无参数且当前终端为 TTY 时，`dudeacc` / `dude-accounting` 都会进入交互式命令壳
 
 ### 源码仓调试
 
@@ -131,6 +146,7 @@ dude-accounting <domain> <action>
 
 ```bash
 npm run cli -- --help
+npm run cli --
 ```
 
 常见示例：
@@ -141,6 +157,23 @@ npm run cli -- auth whoami
 npm run cli -- ledger list
 npm run cli -- report list --ledgerId 1
 npm run cli -- book subject-balances --ledgerId 1 --period 2026-03 --pretty
+```
+
+进入交互态：
+
+```bash
+npm run cli --
+```
+
+交互态常见示例：
+
+```text
+dudeacc> help
+dudeacc> 登录
+dudeacc> 账套列表
+dudeacc> 选择账套 1
+dudeacc[ledger:1]> 选择期间 2026-04
+dudeacc[ledger:1|period:2026-04]> 科目余额表
 ```
 
 使用 `payload file` 的示例：
@@ -177,7 +210,9 @@ npm run cli -- voucher save --payload-file ./examples/voucher-save.json
 
 安装版通过包装脚本调用现有可执行文件的嵌入式 `--cli` 模式：
 
+- Windows：`dudeacc.cmd`
 - Windows：`dude-accounting.cmd`
+- macOS / Linux：`dudeacc`
 - macOS / Linux：`dude-accounting`
 
 等价底层形式为：
@@ -191,6 +226,7 @@ dude-app.exe --cli <domain> <action> ...
 - 当前源码调试和安装版都优先走嵌入式 Electron CLI，而不是纯 Node 直接连库
 - 原因是仓库内 `better-sqlite3` 当前按 Electron ABI 构建，纯 Node 路径不是主支持方式
 - `backup restore` 目前仍保留为安装版 Electron 生命周期能力，不支持纯命令行热恢复
+- 推荐人工操作时优先使用 `dudeacc`；脚本和 Agent 继续优先使用 `dude-accounting <domain> <action>`
 
 ## 构建与打包
 

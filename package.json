@@ -14,7 +14,7 @@
     "build:cli": "tsc -p tsconfig.cli.json",
     "test": "vitest run --exclude out/**",
     "qa:electron-breakpoint": "py -3 scripts/electron_breakpoint_audit.py",
-    "cli": "node scripts/run-with-utf8.mjs npx electron-vite preview -- --cli",
+    "cli": "node scripts/run-with-utf8.mjs node scripts/run-cli.mjs",
     "start": "node scripts/run-with-utf8.mjs electron-vite preview",
     "dev": "node scripts/run-with-utf8.mjs electron-vite dev",
     "build": "npm run typecheck && npm run build:cli && electron-vite build",
