@@ -15,6 +15,10 @@ import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 import type { PrintPreviewSettings } from '../services/print'
 import { updatePrintPreviewSettingsForActor } from '../ipc/print'
+import {
+  appendCliE2eEvent,
+  shouldDryRunCliE2eDesktopActions
+} from '../runtime/cliE2eEvents'
 
 type PrintJobStatusResult = NonNullable<ReturnType<typeof getPrintJobStatusForActor>>
 
@@ -104,6 +108,9 @@ export async function openPrintPreviewCommand(
     const status = requirePrintJobStatus(context, payload.jobId)
     requirePrintJobReady(payload.jobId, status)
 
+    appendCliE2eEvent('print.open-preview.requested', {
+      jobId: payload.jobId
+    })
     const opened = await openPrintPreviewForActor(context.db, context.actor, payload.jobId, {
       keepAlive: true
     })
@@ -126,6 +133,14 @@ export async function printPreparedJobCommand(
     const status = requirePrintJobStatus(context, jobId)
     requirePrintJobReady(jobId, status)
 
+    appendCliE2eEvent('print.print.requested', {
+      jobId,
+      silent: typeof payload === 'string' ? null : payload.silent ?? null,
+      deviceName: typeof payload === 'string' ? null : payload.deviceName ?? null
+    })
+    if (shouldDryRunCliE2eDesktopActions()) {
+      return { success: true }
+    }
     const result = await printPreparedJobForActor(context.db, context.actor, payload)
     if (!result) {
       throw new CommandError('NOT_FOUND', '打印任务不存在', { jobId }, 5)

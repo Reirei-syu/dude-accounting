@@ -33,7 +33,7 @@ export function resolveCliPayload(input: {
 }): unknown {
   if (input.payloadFile) {
     try {
-      return normalizeLooseValue(JSON.parse(fs.readFileSync(input.payloadFile, 'utf8')) as unknown)
+      return JSON.parse(fs.readFileSync(input.payloadFile, 'utf8')) as unknown
     } catch (error) {
       throw new CommandError(
         'VALIDATION_ERROR',
@@ -48,7 +48,7 @@ export function resolveCliPayload(input: {
 
   if (input.payloadJson) {
     try {
-      return normalizeLooseValue(JSON.parse(input.payloadJson) as unknown)
+      return JSON.parse(input.payloadJson) as unknown
     } catch (error) {
       throw new CommandError(
         'VALIDATION_ERROR',

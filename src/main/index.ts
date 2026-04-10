@@ -32,6 +32,12 @@ import { getRuntimeUserDataPath } from './services/runtimeAppPaths'
 import { setRuntimeContext } from './runtime/runtimeContext'
 import { consumeEmbeddedCliState } from './runtime/embeddedCliState'
 import { runEmbeddedCli } from '../cli/embedded'
+import path from 'node:path'
+
+const cliE2eAppDataOverride = process.env.DUDEACC_E2E_APPDATA_PATH?.trim()
+if (cliE2eAppDataOverride) {
+  app.setPath('appData', path.resolve(cliE2eAppDataOverride))
+}
 
 const runtimeUserDataPath = getRuntimeUserDataPath(app.getPath('appData'), is.dev)
 app.setPath('userData', runtimeUserDataPath)
@@ -39,6 +45,7 @@ app.setPath('userData', runtimeUserDataPath)
 installGlobalErrorLogging(() => app.getPath('userData'))
 
 const CLI_FLAG = '--cli'
+let embeddedCliRunning = false
 
 function getEmbeddedCliArgv(argv: string[]): string[] | null {
   const cliFlagIndex = argv.indexOf(CLI_FLAG)
@@ -139,7 +146,9 @@ app.whenReady().then(() => {
 
   const embeddedCliArgv = getEmbeddedCliArgv(process.argv)
   if (embeddedCliArgv) {
+    embeddedCliRunning = true
     void runEmbeddedCli(embeddedCliArgv).finally(() => {
+      embeddedCliRunning = false
       const cliState = consumeEmbeddedCliState()
       if (cliState.relaunchRequested) {
         app.relaunch()
@@ -181,6 +190,9 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  if (embeddedCliRunning) {
+    return
+  }
   closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()

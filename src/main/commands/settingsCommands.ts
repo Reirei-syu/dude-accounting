@@ -35,6 +35,10 @@ import {
   renderWallpaperCrop,
   type WallpaperAnalyzeResult
 } from '../services/wallpaperCropService'
+import {
+  appendCliE2eEvent,
+  shouldDryRunCliE2eDesktopActions
+} from '../runtime/cliE2eEvents'
 import { requireCommandActor, requireCommandAdmin, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
@@ -244,9 +248,14 @@ export async function openDiagnosticsDirectoryCommand(
   return withCommandResult(context, async () => {
     requireCommandPermission(context.actor, 'system_settings')
     const { logDirectory } = getErrorLogStatus(context.runtime.userDataPath)
-    const error = await shell.openPath(logDirectory)
-    if (error) {
-      throw new Error(error)
+    appendCliE2eEvent('settings.diagnostics-open-dir.requested', {
+      logDirectory
+    })
+    if (!shouldDryRunCliE2eDesktopActions()) {
+      const error = await shell.openPath(logDirectory)
+      if (error) {
+        throw new Error(error)
+      }
     }
     return {
       logDirectory,

@@ -14,6 +14,7 @@
     "build:cli": "tsc -p tsconfig.cli.json",
     "test": "vitest run --exclude out/**",
     "qa:electron-breakpoint": "py -3 scripts/electron_breakpoint_audit.py",
+    "qa:cli-release-all": "powershell -ExecutionPolicy Bypass -File scripts/prepare-cli-release-e2e.ps1 && npm run build:unpack && node scripts/run-with-utf8.mjs node scripts/cli-release-e2e/run.mjs",
     "cli": "node scripts/run-with-utf8.mjs node scripts/run-cli.mjs",
     "start": "node scripts/run-with-utf8.mjs electron-vite preview",
     "dev": "node scripts/run-with-utf8.mjs electron-vite dev",

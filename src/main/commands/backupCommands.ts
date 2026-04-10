@@ -31,6 +31,10 @@ import {
 } from '../services/pendingRestoreLog'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requestEmbeddedCliRelaunch } from '../runtime/embeddedCliState'
+import {
+  appendCliE2eEvent,
+  shouldSuppressCliE2eRelaunch
+} from '../runtime/cliE2eEvents'
 import { requireCommandAdmin, requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
@@ -441,6 +445,13 @@ export async function restoreBackupCommand(
     const pendingRestoreLogPath = getPendingRestoreLogPath(context.runtime.userDataPath)
     let databaseClosed = false
     try {
+      appendCliE2eEvent('backup.restore.requested', {
+        backupPath,
+        manifestPath,
+        ledgerId,
+        backupId: payload.backupId ?? null,
+        packagePath: payload.packagePath ?? null
+      })
       writePendingRestoreLog(pendingRestoreLogPath, {
         userId: actor.id,
         username: actor.username,
@@ -459,7 +470,13 @@ export async function restoreBackupCommand(
         backupPath,
         targetPath: getDatabasePath()
       })
-      requestEmbeddedCliRelaunch()
+      appendCliE2eEvent('backup.restore.relaunch-requested', {
+        backupPath,
+        manifestPath
+      })
+      if (!shouldSuppressCliE2eRelaunch()) {
+        requestEmbeddedCliRelaunch()
+      }
       return {
         restartRequired: true as const,
         backupPath

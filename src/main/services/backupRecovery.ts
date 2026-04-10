@@ -294,37 +294,39 @@ export function createLedgerBackupArtifact(input: {
   fs.copyFileSync(input.sourcePath, backupPath)
 
   const packageDb = new DatabaseSync(backupPath)
+  let attachments: LedgerBackupAttachment[] = []
   try {
     trimLedgerBackupDatabase(packageDb, input.ledgerId)
-    const attachments = copyLedgerAttachments(packageDb, packageDir)
+    attachments = copyLedgerAttachments(packageDb, packageDir)
     packageDb.exec('VACUUM;')
-    const checksum = computeFileSha256(backupPath)
-    const fileSize = fs.statSync(backupPath).size
-    const manifestPath = writeLedgerBackupManifest(packageDir, {
-      schemaVersion: '2.0',
-      packageType: 'ledger_backup',
-      ledgerId: input.ledgerId,
-      ledgerName: input.ledgerName?.trim() || null,
-      period: input.period ?? null,
-      fiscalYear: input.fiscalYear ?? null,
-      createdAt,
-      databaseFile: path.basename(backupPath),
-      checksum,
-      fileSize,
-      attachments
-    })
-
-    return {
-      packageDir,
-      backupPath,
-      manifestPath,
-      checksum,
-      fileSize,
-      createdAt,
-      attachments
-    }
   } finally {
     packageDb.close()
+  }
+
+  const checksum = computeFileSha256(backupPath)
+  const fileSize = fs.statSync(backupPath).size
+  const manifestPath = writeLedgerBackupManifest(packageDir, {
+    schemaVersion: '2.0',
+    packageType: 'ledger_backup',
+    ledgerId: input.ledgerId,
+    ledgerName: input.ledgerName?.trim() || null,
+    period: input.period ?? null,
+    fiscalYear: input.fiscalYear ?? null,
+    createdAt,
+    databaseFile: path.basename(backupPath),
+    checksum,
+    fileSize,
+    attachments
+  })
+
+  return {
+    packageDir,
+    backupPath,
+    manifestPath,
+    checksum,
+    fileSize,
+    createdAt,
+    attachments
   }
 }
 

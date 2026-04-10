@@ -28,6 +28,7 @@ import {
 import { buildTableMeasurementHtml } from '../services/printMeasurement'
 import { buildPagedPrintPreviewHtml } from '../services/printPreviewShell'
 import { requestEmbeddedCliKeepAlive } from '../runtime/embeddedCliState'
+import { appendCliE2eEvent } from '../runtime/cliE2eEvents'
 import { requireCommandActor, requireCommandLedgerAccess } from '../commands/authz'
 import { CommandError } from '../commands/types'
 import type { CommandActor } from '../commands/types'
@@ -419,6 +420,12 @@ async function createPreviewWindowForJob(input: {
 
   const previewHtml = buildPagedPrintPreviewHtml(input.jobId, input.previewModel)
   await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`)
+  appendCliE2eEvent('print.preview.window-opened', {
+    jobId: input.jobId,
+    webContentsId: previewWindow.webContents.id,
+    shown: input.show,
+    tracked: input.trackPreviewWindow
+  })
 
   if (input.trackPreviewWindow) {
     const currentJob = loadPrintJob(input.jobId)
