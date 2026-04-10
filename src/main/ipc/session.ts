@@ -1,20 +1,14 @@
 import type { IpcMainInvokeEvent } from 'electron'
 import type Database from 'better-sqlite3'
+import {
+  requireCommandActor,
+  requireCommandAdmin,
+  requireCommandLedgerAccess,
+  requireCommandPermission
+} from '../commands/authz'
+import type { CommandActor, PermissionKey } from '../commands/types'
 
-export interface SessionUser {
-  id: number
-  username: string
-  permissions: Record<string, boolean>
-  isAdmin: boolean
-}
-
-type PermissionKey =
-  | 'voucher_entry'
-  | 'audit'
-  | 'bookkeeping'
-  | 'unbookkeep'
-  | 'system_settings'
-  | 'ledger_settings'
+export type SessionUser = CommandActor
 
 const senderSessionMap = new Map<number, SessionUser>()
 const senderCleanupBoundSet = new Set<number>()
@@ -58,31 +52,18 @@ export function getSessionByEvent(event: IpcMainInvokeEvent): SessionUser | null
 }
 
 export function requireAuth(event: IpcMainInvokeEvent): SessionUser {
-  const session = getSessionByEvent(event)
-  if (!session) {
-    throw new Error('未登录或登录态已失效')
-  }
-  return session
+  return requireCommandActor(getSessionByEvent(event))
 }
 
 export function requireAdmin(event: IpcMainInvokeEvent): SessionUser {
-  const session = requireAuth(event)
-  if (!session.isAdmin) {
-    throw new Error('无权限：仅管理员可执行该操作')
-  }
-  return session
+  return requireCommandAdmin(getSessionByEvent(event))
 }
 
 export function requirePermission(
   event: IpcMainInvokeEvent,
   permission: PermissionKey
 ): SessionUser {
-  const session = requireAuth(event)
-  if (session.isAdmin) return session
-  if (!session.permissions[permission]) {
-    throw new Error('无权限执行该操作')
-  }
-  return session
+  return requireCommandPermission(getSessionByEvent(event), permission)
 }
 
 export function requireLedgerAccess(
@@ -90,20 +71,5 @@ export function requireLedgerAccess(
   db: Pick<Database.Database, 'prepare'>,
   ledgerId: number
 ): SessionUser {
-  const session = requireAuth(event)
-  if (session.isAdmin) {
-    return session
-  }
-
-  const row = db
-    .prepare(
-      'SELECT 1 AS ok FROM user_ledger_permissions WHERE user_id = ? AND ledger_id = ?'
-    )
-    .get(session.id, ledgerId) as { ok: number } | undefined
-
-  if (!row) {
-    throw new Error('无权访问该账套')
-  }
-
-  return session
+  return requireCommandLedgerAccess(db, getSessionByEvent(event), ledgerId)
 }

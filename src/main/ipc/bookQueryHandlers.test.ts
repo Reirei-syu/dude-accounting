@@ -4,30 +4,24 @@ const bookQueryMocks = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   return {
     handlers,
-    appGetPath: vi.fn((name: string) =>
-      name === 'documents' ? 'D:/Documents' : 'D:/UserData'
-    ),
+    appGetPath: vi.fn((name: string) => (name === 'documents' ? 'D:/Documents' : 'D:/UserData')),
     showSaveDialog: vi.fn(),
     fromWebContents: vi.fn(() => ({ id: 1 })),
     ipcHandle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(channel, handler)
     }),
-    getDatabase: vi.fn(),
-    appendOperationLog: vi.fn(),
+    getDatabase: vi.fn(() => ({ tag: 'db' })),
     buildBookQueryExportDefaultPath: vi.fn(),
-    exportBookQueryToFile: vi.fn(),
     getBookQueryExportFilters: vi.fn(),
     getPreferredBookQueryExportDir: vi.fn(),
-    normalizeBookQueryExportPayload: vi.fn(),
     rememberBookQueryExportDir: vi.fn(),
     withIpcTelemetry: vi.fn(async (_options: unknown, operation: () => unknown) => await operation()),
-    requireAuth: vi.fn(),
-    requireLedgerAccess: vi.fn(),
-    listSubjectBalances: vi.fn(),
-    getDetailLedger: vi.fn(),
-    getJournal: vi.fn(),
-    getAuxiliaryBalances: vi.fn(),
-    getAuxiliaryDetail: vi.fn()
+    listSubjectBalancesCommand: vi.fn(),
+    getDetailLedgerCommand: vi.fn(),
+    getJournalCommand: vi.fn(),
+    getAuxiliaryBalancesCommand: vi.fn(),
+    getAuxiliaryDetailCommand: vi.fn(),
+    exportBookQueryCommand: vi.fn()
   }
 })
 
@@ -48,67 +42,42 @@ vi.mock('../database/init', () => ({
   getDatabase: bookQueryMocks.getDatabase
 }))
 
-vi.mock('../services/auditLog', () => ({
-  appendOperationLog: bookQueryMocks.appendOperationLog
-}))
-
 vi.mock('../services/bookQueryExport', () => ({
   buildBookQueryExportDefaultPath: bookQueryMocks.buildBookQueryExportDefaultPath,
-  exportBookQueryToFile: bookQueryMocks.exportBookQueryToFile,
   getBookQueryExportFilters: bookQueryMocks.getBookQueryExportFilters,
   getPreferredBookQueryExportDir: bookQueryMocks.getPreferredBookQueryExportDir,
-  normalizeBookQueryExportPayload: bookQueryMocks.normalizeBookQueryExportPayload,
   rememberBookQueryExportDir: bookQueryMocks.rememberBookQueryExportDir
-}))
-
-vi.mock('../services/bookQuery', () => ({
-  listSubjectBalances: bookQueryMocks.listSubjectBalances,
-  getDetailLedger: bookQueryMocks.getDetailLedger,
-  getJournal: bookQueryMocks.getJournal,
-  getAuxiliaryBalances: bookQueryMocks.getAuxiliaryBalances,
-  getAuxiliaryDetail: bookQueryMocks.getAuxiliaryDetail
 }))
 
 vi.mock('../services/runtimeLogger', () => ({
   withIpcTelemetry: bookQueryMocks.withIpcTelemetry
 }))
 
-vi.mock('./session', () => ({
-  requireAuth: bookQueryMocks.requireAuth,
-  requireLedgerAccess: bookQueryMocks.requireLedgerAccess
+vi.mock('../commands/reportingCommands', () => ({
+  listSubjectBalancesCommand: bookQueryMocks.listSubjectBalancesCommand,
+  getDetailLedgerCommand: bookQueryMocks.getDetailLedgerCommand,
+  getJournalCommand: bookQueryMocks.getJournalCommand,
+  getAuxiliaryBalancesCommand: bookQueryMocks.getAuxiliaryBalancesCommand,
+  getAuxiliaryDetailCommand: bookQueryMocks.getAuxiliaryDetailCommand,
+  exportBookQueryCommand: bookQueryMocks.exportBookQueryCommand
 }))
 
 import { registerBookQueryHandlers } from './bookQuery'
 
 describe('bookQuery IPC handlers', () => {
-  const db = { tag: 'db' }
-  const user = { id: 7, username: 'tester' }
-  const normalizedPayload = {
-    ledgerId: 1,
-    bookType: 'detail_ledger',
-    title: '明细账',
-    subtitle: '2025年12月-2026年1月',
-    ledgerName: '测试账套',
-    subjectLabel: '科目：库存现金',
-    periodLabel: '期间：2025-12-01 至 2026-01-31',
-    format: 'pdf',
-    columns: [{ key: 'col_1', label: '日期', align: 'left' }],
-    rows: [{ key: 'row-1', cells: [{ value: '2025-12-01' }] }]
-  }
-
   beforeEach(() => {
     bookQueryMocks.handlers.clear()
     vi.clearAllMocks()
-    bookQueryMocks.getDatabase.mockReturnValue(db)
-    bookQueryMocks.requireAuth.mockReturnValue(user)
-    bookQueryMocks.requireLedgerAccess.mockImplementation(() => user)
-    bookQueryMocks.normalizeBookQueryExportPayload.mockReturnValue(normalizedPayload)
     bookQueryMocks.getPreferredBookQueryExportDir.mockReturnValue('D:/exports')
     bookQueryMocks.buildBookQueryExportDefaultPath.mockReturnValue('D:/exports/default-book.pdf')
     bookQueryMocks.getBookQueryExportFilters.mockReturnValue([
       { name: 'PDF 文档', extensions: ['pdf'] }
     ])
-    bookQueryMocks.exportBookQueryToFile.mockResolvedValue('D:/exports/final-book.pdf')
+    bookQueryMocks.exportBookQueryCommand.mockResolvedValue({
+      status: 'success',
+      data: { filePath: 'D:/exports/final-book.pdf' },
+      error: null
+    })
 
     registerBookQueryHandlers()
   })
@@ -136,6 +105,17 @@ describe('bookQuery IPC handlers', () => {
     expect(bookQueryMocks.showSaveDialog.mock.calls[0]?.[1]).toMatchObject({
       defaultPath: 'D:/exports/default-book.pdf',
       filters: [{ name: 'PDF 文档', extensions: ['pdf'] }]
+    })
+    expect(bookQueryMocks.exportBookQueryCommand).toHaveBeenCalledWith(expect.anything(), {
+      ledgerId: 1,
+      bookType: 'detail_ledger',
+      title: '明细账',
+      subtitle: '2025年12月-2026年1月',
+      ledgerName: '测试账套',
+      format: 'pdf',
+      columns: [{ key: 'date', label: '日期', align: 'left' }],
+      rows: [{ key: 'row-1', cells: [{ value: '2025-12-01' }] }],
+      filePath: 'D:/exports/chosen-book.pdf'
     })
     expect(result).toEqual({
       success: true,
@@ -166,7 +146,7 @@ describe('bookQuery IPC handlers', () => {
       success: false,
       cancelled: true
     })
-    expect(bookQueryMocks.exportBookQueryToFile).not.toHaveBeenCalled()
+    expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
   })
 
   it('returns a validation error when the export title is blank', async () => {
@@ -189,7 +169,7 @@ describe('bookQuery IPC handlers', () => {
       error: '导出标题不能为空'
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
-    expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
+    expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
   })
 
   it('returns a validation error when the export columns are empty', async () => {
@@ -212,7 +192,7 @@ describe('bookQuery IPC handlers', () => {
       error: '导出列不能为空'
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
-    expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
+    expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
   })
 
   it('returns a validation error when the export columns payload is malformed', async () => {
@@ -235,7 +215,7 @@ describe('bookQuery IPC handlers', () => {
       error: '导出列不能为空'
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
-    expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
+    expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
   })
 
   it('returns a validation error when the export title payload is malformed', async () => {
@@ -258,6 +238,6 @@ describe('bookQuery IPC handlers', () => {
       error: '导出标题不能为空'
     })
     expect(bookQueryMocks.showSaveDialog).not.toHaveBeenCalled()
-    expect(bookQueryMocks.normalizeBookQueryExportPayload).not.toHaveBeenCalled()
+    expect(bookQueryMocks.exportBookQueryCommand).not.toHaveBeenCalled()
   })
 })

@@ -2,54 +2,39 @@
 
 基于 Electron + React + TypeScript 的单机版代理记账财务软件。
 
-## 适用范围
+本软件面向代理记账企业内部人员，服务对象为委托单位账套。当前支持两类账套：
 
-- 面向代理记账企业内部人员使用
-- 当前支持两类账套：`enterprise`、`npo`
-- 本地 SQLite 存储，不依赖云端服务
+- `enterprise`
+- `npo`
 
-## 数据存储位置
+明确不支持：
 
-- 开发模式：数据库仍存放在当前用户的开发隔离目录，例如 `AppData\Roaming\dude-app-dev\dude-accounting.db`
-- 打包安装版：主数据库默认存放在安装目录下的 `data` 文件夹，例如 `D:\DudeAcc\dude-app\data\dude-accounting.db`
-- 旧版安装用户首次启动新版时，如果安装目录下还没有数据库、但旧的 `AppData\Roaming\dude-app\dude-accounting.db` 存在，程序会自动迁移到安装目录 `data` 下继续使用
-- Windows 安装器会默认把安装目录指向当前用户可写路径，并阻止选择 `Program Files`、`Windows` 等受保护目录；程序启动时也会再次校验 `安装目录\data` 是否可写，不可写则直接阻断启动并提示重新安装
+- 政府会计
+- 事业单位会计
+- 云端多端同步
+- 完整内置电子档案库
 
-## 公开仓库后是否可以直接安装并打包
+## 软件介绍
 
-可以，但有前提。
+Dude Accounting 的目标不是做“泛用型会计平台”，而是做一套**本地单机、可合规落地、可持续维护**的代理记账软件。当前产品形态同时提供：
 
-如果仓库公开，其他人在满足本机环境要求的前提下，通常可以按下面流程完成安装与打包：
+- 桌面 UI：日常账务处理、凭证录入、报表与设置操作
+- 本机 CLI：供脚本、运维流程、Python subprocess、AI Agent 调用
 
-### Windows
+当前已覆盖的核心能力包括：
 
-```bash
-git clone <your-public-repo-url>
-cd dude-app
-npm install
-npm run build:win
-```
-
-### macOS
-
-```bash
-git clone <your-public-repo-url>
-cd dude-app
-npm install
-npm run prepare:mac-env
-npm run build:mac:installer
-```
-
-成立前提：
-
-- 使用对应平台执行对应打包命令
-- 已安装 Node.js 与 npm
-- 本机具备 Electron 原生依赖构建条件
-- 项目所需资源文件、配置文件、图标等都已经提交到仓库
+- 本地账号登录与权限控制
+- 多账套管理
+- 企业 / 民非账套模板初始化
+- 会计科目、辅助项、现金流量项目与匹配规则维护
+- 凭证录入、审核、记账、批量处理、位置交换
+- 期初余额、损益结转、结账 / 反结账
+- 财务报表快照生成、查询、删除、导出
+- 账簿查询与导出
+- 账套级备份包、电子档案导出、电子凭证处理底座
+- 关键操作日志
 
 ## 推荐环境
-
-推荐使用以下环境：
 
 - Windows 10 / 11
 - macOS 13+
@@ -57,7 +42,7 @@ npm run build:mac:installer
 - npm 10+
 - Git
 
-由于项目包含 `better-sqlite3` 这类原生依赖，首次安装时如果本机缺少构建环境，可能会失败。
+由于项目包含 `better-sqlite3` 等原生依赖，首次安装时如果本机缺少构建环境，可能会失败。
 
 ### Windows 建议预装
 
@@ -71,11 +56,16 @@ npm run build:mac:installer
 - Xcode Command Line Tools
 - Python 3
 
-可执行：
-
 ```bash
 xcode-select --install
 ```
+
+## 数据存储位置
+
+- 开发模式：数据库默认存放在当前用户开发隔离目录，例如 `AppData\Roaming\dude-app-dev\dude-accounting.db`
+- 打包安装版：主数据库默认存放在稳定的 `userData\data` 目录，例如 `AppData\Roaming\dude-app\data\dude-accounting.db`
+- 若新版首次启动时 `userData\data` 下尚无数据库，但旧安装目录或旧 `AppData\Roaming\dude-app` 下存在数据库，程序会自动迁移到新的 `userData\data`
+- 安装版与开发版默认不共用数据库
 
 ## 安装
 
@@ -88,7 +78,9 @@ npm install
 - `postinstall` 会自动执行 `electron-builder install-app-deps`
 - 如果安装失败，优先检查原生依赖构建环境是否完整
 
-## 开发启动
+## 使用方法
+
+### 1. 开发运行
 
 ```bash
 npm run dev
@@ -98,15 +90,111 @@ npm run dev
 
 - 项目已为 Windows 终端包了一层 UTF-8 启动脚本
 - 请优先使用 `npm run dev` / `npm run start`
-- 不建议直接手动执行 `electron-vite dev`，否则终端里的中文报错可能再次乱码
+- 不建议直接手动执行 `electron-vite dev`，否则终端中的中文错误可能乱码
 
-## 预览启动
+### 2. 预览运行
 
 ```bash
 npm run start
 ```
 
-## Windows 打包
+### 3. 桌面端日常使用
+
+常见顺序通常是：
+
+1. 登录账号
+2. 选择账套
+3. 维护科目 / 辅助项 / 现金流配置
+4. 录入或导入凭证
+5. 审核、记账、结账
+6. 查询账簿和报表
+7. 导出报表、执行备份或电子档案导出
+
+## CLI 使用方法
+
+当前已提供正式 CLI 入口，命令形态为：
+
+```bash
+dude-accounting <domain> <action>
+```
+
+特点：
+
+- 默认输出 JSON
+- 可追加 `--pretty` 切换为人类可读模式
+- 复杂参数建议使用 `--payload-file` 或 `--payload-json`
+- CLI 与桌面 UI 共用同一份本机数据目录，不会分裂出第二套运行时
+
+### 源码仓调试
+
+源码调试入口：
+
+```bash
+npm run cli -- --help
+```
+
+常见示例：
+
+```bash
+npm run cli -- auth login --payload-json "{\"username\":\"admin\",\"password\":\"\"}"
+npm run cli -- auth whoami
+npm run cli -- ledger list
+npm run cli -- report list --ledgerId 1
+npm run cli -- book subject-balances --ledgerId 1 --period 2026-03 --pretty
+```
+
+使用 `payload file` 的示例：
+
+```bash
+npm run cli -- voucher save --payload-file ./examples/voucher-save.json
+```
+
+返回结构示例：
+
+```json
+{
+  "status": "success",
+  "data": {},
+  "error": null
+}
+```
+
+错误时：
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "导出标题不能为空",
+    "details": null
+  }
+}
+```
+
+### 安装版使用
+
+安装版通过包装脚本调用现有可执行文件的嵌入式 `--cli` 模式：
+
+- Windows：`dude-accounting.cmd`
+- macOS / Linux：`dude-accounting`
+
+等价底层形式为：
+
+```bash
+dude-app.exe --cli <domain> <action> ...
+```
+
+说明：
+
+- 当前源码调试和安装版都优先走嵌入式 Electron CLI，而不是纯 Node 直接连库
+- 原因是仓库内 `better-sqlite3` 当前按 Electron ABI 构建，纯 Node 路径不是主支持方式
+- `backup restore` 目前仍保留为安装版 Electron 生命周期能力，不支持纯命令行热恢复
+
+## 构建与打包
+
+### Windows 打包
 
 ```bash
 npm run build:win
@@ -116,9 +204,9 @@ npm run build:win
 
 1. `npm run build`
 2. `electron-builder --win`
-3. 构建前自动清理输出目录中的旧版 Windows 安装包产物，避免安装包持续堆积
+3. 构建前自动清理旧版 Windows 安装包产物
 
-## macOS 打包
+### macOS 打包
 
 ```bash
 npm run prepare:mac-env
@@ -129,19 +217,22 @@ npm run build:mac:installer
 
 1. `npm run build`
 2. `electron-builder --mac dmg zip --publish never`
-3. 构建前自动清理输出目录中的旧版 macOS 安装包产物，避免安装包持续堆积
+3. 构建前自动清理旧版 macOS 安装包产物
 
 注意：
 
 - 必须在 macOS 上执行
 - 当前配置中 `notarize: false`，适合本地测试或内部使用
-- 如果要正式分发给外部用户，通常还需要补齐 Apple Developer 签名、公证、证书相关配置
+- 如果要正式分发给外部用户，通常还需要补齐 Apple Developer 签名、公证、证书配置
 
-## 其他打包命令
+### 其他构建命令
 
 ```bash
-# 仅构建应用，不生成安装包
+# 完整构建（含 typecheck、CLI 编译、Electron 构建）
 npm run build
+
+# 单独编译 CLI
+npm run build:cli
 
 # 生成 unpacked 目录
 npm run build:unpack
@@ -150,44 +241,34 @@ npm run build:unpack
 npm run build:linux
 ```
 
-其中 `npm run build:linux` 也会先执行 `npm run build`，确保打包前完成 typecheck 与前端/主进程构建。
-
 ## 打包输出位置
 
-默认情况下，本项目当前配置会把安装产物输出到 `D:\coding\completed\dude-app\`。
+默认安装产物输出到：
+
+```text
+D:\coding\completed\dude-app\
+```
 
 ### Windows 安装包
 
-当前配置下命名规则为：
+命名规则：
 
 ```text
 dude-app-<version>-setup.exe
 ```
 
-例如当前版本为 `1.0.8` 时，通常输出为：
+同时会额外生成一个固定别名：
 
 ```text
-D:\coding\completed\dude-app\dude-app-1.0.8-setup.exe
-```
-
-同时会额外生成一个固定文件名别名，便于发布稳定下载链接：
-
-```text
-D:\coding\completed\dude-app\dude-app-latest-setup.exe
+dude-app-latest-setup.exe
 ```
 
 ### macOS 安装包
 
-当前配置下 DMG 命名规则为：
+命名规则：
 
 ```text
 dude-app-<version>.dmg
-```
-
-例如当前版本为 `1.0.8` 时，通常输出为：
-
-```text
-D:\coding\completed\dude-app\dude-app-1.0.8.dmg
 ```
 
 ## 常见问题
@@ -210,7 +291,7 @@ D:\coding\completed\dude-app\dude-app-1.0.8.dmg
 - 原生模块是否编译完成
 - 杀毒软件是否拦截打包输出
 
-### 3. `npm run build:mac` 失败
+### 3. `npm run build:mac:installer` 失败
 
 优先检查：
 
@@ -218,7 +299,7 @@ D:\coding\completed\dude-app\dude-app-1.0.8.dmg
 - `npm install` 是否完整成功
 - Xcode Command Line Tools 是否已安装
 - 原生模块是否编译完成
-- 如果做正式分发，签名和公证配置是否齐全
+- 如需正式分发，签名和公证配置是否齐全
 
 ### 4. 终端中文报错乱码
 
@@ -227,9 +308,14 @@ D:\coding\completed\dude-app\dude-app-1.0.8.dmg
 ```bash
 npm run dev
 npm run start
+npm run cli -- --help
 ```
 
-这两个脚本会先把 Windows 控制台切换为 UTF-8，再启动 Electron/Vite。
+这些入口会先把 Windows 控制台切到 UTF-8，再启动对应流程。
+
+### 5. 为什么不推荐直接 `node out/cli/...`
+
+当前仓库内 `better-sqlite3` 依赖按 Electron ABI 构建。源码和安装版都优先走嵌入式 Electron CLI，这样最稳定，也最接近实际交付形态。
 
 ## 推荐 IDE
 

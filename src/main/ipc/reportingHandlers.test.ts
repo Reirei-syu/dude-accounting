@@ -4,27 +4,25 @@ const reportingMocks = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   return {
     handlers,
-    appGetPath: vi.fn((name: string) =>
-      name === 'documents' ? 'D:/Documents' : 'D:/UserData'
-    ),
+    appGetPath: vi.fn((name: string) => (name === 'documents' ? 'D:/Documents' : 'D:/UserData')),
     showSaveDialog: vi.fn(),
     showOpenDialog: vi.fn(),
     fromWebContents: vi.fn(() => ({ id: 1 })),
     ipcHandle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(channel, handler)
     }),
-    getDatabase: vi.fn(),
-    appendOperationLog: vi.fn(),
+    getDatabase: vi.fn(() => ({ tag: 'db' })),
     buildReportExportDefaultPath: vi.fn(),
-    exportReportSnapshotToFile: vi.fn(),
-    exportReportSnapshotsBatch: vi.fn(),
     getPreferredReportExportDir: vi.fn(),
     getReportExportFilters: vi.fn(),
     rememberReportExportDir: vi.fn(),
-    getReportSnapshotDetail: vi.fn(),
     withIpcTelemetry: vi.fn(async (_options: unknown, operation: () => unknown) => await operation()),
-    requireAuth: vi.fn(),
-    requireLedgerAccess: vi.fn()
+    listReportsCommand: vi.fn(),
+    getReportDetailCommand: vi.fn(),
+    exportReportCommand: vi.fn(),
+    exportReportsBatchCommand: vi.fn(),
+    generateReportCommand: vi.fn(),
+    deleteReportCommand: vi.fn()
   }
 })
 
@@ -46,37 +44,29 @@ vi.mock('../database/init', () => ({
   getDatabase: reportingMocks.getDatabase
 }))
 
-vi.mock('../services/auditLog', () => ({
-  appendOperationLog: reportingMocks.appendOperationLog
-}))
-
 vi.mock('../services/reportExport', () => ({
   buildReportExportDefaultPath: reportingMocks.buildReportExportDefaultPath,
-  exportReportSnapshotToFile: reportingMocks.exportReportSnapshotToFile,
-  exportReportSnapshotsBatch: reportingMocks.exportReportSnapshotsBatch,
   getPreferredReportExportDir: reportingMocks.getPreferredReportExportDir,
   getReportExportFilters: reportingMocks.getReportExportFilters,
   rememberReportExportDir: reportingMocks.rememberReportExportDir
-}))
-
-vi.mock('../services/reporting', () => ({
-  getReportSnapshotDetail: reportingMocks.getReportSnapshotDetail
 }))
 
 vi.mock('../services/runtimeLogger', () => ({
   withIpcTelemetry: reportingMocks.withIpcTelemetry
 }))
 
-vi.mock('./session', () => ({
-  requireAuth: reportingMocks.requireAuth,
-  requireLedgerAccess: reportingMocks.requireLedgerAccess
+vi.mock('../commands/reportingCommands', () => ({
+  listReportsCommand: reportingMocks.listReportsCommand,
+  getReportDetailCommand: reportingMocks.getReportDetailCommand,
+  exportReportCommand: reportingMocks.exportReportCommand,
+  exportReportsBatchCommand: reportingMocks.exportReportsBatchCommand,
+  generateReportCommand: reportingMocks.generateReportCommand,
+  deleteReportCommand: reportingMocks.deleteReportCommand
 }))
 
 import { registerReportingHandlers } from './reporting'
 
 describe('reporting IPC handlers', () => {
-  const db = { tag: 'db' }
-  const user = { id: 9, username: 'tester' }
   const detail = {
     id: 11,
     ledger_id: 1,
@@ -116,21 +106,26 @@ describe('reporting IPC handlers', () => {
   beforeEach(() => {
     reportingMocks.handlers.clear()
     vi.clearAllMocks()
-    reportingMocks.getDatabase.mockReturnValue(db)
-    reportingMocks.requireAuth.mockReturnValue(user)
-    reportingMocks.requireLedgerAccess.mockImplementation(() => user)
-    reportingMocks.getReportSnapshotDetail.mockReturnValue(detail)
     reportingMocks.getPreferredReportExportDir.mockReturnValue('D:/exports')
     reportingMocks.buildReportExportDefaultPath.mockReturnValue('D:/exports/default-report.pdf')
     reportingMocks.getReportExportFilters.mockReturnValue([
       { name: 'PDF 文档', extensions: ['pdf'] }
     ])
-    reportingMocks.exportReportSnapshotToFile.mockResolvedValue('D:/exports/final-report.pdf')
-    reportingMocks.exportReportSnapshotsBatch.mockResolvedValue([
-      'D:/exports/one.pdf',
-      'D:/exports/two.pdf'
-    ])
-
+    reportingMocks.getReportDetailCommand.mockResolvedValue({
+      status: 'success',
+      data: detail,
+      error: null
+    })
+    reportingMocks.exportReportCommand.mockResolvedValue({
+      status: 'success',
+      data: { filePath: 'D:/exports/final-report.pdf' },
+      error: null
+    })
+    reportingMocks.exportReportsBatchCommand.mockResolvedValue({
+      status: 'success',
+      data: { directoryPath: 'D:/exports', filePaths: ['D:/exports/one.pdf', 'D:/exports/two.pdf'] },
+      error: null
+    })
     registerReportingHandlers()
   })
 
@@ -152,6 +147,12 @@ describe('reporting IPC handlers', () => {
     expect(reportingMocks.showSaveDialog.mock.calls[0]?.[1]).toMatchObject({
       defaultPath: 'D:/exports/default-report.pdf',
       filters: [{ name: 'PDF 文档', extensions: ['pdf'] }]
+    })
+    expect(reportingMocks.exportReportCommand).toHaveBeenCalledWith(expect.anything(), {
+      snapshotId: 11,
+      ledgerId: 1,
+      format: 'pdf',
+      filePath: 'D:/exports/chosen-report.pdf'
     })
     expect(result).toEqual({
       success: true,
@@ -177,7 +178,7 @@ describe('reporting IPC handlers', () => {
       success: false,
       cancelled: true
     })
-    expect(reportingMocks.exportReportSnapshotToFile).not.toHaveBeenCalled()
+    expect(reportingMocks.exportReportCommand).not.toHaveBeenCalled()
   })
 
   it('returns a validation error for empty batch export payloads', async () => {
@@ -237,6 +238,6 @@ describe('reporting IPC handlers', () => {
       success: false,
       cancelled: true
     })
-    expect(reportingMocks.exportReportSnapshotsBatch).not.toHaveBeenCalled()
+    expect(reportingMocks.exportReportsBatchCommand).not.toHaveBeenCalled()
   })
 })

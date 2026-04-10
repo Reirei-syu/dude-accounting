@@ -1,15 +1,24 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
-import { createSubject, listSubjects, updateSubject } from '../services/accountSetup'
-import { requireAuth, requireLedgerAccess, requirePermission } from './session'
+import {
+  createSubjectCommand,
+  deleteSubjectCommand,
+  listSubjectsCommand,
+  updateSubjectCommand
+} from '../commands/accountCommands'
+import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
+import { requireAuth, requireLedgerAccess } from './session'
 
 export function registerSubjectHandlers(): void {
   const db = getDatabase()
 
-  ipcMain.handle('subject:getAll', (event, ledgerId: number) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, ledgerId)
-    return listSubjects(db, ledgerId)
+  ipcMain.handle('subject:getAll', async (event, ledgerId: number) => {
+    const result = await listSubjectsCommand(createCommandContextFromEvent(event), { ledgerId })
+    if (isCommandSuccess(result)) {
+      return result.data
+    }
+
+    throw new Error(result.error?.message ?? '获取科目列表失败')
   })
 
   ipcMain.handle('subject:search', (event, ledgerId: number, keyword: string) => {
@@ -56,16 +65,10 @@ export function registerSubjectHandlers(): void {
         customAuxiliaryItemIds?: number[]
         isCashFlow: boolean
       }
-    ) => {
-      try {
-        requirePermission(event, 'ledger_settings')
-        requireLedgerAccess(event, db, data.ledgerId)
-        createSubject(db, data)
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+    ) =>
+      createSubjectCommand(createCommandContextFromEvent(event), data).then((result) =>
+        toLegacySuccess(result, () => ({}))
+      )
   )
 
   ipcMain.handle(
@@ -79,43 +82,16 @@ export function registerSubjectHandlers(): void {
         customAuxiliaryItemIds?: number[]
         isCashFlow?: boolean
       }
-    ) => {
-      try {
-        requirePermission(event, 'ledger_settings')
-        const subject = db.prepare('SELECT ledger_id FROM subjects WHERE id = ?').get(data.subjectId) as
-          | { ledger_id: number }
-          | undefined
-        if (!subject) {
-          return { success: false, error: '科目不存在' }
-        }
-        requireLedgerAccess(event, db, subject.ledger_id)
-        updateSubject(db, data)
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+    ) =>
+      updateSubjectCommand(createCommandContextFromEvent(event), data).then((result) =>
+        toLegacySuccess(result, () => ({}))
+      )
   )
 
-  ipcMain.handle('subject:delete', (event, id: number) => {
-    try {
-      requirePermission(event, 'ledger_settings')
-
-      const subject = db.prepare('SELECT ledger_id, is_system FROM subjects WHERE id = ?').get(id) as
-        | { ledger_id: number; is_system: number }
-        | undefined
-      if (!subject) {
-        return { success: false, error: '科目不存在' }
-      }
-      requireLedgerAccess(event, db, subject.ledger_id)
-      if (subject.is_system === 1) {
-        return { success: false, error: '系统科目不可删除' }
-      }
-
-      db.prepare('DELETE FROM subjects WHERE id = ?').run(id)
-      return { success: true }
-    } catch (error) {
-      return { success: false, error: (error as Error).message }
-    }
-  })
+  ipcMain.handle('subject:delete', async (event, id: number) =>
+    toLegacySuccess(
+      await deleteSubjectCommand(createCommandContextFromEvent(event), { subjectId: id }),
+      () => ({})
+    )
+  )
 }

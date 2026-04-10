@@ -1,40 +1,21 @@
 import { app, ipcMain } from 'electron'
-import { getDatabase } from '../database/init'
-import { appendOperationLog } from '../services/auditLog'
-import { assertPeriodWritable } from '../services/periodState'
+import type { VoucherBatchAction } from '../services/voucherBatchLifecycle'
+import type { VoucherListStatusFilter } from '../services/voucherCatalog'
 import {
-  applyVoucherBatchAction,
-  listVoucherBatchTargets,
-  type VoucherBatchAction
-} from '../services/voucherBatchLifecycle'
-import {
-  getNextVoucherNumber,
-  getVoucherLedgerId,
-  listVoucherEntries,
-  listVoucherSummaries,
-  type VoucherListStatusFilter
-} from '../services/voucherCatalog'
-import {
-  createVoucherWithEntries,
-  isVoucherNumberConflictError,
   resolveVoucherCashFlowEntries,
-  updateVoucherWithEntries,
   type VoucherEntryInput
 } from '../services/voucherLifecycle'
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import {
-  assertVoucherSwapAllowed,
-  type EmergencyReversalPayload,
-  normalizeEmergencyReversalPayload
-} from '../services/voucherControl'
-import { requireAuth, requireLedgerAccess, requirePermission } from './session'
-import {
-  applyVoucherSwapPlan,
-  buildVoucherSwapPlan,
-  listVoucherSwapEntriesByVoucherId,
-  listVoucherSwapVouchers,
-  type VoucherSwapVoucher
-} from '../services/voucherSwapLifecycle'
+  createVoucherCommand,
+  getNextVoucherNumberCommand,
+  getVoucherEntriesCommand,
+  listVouchersCommand,
+  swapVoucherPositionsCommand,
+  updateVoucherCommand,
+  voucherBatchActionCommand
+} from '../commands/voucherCommands'
+import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
 
 interface SaveVoucherInput {
   ledgerId: number
@@ -58,36 +39,6 @@ interface SwapVoucherPositionsInput {
 export { resolveVoucherCashFlowEntries }
 
 export function registerVoucherHandlers(): void {
-  const db = getDatabase()
-  const selectLedgerPeriodStmt = db.prepare('SELECT current_period FROM ledgers WHERE id = ?')
-
-  const ensureVoucherPeriod = (
-    ledgerId: number,
-    voucherDateOrPeriod: string,
-    mode: 'date' | 'period'
-  ): { ok: true; period: string } | { ok: false; error: string } => {
-    const period = mode === 'date' ? voucherDateOrPeriod.slice(0, 7) : voucherDateOrPeriod
-    const ledger = selectLedgerPeriodStmt.get(ledgerId) as { current_period: string } | undefined
-    if (!ledger) {
-      return { ok: false, error: '账套不存在' }
-    }
-    if (ledger.current_period !== period) {
-      return {
-        ok: false,
-        error: `凭证日期必须在当前会计期间（${ledger.current_period}）内`
-      }
-    }
-    try {
-      assertPeriodWritable(db, ledgerId, period)
-    } catch (error) {
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : '当前期间已结账'
-      }
-    }
-    return { ok: true, period }
-  }
-
   ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) =>
     withIpcTelemetry(
       {
@@ -95,131 +46,33 @@ export function registerVoucherHandlers(): void {
         baseDir: app.getPath('userData'),
         context: { ledgerId, period }
       },
-      () => {
-        requirePermission(event, 'voucher_entry')
-        requireLedgerAccess(event, db, ledgerId)
-        const periodCheck = ensureVoucherPeriod(ledgerId, period, 'period')
-        if (!periodCheck.ok) {
-          throw new Error(periodCheck.error)
+      async () => {
+        const result = await getNextVoucherNumberCommand(createCommandContextFromEvent(event), {
+          ledgerId,
+          period
+        })
+        if (isCommandSuccess(result)) {
+          return result.data.voucherNumber
         }
-        return getNextVoucherNumber(db, ledgerId, periodCheck.period)
+
+        throw new Error(result.error?.message ?? '获取下一凭证号失败')
       }
     )
   )
 
-  ipcMain.handle('voucher:save', (event, payload: SaveVoucherInput) => {
-    try {
-      const currentUser = requirePermission(event, 'voucher_entry')
-      if (!payload.ledgerId) {
-        return { success: false, error: '请选择账套' }
-      }
-      requireLedgerAccess(event, db, payload.ledgerId)
-      if (!payload.voucherDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.voucherDate)) {
-        return { success: false, error: '凭证日期格式不正确' }
-      }
+  ipcMain.handle('voucher:save', async (event, payload: SaveVoucherInput) =>
+    toLegacySuccess(
+      await createVoucherCommand(createCommandContextFromEvent(event), payload),
+      (data) => ({ ...data })
+    )
+  )
 
-      const periodCheck = ensureVoucherPeriod(payload.ledgerId, payload.voucherDate, 'date')
-      if (!periodCheck.ok) {
-        return { success: false, error: periodCheck.error }
-      }
-      const allowSameRow = db
-        .prepare('SELECT value FROM system_settings WHERE key = ?')
-        .get('allow_same_maker_auditor') as { value: string } | undefined
-      const allowSameMakerAuditor = allowSameRow?.value === '1'
-
-      const result = createVoucherWithEntries(db, {
-        ledgerId: payload.ledgerId,
-        period: periodCheck.period,
-        voucherDate: payload.voucherDate,
-        voucherWord: payload.voucherWord,
-        isCarryForward: payload.isCarryForward,
-        entries: payload.entries,
-        creatorId: currentUser.id,
-        allowSameMakerAuditor
-      })
-
-      return { success: true, ...result }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '保存凭证失败'
-      }
-    }
-  })
-
-  ipcMain.handle('voucher:update', (event, payload: UpdateVoucherInput) => {
-    try {
-      requirePermission(event, 'voucher_entry')
-
-      if (!payload.voucherId) {
-        return { success: false, error: '请选择凭证' }
-      }
-      if (!payload.ledgerId) {
-        return { success: false, error: '请选择账套' }
-      }
-      requireLedgerAccess(event, db, payload.ledgerId)
-      if (!payload.voucherDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.voucherDate)) {
-        return { success: false, error: '凭证日期格式不正确' }
-      }
-
-      const voucher = db
-        .prepare(
-          `SELECT id, ledger_id, voucher_number, voucher_word, status
-           FROM vouchers
-           WHERE id = ?`
-        )
-        .get(payload.voucherId) as
-        | {
-            id: number
-            ledger_id: number
-            voucher_number: number
-            voucher_word: string
-            status: number
-          }
-        | undefined
-
-      if (!voucher) {
-        return { success: false, error: '凭证不存在' }
-      }
-      if (voucher.ledger_id !== payload.ledgerId) {
-        return { success: false, error: '凭证不属于当前账套' }
-      }
-      if (voucher.status !== 0) {
-        return { success: false, error: '仅未审核凭证可修改' }
-      }
-
-      const periodCheck = ensureVoucherPeriod(payload.ledgerId, payload.voucherDate, 'date')
-      if (!periodCheck.ok) {
-        return { success: false, error: periodCheck.error }
-      }
-      try {
-        updateVoucherWithEntries(db, {
-          voucherId: payload.voucherId,
-          ledgerId: payload.ledgerId,
-          period: periodCheck.period,
-          voucherDate: payload.voucherDate,
-          entries: payload.entries
-        })
-      } catch (error) {
-        if (isVoucherNumberConflictError(error)) {
-          return { success: false, error: '凭证编号冲突，请调整日期后重试' }
-        }
-        throw error
-      }
-
-      return {
-        success: true,
-        voucherId: voucher.id,
-        voucherNumber: voucher.voucher_number,
-        status: voucher.status
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '修改凭证失败'
-      }
-    }
-  })
+  ipcMain.handle('voucher:update', async (event, payload: UpdateVoucherInput) =>
+    toLegacySuccess(
+      await updateVoucherCommand(createCommandContextFromEvent(event), payload),
+      (data) => ({ ...data })
+    )
+  )
 
   ipcMain.handle(
     'voucher:list',
@@ -249,10 +102,13 @@ export function registerVoucherHandlers(): void {
             status: query.status ?? null
           }
         },
-        () => {
-          requireAuth(event)
-          requireLedgerAccess(event, db, query.ledgerId)
-          return listVoucherSummaries(db, query)
+        async () => {
+          const result = await listVouchersCommand(createCommandContextFromEvent(event), query)
+          if (isCommandSuccess(result)) {
+            return result.data
+          }
+
+          throw new Error(result.error?.message ?? '获取凭证列表失败')
         }
       )
   )
@@ -264,14 +120,15 @@ export function registerVoucherHandlers(): void {
         baseDir: app.getPath('userData'),
         context: { voucherId }
       },
-      () => {
-        requireAuth(event)
-        const ledgerId = getVoucherLedgerId(db, voucherId)
-        if (ledgerId === null) {
-          throw new Error('凭证不存在')
+      async () => {
+        const result = await getVoucherEntriesCommand(createCommandContextFromEvent(event), {
+          voucherId
+        })
+        if (isCommandSuccess(result)) {
+          return result.data
         }
-        requireLedgerAccess(event, db, ledgerId)
-        return listVoucherEntries(db, voucherId)
+
+        throw new Error(result.error?.message ?? '获取凭证明细失败')
       }
     )
   )
@@ -285,97 +142,11 @@ export function registerVoucherHandlers(): void {
           requestedCount: Array.isArray(payload.voucherIds) ? payload.voucherIds.length : 0
         }
       },
-      () => {
-        try {
-          const currentUser = requirePermission(event, 'voucher_entry')
-
-          if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length !== 2) {
-            return {
-              success: false,
-              error:
-                '\u4ec5\u9009\u62e9 2 \u5f20\u51ed\u8bc1\u65f6\u624d\u53ef\u4ea4\u6362\u4f4d\u7f6e'
-            }
-          }
-
-          const voucherIds = Array.from(new Set(payload.voucherIds))
-          if (voucherIds.length !== 2) {
-            return {
-              success: false,
-              error: '\u8bf7\u9009\u62e9\u4e24\u5f20\u4e0d\u540c\u7684\u51ed\u8bc1'
-            }
-          }
-
-          const vouchers = listVoucherSwapVouchers(db, voucherIds)
-          if (vouchers.length !== 2) {
-            return {
-              success: false,
-              error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
-            }
-          }
-          for (const voucher of vouchers) {
-            requireLedgerAccess(event, db, voucher.ledgerId)
-          }
-
-          const vouchersById = new Map<number, VoucherSwapVoucher>(
-            vouchers.map((voucher) => [voucher.id, voucher])
-          )
-          const firstVoucher = vouchersById.get(voucherIds[0])
-          const secondVoucher = vouchersById.get(voucherIds[1])
-
-          if (!firstVoucher || !secondVoucher) {
-            return {
-              success: false,
-              error: '\u5b58\u5728\u65e0\u6548\u51ed\u8bc1\uff0c\u4ea4\u6362\u5931\u8d25'
-            }
-          }
-
-          assertVoucherSwapAllowed([firstVoucher, secondVoucher])
-
-          if (
-            firstVoucher.ledgerId !== secondVoucher.ledgerId ||
-            firstVoucher.period !== secondVoucher.period
-          ) {
-            return {
-              success: false,
-              error:
-                '\u4ec5\u652f\u6301\u540c\u4e00\u8d26\u5957\u3001\u540c\u4e00\u671f\u95f4\u7684\u4e24\u5f20\u51ed\u8bc1\u4ea4\u6362\u4f4d\u7f6e'
-            }
-          }
-
-          const entryMap = listVoucherSwapEntriesByVoucherId(db, voucherIds)
-          const plan = buildVoucherSwapPlan(
-            firstVoucher,
-            secondVoucher,
-            entryMap.get(firstVoucher.id) ?? [],
-            entryMap.get(secondVoucher.id) ?? []
-          )
-
-          applyVoucherSwapPlan(db, plan)
-
-          appendOperationLog(db, {
-            ledgerId: firstVoucher.ledgerId,
-            userId: currentUser.id,
-            username: currentUser.username,
-            module: 'voucher',
-            action: 'swap_positions',
-            targetType: 'voucher_pair',
-            targetId: voucherIds.join(','),
-            details: {
-              voucherIds
-            }
-          })
-
-          return { success: true, voucherIds }
-        } catch (error) {
-          return {
-            success: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : '\u4ea4\u6362\u51ed\u8bc1\u4f4d\u7f6e\u5931\u8d25'
-          }
-        }
-      }
+      async () =>
+        toLegacySuccess(
+          await swapVoucherPositionsCommand(createCommandContextFromEvent(event), payload),
+          (data) => ({ voucherIds: data.voucherIds })
+        )
     )
   )
 
@@ -399,80 +170,15 @@ export function registerVoucherHandlers(): void {
             requestedCount: Array.isArray(payload.voucherIds) ? payload.voucherIds.length : 0
           }
         },
-        () => {
-          try {
-            if (!Array.isArray(payload.voucherIds) || payload.voucherIds.length === 0) {
-              return { success: false, error: '请选择凭证' }
-            }
-
-            const action = payload.action
-            const user =
-              action === 'audit' || action === 'unaudit'
-                ? requirePermission(event, 'audit')
-                : action === 'bookkeep'
-                  ? requirePermission(event, 'bookkeeping')
-                  : action === 'unbookkeep'
-                    ? requirePermission(event, 'unbookkeep')
-                    : requirePermission(event, 'voucher_entry')
-            const emergencyReversal: EmergencyReversalPayload | null =
-              action === 'unbookkeep'
-                ? normalizeEmergencyReversalPayload({
-                    reason: payload.reason,
-                    approvalTag: payload.approvalTag
-                  })
-                : null
-
-            const vouchers = listVoucherBatchTargets(db, payload.voucherIds)
-
-            if (vouchers.length !== payload.voucherIds.length) {
-              return { success: false, error: '存在无效凭证，操作中止' }
-            }
-            for (const voucher of vouchers) {
-              requireLedgerAccess(event, db, voucher.ledger_id)
-            }
-
-            const { applicable, skipped } = applyVoucherBatchAction(
-              db,
-              action,
-              vouchers,
-              user.id,
-              emergencyReversal
-            )
-
-            appendOperationLog(db, {
-              ledgerId:
-                applicable.length > 0
-                  ? applicable[0].ledger_id
-                  : vouchers.length > 0
-                    ? vouchers[0].ledger_id
-                    : null,
-              userId: user.id,
-              username: user.username,
-              module: 'voucher',
-              action,
-              targetType: 'voucher_batch',
-              targetId: payload.voucherIds.join(','),
-              reason: emergencyReversal?.reason ?? null,
-              approvalTag: emergencyReversal?.approvalTag ?? null,
-              details: {
-                processedCount: applicable.length,
-                skippedCount: skipped.length,
-                requestedCount: vouchers.length
-              }
+        async () =>
+          toLegacySuccess(
+            await voucherBatchActionCommand(createCommandContextFromEvent(event), payload),
+            (data) => ({
+              processedCount: data.processedCount,
+              skippedCount: data.skippedCount,
+              requestedCount: data.requestedCount
             })
-            return {
-              success: true,
-              processedCount: applicable.length,
-              skippedCount: skipped.length,
-              requestedCount: vouchers.length
-            }
-          } catch (error) {
-            return {
-              success: false,
-              error: error instanceof Error ? error.message : '凭证批量操作失败'
-            }
-          }
-        }
+          )
       )
   )
 }

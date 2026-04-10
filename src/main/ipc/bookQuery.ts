@@ -1,29 +1,29 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
-import { appendOperationLog } from '../services/auditLog'
+import {
+  exportBookQueryCommand,
+  getAuxiliaryBalancesCommand,
+  getAuxiliaryDetailCommand,
+  getDetailLedgerCommand,
+  getJournalCommand,
+  listSubjectBalancesCommand
+} from '../commands/reportingCommands'
 import {
   buildBookQueryExportDefaultPath,
-  exportBookQueryToFile,
   getBookQueryExportFilters,
   getPreferredBookQueryExportDir,
-  normalizeBookQueryExportPayload,
   rememberBookQueryExportDir,
   type BookQueryExportPayload
 } from '../services/bookQueryExport'
-import {
-  getAuxiliaryBalances,
-  getAuxiliaryDetail,
-  getDetailLedger,
-  getJournal,
-  listSubjectBalances,
-  type AuxiliaryBalanceQuery,
-  type AuxiliaryDetailQuery,
-  type DetailLedgerQuery,
-  type JournalQuery,
-  type SubjectBalanceQuery
+import type {
+  AuxiliaryBalanceQuery,
+  AuxiliaryDetailQuery,
+  DetailLedgerQuery,
+  JournalQuery,
+  SubjectBalanceQuery
 } from '../services/bookQuery'
 import { withIpcTelemetry } from '../services/runtimeLogger'
-import { requireAuth, requireLedgerAccess } from './session'
+import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
 
 export function registerBookQueryHandlers(): void {
   const db = getDatabase()
@@ -40,10 +40,13 @@ export function registerBookQueryHandlers(): void {
           includeZeroBalance: query.includeZeroBalance === true
         }
       },
-      () => {
-        requireAuth(event)
-        requireLedgerAccess(event, db, query.ledgerId)
-        return listSubjectBalances(db, query)
+      async () => {
+        const result = await listSubjectBalancesCommand(createCommandContextFromEvent(event), query)
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取科目余额表失败')
       }
     )
   )
@@ -59,10 +62,13 @@ export function registerBookQueryHandlers(): void {
           includeUnpostedVouchers: query.includeUnpostedVouchers === true
         }
       },
-      () => {
-        requireAuth(event)
-        requireLedgerAccess(event, db, query.ledgerId)
-        return getDetailLedger(db, query)
+      async () => {
+        const result = await getDetailLedgerCommand(createCommandContextFromEvent(event), query)
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取明细账失败')
       }
     )
   )
@@ -79,10 +85,13 @@ export function registerBookQueryHandlers(): void {
           includeUnpostedVouchers: query.includeUnpostedVouchers === true
         }
       },
-      () => {
-        requireAuth(event)
-        requireLedgerAccess(event, db, query.ledgerId)
-        return getJournal(db, query)
+      async () => {
+        const result = await getJournalCommand(createCommandContextFromEvent(event), query)
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取序时账失败')
       }
     )
   )
@@ -99,10 +108,16 @@ export function registerBookQueryHandlers(): void {
           includeUnpostedVouchers: query.includeUnpostedVouchers === true
         }
       },
-      () => {
-        requireAuth(event)
-        requireLedgerAccess(event, db, query.ledgerId)
-        return getAuxiliaryBalances(db, query)
+      async () => {
+        const result = await getAuxiliaryBalancesCommand(
+          createCommandContextFromEvent(event),
+          query
+        )
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取辅助余额表失败')
       }
     )
   )
@@ -119,10 +134,16 @@ export function registerBookQueryHandlers(): void {
           includeUnpostedVouchers: query.includeUnpostedVouchers === true
         }
       },
-      () => {
-        requireAuth(event)
-        requireLedgerAccess(event, db, query.ledgerId)
-        return getAuxiliaryDetail(db, query)
+      async () => {
+        const result = await getAuxiliaryDetailCommand(
+          createCommandContextFromEvent(event),
+          query
+        )
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取辅助明细账失败')
       }
     )
   )
@@ -143,60 +164,47 @@ export function registerBookQueryHandlers(): void {
       },
       async () => {
         try {
-          const user = requireAuth(event)
-
           if (!payload.ledgerId) {
             return { success: false, error: '请选择账套' }
           }
-          requireLedgerAccess(event, db, payload.ledgerId)
-
           if (typeof payload.title !== 'string' || !payload.title.trim()) {
             return { success: false, error: '导出标题不能为空' }
           }
-
           if (!Array.isArray(payload.columns) || payload.columns.length === 0) {
             return { success: false, error: '导出列不能为空' }
           }
 
-          const exportPayload = normalizeBookQueryExportPayload(payload)
           const preferredDir = getPreferredBookQueryExportDir(db, app.getPath('documents'))
-          const defaultPath = buildBookQueryExportDefaultPath(preferredDir, exportPayload)
+          const defaultPath = buildBookQueryExportDefaultPath(preferredDir, payload)
           const browserWindow = BrowserWindow.fromWebContents(event.sender)
-          const saveResult = exportPayload.filePath
-            ? { canceled: false, filePath: exportPayload.filePath }
+          const saveResult = payload.filePath
+            ? { canceled: false, filePath: payload.filePath }
             : browserWindow
               ? await dialog.showSaveDialog(browserWindow, {
                   defaultPath,
-                  filters: getBookQueryExportFilters(exportPayload.format)
+                  filters: getBookQueryExportFilters(payload.format)
                 })
               : await dialog.showSaveDialog({
                   defaultPath,
-                  filters: getBookQueryExportFilters(exportPayload.format)
+                  filters: getBookQueryExportFilters(payload.format)
                 })
 
           if (saveResult.canceled || !saveResult.filePath) {
             return { success: false, cancelled: true }
           }
 
-          const exportPath = await exportBookQueryToFile(exportPayload, saveResult.filePath)
-          rememberBookQueryExportDir(db, exportPath)
-
-          appendOperationLog(db, {
-            ledgerId: exportPayload.ledgerId,
-            userId: user.id,
-            username: user.username,
-            module: 'book_query',
-            action: 'export',
-            targetType: exportPayload.bookType,
-            targetId: exportPayload.title,
-            details: {
-              title: exportPayload.title,
-              subtitle: exportPayload.subtitle,
-              format: exportPayload.format,
-              rowCount: exportPayload.rows.length,
-              exportPath
-            }
+          const result = await exportBookQueryCommand(createCommandContextFromEvent(event), {
+            ...payload,
+            filePath: saveResult.filePath
           })
+          if (!isCommandSuccess(result)) {
+            return {
+              success: false,
+              error: result.error?.message ?? '导出账簿失败'
+            }
+          }
+          const exportPath = result.data.filePath
+          rememberBookQueryExportDir(db, exportPath)
 
           return {
             success: true,

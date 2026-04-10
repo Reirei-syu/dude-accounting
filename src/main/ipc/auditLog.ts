@@ -1,61 +1,41 @@
-import fs from 'node:fs'
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
-import {
-  appendOperationLog,
-  exportOperationLogsAsCsv,
-  listOperationLogs,
-  type OperationLogFilters
-} from '../services/auditLog'
-import { requireAdmin } from './session'
+import { exportAuditLogsCommand, listAuditLogsCommand } from '../commands/auditLogCommands'
+import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
+import type { OperationLogFilters } from '../services/auditLog'
 
 export function registerAuditLogHandlers(): void {
-  ipcMain.handle('auditLog:list', (event, filters?: OperationLogFilters) => {
-    requireAdmin(event)
-    return listOperationLogs(getDatabase(), filters ?? {})
+  getDatabase()
+
+  ipcMain.handle('auditLog:list', async (event, filters?: OperationLogFilters) => {
+    const result = await listAuditLogsCommand(createCommandContextFromEvent(event), filters ?? {})
+    if (isCommandSuccess(result)) {
+      return result.data
+    }
+
+    throw new Error(result.error?.message ?? '获取操作日志失败')
   })
 
   ipcMain.handle(
     'auditLog:export',
-    (
+    async (
       event,
       payload?: {
         filters?: OperationLogFilters
         filePath?: string
       }
     ) => {
-      try {
-        const user = requireAdmin(event)
-        const db = getDatabase()
-        const rows = listOperationLogs(db, payload?.filters ?? {})
-        const csv = exportOperationLogsAsCsv(rows)
-
-        if (payload?.filePath) {
-          fs.writeFileSync(payload.filePath, csv, 'utf8')
-        }
-
-        appendOperationLog(db, {
-          userId: user.id,
-          username: user.username,
-          module: 'audit_log',
-          action: 'export',
-          details: {
-            rowCount: rows.length,
-            filePath: payload?.filePath ?? null
-          }
-        })
-
+      const result = await exportAuditLogsCommand(createCommandContextFromEvent(event), payload)
+      if (isCommandSuccess(result)) {
         return {
           success: true,
-          rowCount: rows.length,
-          filePath: payload?.filePath,
-          csv: payload?.filePath ? undefined : csv
+          ...result.data
         }
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : '导出操作日志失败'
-        }
+      }
+
+      return {
+        success: false,
+        error: result.error?.message ?? '导出操作日志失败'
       }
     }
   )

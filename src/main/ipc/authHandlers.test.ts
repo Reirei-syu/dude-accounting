@@ -2,95 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authMocks = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
-
-  const users = [
-    {
-      id: 1,
-      username: 'admin',
-      real_name: '管理员',
-      password_hash: '',
-      permissions: '{}',
-      is_admin: 1
-    },
-    {
-      id: 2,
-      username: 'user-a',
-      real_name: '普通用户',
-      password_hash: 'old-hash',
-      permissions: '{}',
-      is_admin: 0
-    }
-  ]
-
-  const db = {
-    prepare: vi.fn((sql: string) => {
-      if (sql === 'SELECT id, is_admin FROM users WHERE id = ?') {
-        return {
-          get: (id: number) =>
-            users.find((user) => user.id === id)
-              ? {
-                  id,
-                  is_admin: users.find((user) => user.id === id)?.is_admin ?? 0
-                }
-              : undefined
-        }
-      }
-
-      if (sql === 'UPDATE users SET password_hash = ? WHERE id = ?') {
-        return {
-          run: (passwordHash: string, id: number) => {
-            const target = users.find((user) => user.id === id)
-            if (target) {
-              target.password_hash = passwordHash
-            }
-          }
-        }
-      }
-
-      if (sql === 'UPDATE users SET real_name = ? WHERE id = ?') {
-        return {
-          run: (realName: string, id: number) => {
-            const target = users.find((user) => user.id === id)
-            if (target) {
-              target.real_name = realName
-            }
-          }
-        }
-      }
-
-      if (sql === 'UPDATE users SET permissions = ? WHERE id = ?') {
-        return {
-          run: (permissions: string, id: number) => {
-            const target = users.find((user) => user.id === id)
-            if (target) {
-              target.permissions = permissions
-            }
-          }
-        }
-      }
-
-      throw new Error(`Unhandled SQL: ${sql}`)
-    }),
-    transaction: vi.fn((callback: () => unknown) => () => callback())
-  }
-
   return {
     handlers,
     ipcHandle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(channel, handler)
     }),
-    getDatabase: vi.fn(() => db),
-    appendOperationLog: vi.fn(),
-    hashPassword: vi.fn((password: string) => (password === '' ? '' : `hashed:${password}`)),
-    verifyPassword: vi.fn(),
-    listUserLedgerIds: vi.fn(() => []),
-    replaceUserLedgerIds: vi.fn(() => []),
-    setLastLoginUserId: vi.fn(),
-    clearSessionByEvent: vi.fn(),
-    getSessionByEvent: vi.fn(),
+    getDatabase: vi.fn(() => ({ tag: 'db' })),
     requireAdmin: vi.fn(),
+    getSessionByEvent: vi.fn(),
     setSessionByEvent: vi.fn(),
-    users
+    clearSessionByEvent: vi.fn(),
+    loginCommand: vi.fn(),
+    logoutCommand: vi.fn(),
+    listUsersCommand: vi.fn(),
+    createUserCommand: vi.fn(),
+    updateUserCommand: vi.fn(),
+    deleteUserCommand: vi.fn()
   }
 })
 
@@ -104,29 +31,20 @@ vi.mock('../database/init', () => ({
   getDatabase: authMocks.getDatabase
 }))
 
-vi.mock('../services/auditLog', () => ({
-  appendOperationLog: authMocks.appendOperationLog
-}))
-
-vi.mock('../security/password', () => ({
-  hashPassword: authMocks.hashPassword,
-  verifyPassword: authMocks.verifyPassword
-}))
-
-vi.mock('../services/userLedgerAccess', () => ({
-  listUserLedgerIds: authMocks.listUserLedgerIds,
-  replaceUserLedgerIds: authMocks.replaceUserLedgerIds
-}))
-
-vi.mock('../services/wallpaperPreference', () => ({
-  setLastLoginUserId: authMocks.setLastLoginUserId
+vi.mock('../commands/authCommands', () => ({
+  loginCommand: authMocks.loginCommand,
+  logoutCommand: authMocks.logoutCommand,
+  listUsersCommand: authMocks.listUsersCommand,
+  createUserCommand: authMocks.createUserCommand,
+  updateUserCommand: authMocks.updateUserCommand,
+  deleteUserCommand: authMocks.deleteUserCommand
 }))
 
 vi.mock('./session', () => ({
-  clearSessionByEvent: authMocks.clearSessionByEvent,
-  getSessionByEvent: authMocks.getSessionByEvent,
   requireAdmin: authMocks.requireAdmin,
-  setSessionByEvent: authMocks.setSessionByEvent
+  getSessionByEvent: authMocks.getSessionByEvent,
+  setSessionByEvent: authMocks.setSessionByEvent,
+  clearSessionByEvent: authMocks.clearSessionByEvent
 }))
 
 import { registerAuthHandlers } from './auth'
@@ -135,18 +53,29 @@ describe('auth IPC handlers', () => {
   beforeEach(() => {
     authMocks.handlers.clear()
     vi.clearAllMocks()
-    authMocks.users[0].password_hash = ''
-    authMocks.users[1].password_hash = 'old-hash'
     authMocks.requireAdmin.mockReturnValue({
       id: 1,
       username: 'admin',
       isAdmin: true,
-      permissions: {}
+      permissions: {},
+      source: 'ipc'
+    })
+    authMocks.getSessionByEvent.mockReturnValue({
+      id: 1,
+      username: 'admin',
+      isAdmin: true,
+      permissions: {},
+      source: 'ipc'
     })
     registerAuthHandlers()
   })
 
-  it('allows admin to update another user password', async () => {
+  it('delegates update user to command layer after admin check', async () => {
+    authMocks.updateUserCommand.mockResolvedValue({
+      status: 'success',
+      data: { userId: 2 },
+      error: null
+    })
     const handler = authMocks.handlers.get('auth:updateUser')
     const event = { sender: { id: 1 } }
 
@@ -156,40 +85,72 @@ describe('auth IPC handlers', () => {
     })
 
     expect(authMocks.requireAdmin).toHaveBeenCalledWith(event)
-    expect(authMocks.hashPassword).toHaveBeenCalledWith('new-pass')
-    expect(authMocks.users[1].password_hash).toBe('hashed:new-pass')
-    expect(result).toEqual({ success: true })
-    expect(authMocks.appendOperationLog).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: 'update_user',
-        targetId: 2,
-        details: expect.objectContaining({
-          passwordUpdated: true
-        })
-      })
-    )
-  })
-
-  it('allows admin to update own password to empty', async () => {
-    const handler = authMocks.handlers.get('auth:updateUser')
-
-    const result = await handler?.({ sender: { id: 1 } }, { id: 1, password: '' })
-
-    expect(authMocks.hashPassword).toHaveBeenCalledWith('')
-    expect(authMocks.users[0].password_hash).toBe('')
+    expect(authMocks.updateUserCommand).toHaveBeenCalledWith(expect.anything(), {
+      id: 2,
+      password: 'new-pass'
+    })
     expect(result).toEqual({ success: true })
   })
 
-  it('rejects password update when caller is not admin', async () => {
-    authMocks.requireAdmin.mockImplementation(() => {
-      throw new Error('无权限执行该操作')
+  it('passes through command layer failure for update user', async () => {
+    authMocks.updateUserCommand.mockResolvedValue({
+      status: 'error',
+      data: null,
+      error: { code: 'FORBIDDEN', message: '无权限执行该操作', details: null }
     })
     const handler = authMocks.handlers.get('auth:updateUser')
 
     const result = await handler?.({ sender: { id: 2 } }, { id: 2, password: 'next-pass' })
 
-    expect(authMocks.hashPassword).not.toHaveBeenCalled()
     expect(result).toEqual({ success: false, error: '无权限执行该操作' })
+  })
+
+  it('maps successful login result back into IPC contract and binds session', async () => {
+    authMocks.loginCommand.mockResolvedValue({
+      status: 'success',
+      data: {
+        actor: {
+          id: 1,
+          username: 'admin',
+          permissions: {},
+          isAdmin: true,
+          source: 'cli'
+        },
+        user: {
+          id: 1,
+          username: 'admin',
+          realName: '管理员',
+          permissions: {},
+          isAdmin: true,
+          ledgerIds: []
+        }
+      },
+      error: null
+    })
+    const handler = authMocks.handlers.get('auth:login')
+    const event = { sender: { id: 8 } }
+
+    const result = await handler?.(event, 'admin', '')
+
+    expect(authMocks.loginCommand).toHaveBeenCalled()
+    expect(authMocks.setSessionByEvent).toHaveBeenCalledWith(
+      event,
+      expect.objectContaining({
+        id: 1,
+        username: 'admin',
+        source: 'ipc'
+      })
+    )
+    expect(result).toEqual({
+      success: true,
+      user: {
+        id: 1,
+        username: 'admin',
+        realName: '管理员',
+        permissions: {},
+        isAdmin: true,
+        ledgerIds: []
+      }
+    })
   })
 })

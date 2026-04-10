@@ -3,28 +3,20 @@ import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { closeDatabase, getDatabase, getDatabasePath, initializeDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
+import { getBackupPackageById } from '../services/backupCatalog'
 import {
-  createBackupPackageRecord,
-  deleteBackupPackageRecord,
-  getBackupPackageById,
-  listBackupPackageIdsByLedger,
-  listBackupPackages,
-  updateBackupPackageValidation
-} from '../services/backupCatalog'
+  createBackupCommand,
+  deleteBackupCommand,
+  importBackupCommand,
+  listBackupsCommand,
+  validateBackupCommand
+} from '../commands/backupCommands'
 import {
-  createLedgerBackupArtifact,
-  importLedgerBackupArtifact,
   resolveBackupArtifactPaths,
   restoreBackupArtifact,
   type BackupManifest,
-  validateBackupArtifact,
-  validateLedgerBackupArtifact
+  validateBackupArtifact
 } from '../services/backupRecovery'
-import { formatLocalDateTime } from '../services/localTime'
-import {
-  deleteBackupPhysicalPackage,
-  getBackupPhysicalPackageStatus
-} from '../services/packageDeletion'
 import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
 import {
   clearPendingRestoreLog,
@@ -32,14 +24,10 @@ import {
   writePendingRestoreLog
 } from '../services/pendingRestoreLog'
 import { withIpcTelemetry } from '../services/runtimeLogger'
-import { assertHistoricalVersionDeletable } from '../services/versionRetention'
-import { requireAdmin, requireLedgerAccess, requirePermission } from './session'
+import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
+import { requireAdmin, requireLedgerAccess } from './session'
 
 const BACKUP_LAST_DIR_KEY = 'backup_last_dir'
-
-function getElectronicVoucherRootDir(): string {
-  return path.join(app.getPath('userData'), 'electronic-vouchers')
-}
 
 function getDefaultBackupRootDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '系统备份')
@@ -102,7 +90,6 @@ export function registerBackupHandlers(): void {
         },
         async () => {
           try {
-            const user = requirePermission(event, 'ledger_settings')
             const db = getDatabase()
             requireLedgerAccess(event, db, payload.ledgerId)
             const ledger = db
@@ -116,7 +103,6 @@ export function registerBackupHandlers(): void {
             const preferredDir =
               getPathPreference(db, BACKUP_LAST_DIR_KEY) ?? getDefaultBackupRootDir()
             const backupPeriod = payload.period?.trim() || null
-            const fiscalYear = backupPeriod ? backupPeriod.slice(0, 4) : null
             const picked = payload.directoryPath
               ? { cancelled: false, directoryPath: payload.directoryPath }
               : await pickDirectory(event.sender, {
@@ -130,65 +116,21 @@ export function registerBackupHandlers(): void {
             }
 
             rememberPathPreference(db, BACKUP_LAST_DIR_KEY, picked.directoryPath)
-            db.pragma('wal_checkpoint(TRUNCATE)')
-            const createdAtDate = new Date()
-
-            const artifact = createLedgerBackupArtifact({
-              sourcePath: getDatabasePath(),
-              backupDir: picked.directoryPath,
+            const result = await createBackupCommand(createCommandContextFromEvent(event), {
               ledgerId: payload.ledgerId,
-              ledgerName: ledger.name,
               period: backupPeriod,
-              fiscalYear,
-              now: createdAtDate
+              directoryPath: picked.directoryPath
             })
-            const createdAt = formatLocalDateTime(createdAtDate)
-
-            const backupId = createBackupPackageRecord(db, {
-              ledgerId: payload.ledgerId,
-              backupPeriod,
-              fiscalYear,
-              packageType: 'ledger_backup',
-              packageSchemaVersion: '2.0',
-              backupPath: artifact.backupPath,
-              manifestPath: artifact.manifestPath,
-              checksum: artifact.checksum,
-              fileSize: artifact.fileSize,
-              createdBy: user.id,
-              createdAt
-            })
-
-            appendOperationLog(db, {
-              ledgerId: payload.ledgerId,
-              userId: user.id,
-              username: user.username,
-              module: 'backup',
-              action: 'create',
-              targetType: 'backup_package',
-              targetId: backupId,
-              details: {
-                period: backupPeriod,
-                fiscalYear,
-                selectedDirectory: picked.directoryPath,
-                packageDir: artifact.packageDir,
-                backupPath: artifact.backupPath,
-                manifestPath: artifact.manifestPath,
-                fileSize: artifact.fileSize,
-                createdAt,
-                backupMode: 'ledger_backup_package',
-                packageType: 'ledger_backup'
+            if (!isCommandSuccess(result)) {
+              return {
+                success: false,
+                error: result.error?.message ?? '创建备份失败'
               }
-            })
+            }
 
             return {
               success: true,
-              backupId,
-              directoryPath: picked.directoryPath,
-              period: backupPeriod,
-              backupPath: artifact.backupPath,
-              manifestPath: artifact.manifestPath,
-              checksum: artifact.checksum,
-              fileSize: artifact.fileSize
+              ...result.data
             }
           } catch (error) {
             return {
@@ -209,23 +151,21 @@ export function registerBackupHandlers(): void {
           ledgerId: typeof ledgerId === 'number' ? ledgerId : null
         }
       },
-      () => {
-        const user = requirePermission(event, 'ledger_settings')
+      async () => {
         const db = getDatabase()
 
         if (typeof ledgerId === 'number') {
           requireLedgerAccess(event, db, ledgerId)
-          return listBackupPackages(db, {
-            ledgerId,
-            userId: user.id,
-            isAdmin: user.isAdmin
-          })
         }
 
-        return listBackupPackages(db, {
-          userId: user.id,
-          isAdmin: user.isAdmin
+        const result = await listBackupsCommand(createCommandContextFromEvent(event), {
+          ledgerId
         })
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取备份列表失败')
       }
     )
   )
@@ -237,47 +177,22 @@ export function registerBackupHandlers(): void {
         baseDir: app.getPath('userData'),
         context: { backupId }
       },
-      () => {
+      async () => {
         try {
-          const user = requirePermission(event, 'ledger_settings')
-          const db = getDatabase()
-          const row = getBackupPackageById(db, backupId)
-
-          if (!row) {
-            return { success: false, error: '备份记录不存在' }
-          }
-          requireLedgerAccess(event, db, row.ledger_id)
-
-          const validation =
-            row.package_type === 'ledger_backup'
-              ? validateLedgerBackupArtifact(row.backup_path, row.manifest_path ?? '')
-              : validateBackupArtifact(row.backup_path, row.checksum, row.manifest_path)
-          updateBackupPackageValidation(db, backupId, {
-            valid: validation.valid,
-            validatedAt: validation.valid ? formatLocalDateTime() : null
+          const result = await validateBackupCommand(createCommandContextFromEvent(event), {
+            backupId
           })
-
-          appendOperationLog(db, {
-            ledgerId: row.ledger_id,
-            userId: user.id,
-            username: user.username,
-            module: 'backup',
-            action: 'validate',
-            targetType: 'backup_package',
-            targetId: row.id,
-            details: {
-              ...validation,
-              manifestPath: row.manifest_path,
-              packageType: row.package_type
-            }
-          })
-
-          return {
-            success: validation.valid,
-            valid: validation.valid,
-            actualChecksum: validation.actualChecksum,
-            error: validation.error
-          }
+          return isCommandSuccess(result)
+            ? {
+                success: result.data.valid,
+                valid: result.data.valid,
+                actualChecksum: result.data.actualChecksum,
+                error: result.data.error
+              }
+            : {
+                success: false,
+                error: result.error?.message ?? '校验备份失败'
+              }
         } catch (error) {
           return {
             success: false,
@@ -308,18 +223,24 @@ export function registerBackupHandlers(): void {
         },
         async () => {
           try {
-            const user = requirePermission(event, 'ledger_settings')
             const db = getDatabase()
             const preferredDir =
               getPathPreference(db, BACKUP_LAST_DIR_KEY) ?? getDefaultBackupRootDir()
 
-            let backupPath = ''
-            let manifestPath = ''
-            let sourceBackupId: number | null = null
-            let sourceLedgerId: number | null = null
-
             if (typeof payload?.backupId === 'number') {
-              const row = getBackupPackageById(db, payload.backupId)
+              const row = getDatabase()
+                .prepare(
+                  'SELECT id, ledger_id, package_type, backup_path, manifest_path FROM backup_packages WHERE id = ?'
+                )
+                .get(payload.backupId) as
+                | {
+                    id: number
+                    ledger_id: number
+                    package_type: string
+                    backup_path: string
+                    manifest_path: string | null
+                  }
+                | undefined
 
               if (!row) {
                 return { success: false, error: '备份记录不存在' }
@@ -329,11 +250,6 @@ export function registerBackupHandlers(): void {
               if (row.package_type !== 'ledger_backup') {
                 return { success: false, error: '历史整库快照不支持导入为新账套' }
               }
-
-              backupPath = row.backup_path
-              manifestPath = row.manifest_path ?? ''
-              sourceBackupId = row.id
-              sourceLedgerId = row.ledger_id
             } else {
               const picked = payload?.packagePath
                 ? { cancelled: false, directoryPath: payload.packagePath }
@@ -347,44 +263,24 @@ export function registerBackupHandlers(): void {
               }
 
               rememberPathPreference(db, BACKUP_LAST_DIR_KEY, path.dirname(picked.directoryPath))
-              const resolved = resolveBackupArtifactPaths(picked.directoryPath)
-              backupPath = resolved.backupPath
-              manifestPath = resolved.manifestPath
+              resolveBackupArtifactPaths(picked.directoryPath)
             }
 
-            db.pragma('wal_checkpoint(TRUNCATE)')
-
-            const imported = importLedgerBackupArtifact({
-              backupPath,
-              manifestPath,
-              targetPath: getDatabasePath(),
-              attachmentRootDir: getElectronicVoucherRootDir(),
-              operatorUserId: user.id,
-              operatorIsAdmin: user.isAdmin
+            const result = await importBackupCommand(createCommandContextFromEvent(event), {
+              backupId: payload?.backupId,
+              packagePath: payload?.backupId ? undefined : payload?.packagePath
             })
-
-            appendOperationLog(db, {
-              ledgerId: imported.importedLedgerId,
-              userId: user.id,
-              username: user.username,
-              module: 'backup',
-              action: 'import',
-              targetType: 'ledger',
-              targetId: imported.importedLedgerId,
-              details: {
-                sourceBackupId,
-                sourceLedgerId,
-                sourcePackagePath: backupPath,
-                manifestPath,
-                packageType: 'ledger_backup',
-                importedLedgerName: imported.importedLedgerName
+            if (!isCommandSuccess(result)) {
+              return {
+                success: false,
+                error: result.error?.message ?? '导入账套备份失败'
               }
-            })
+            }
 
             return {
               success: true,
-              importedLedgerId: imported.importedLedgerId,
-              importedLedgerName: imported.importedLedgerName
+              importedLedgerId: result.data.importedLedgerId,
+              importedLedgerName: result.data.importedLedgerName
             }
           } catch (error) {
             return {
@@ -414,90 +310,18 @@ export function registerBackupHandlers(): void {
             deleteRecordOnly: payload.deleteRecordOnly === true
           }
         },
-        () => {
-          try {
-            const user = requirePermission(event, 'ledger_settings')
-            const db = getDatabase()
-            const row = getBackupPackageById(db, payload.backupId)
-
-            if (!row) {
-              return { success: false, error: '备份记录不存在' }
-            }
-
-            requireLedgerAccess(event, db, row.ledger_id)
-
-            assertHistoricalVersionDeletable(
-              row.id,
-              listBackupPackageIdsByLedger(db, row.ledger_id),
-              '备份'
-            )
-
-            const physicalStatus = getBackupPhysicalPackageStatus({
-              backupPath: row.backup_path,
-              manifestPath: row.manifest_path,
-              protectedDir: path.dirname(getDatabasePath())
-            })
-
-            if (payload.deleteRecordOnly && physicalStatus.physicalExists) {
-              return {
+        async () => {
+          const result = await deleteBackupCommand(createCommandContextFromEvent(event), payload)
+          return isCommandSuccess(result)
+            ? {
+                success: true,
+                deletedPhysicalPackage: result.data.deletedPhysicalPackage,
+                deletedPaths: result.data.deletedPaths
+              }
+            : {
                 success: false,
-                error: '路径下备份包仍存在，请执行正常删除以同时删除实体包。'
+                error: result.error?.message ?? '删除备份失败'
               }
-            }
-
-            const deletionResult = payload.deleteRecordOnly
-              ? {
-                  physicalExists: false,
-                  deletedPaths: [],
-                  packagePath: physicalStatus.packagePath
-                }
-              : deleteBackupPhysicalPackage({
-                  backupPath: row.backup_path,
-                  manifestPath: row.manifest_path,
-                  protectedDir: path.dirname(getDatabasePath())
-                })
-
-            if (!payload.deleteRecordOnly && !deletionResult.physicalExists) {
-              return {
-                success: false,
-                missingPhysicalPackage: true,
-                requiresRecordDeletionConfirmation: true,
-                packagePath: deletionResult.packagePath,
-                error: '路径下备份包已不存在，是否删除本条记录？'
-              }
-            }
-
-            deleteBackupPackageRecord(db, payload.backupId)
-
-            appendOperationLog(db, {
-              ledgerId: row.ledger_id,
-              userId: user.id,
-              username: user.username,
-              module: 'backup',
-              action: 'delete',
-              targetType: 'backup_package',
-              targetId: row.id,
-              details: {
-                period: row.backup_period,
-                backupPath: row.backup_path,
-                manifestPath: row.manifest_path,
-                deletedPaths: deletionResult.deletedPaths,
-                deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package',
-                physicalPackageMissing: !deletionResult.physicalExists
-              }
-            })
-
-            return {
-              success: true,
-              deletedPhysicalPackage: deletionResult.physicalExists,
-              deletedPaths: deletionResult.deletedPaths
-            }
-          } catch (error) {
-            return {
-              success: false,
-              error: error instanceof Error ? error.message : '删除备份失败'
-            }
-          }
         }
       )
   )

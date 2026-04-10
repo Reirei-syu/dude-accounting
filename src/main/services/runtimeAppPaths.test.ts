@@ -9,7 +9,9 @@ describe('runtimeAppPaths service', () => {
     )
   })
 
-  it('keeps the platform default userData path in packaged mode', () => {
-    expect(getRuntimeUserDataPath('C:/Users/test/AppData/Roaming', false)).toBeNull()
+  it('uses the packaged default userData path in packaged mode', () => {
+    expect(getRuntimeUserDataPath('C:/Users/test/AppData/Roaming', false)).toBe(
+      path.join('C:/Users/test/AppData/Roaming', 'dude-app')
+    )
   })
 })

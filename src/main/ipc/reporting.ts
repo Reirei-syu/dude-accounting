@@ -1,56 +1,27 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import path from 'node:path'
 import { getDatabase } from '../database/init'
-import { appendOperationLog } from '../services/auditLog'
+import {
+  deleteReportCommand,
+  exportReportCommand,
+  exportReportsBatchCommand,
+  generateReportCommand,
+  getReportDetailCommand,
+  listReportsCommand
+} from '../commands/reportingCommands'
 import {
   buildReportExportDefaultPath,
-  exportReportSnapshotToFile,
-  exportReportSnapshotsBatch,
   getPreferredReportExportDir,
   getReportExportFilters,
   rememberReportExportDir
 } from '../services/reportExport'
 import {
-  deleteReportSnapshot,
-  generateReportSnapshot,
-  getReportSnapshotDetail,
-  listReportSnapshots,
   type ReportExportFormat,
   type GenerateReportSnapshotParams,
-  type ReportListFilters
+  type ReportListFilters,
+  type ReportSnapshotDetail
 } from '../services/reporting'
 import { withIpcTelemetry } from '../services/runtimeLogger'
-import { requireAuth, requireLedgerAccess } from './session'
-
-async function printReportHtmlToPdf(filePath: string, html: string): Promise<string> {
-  const window = new BrowserWindow({
-    show: false,
-    webPreferences: {
-      sandbox: false
-    }
-  })
-
-  try {
-    await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-    const pdfBuffer = await window.webContents.printToPDF({
-      printBackground: true,
-      pageSize: 'A4',
-      margins: {
-        top: 0,
-        bottom: 0,
-        left: 0,
-        right: 0
-      }
-    })
-    await import('node:fs/promises').then((fs) =>
-      fs.mkdir(path.dirname(filePath), { recursive: true })
-    )
-    await import('node:fs/promises').then((fs) => fs.writeFile(filePath, pdfBuffer))
-    return filePath
-  } finally {
-    window.destroy()
-  }
-}
+import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
 
 export function registerReportingHandlers(): void {
   ipcMain.handle('reporting:list', (event, filters: ReportListFilters) =>
@@ -64,10 +35,13 @@ export function registerReportingHandlers(): void {
           periodCount: filters.periods?.length ?? 0
         }
       },
-      () => {
-        requireAuth(event)
-        requireLedgerAccess(event, getDatabase(), filters.ledgerId)
-        return listReportSnapshots(getDatabase(), filters)
+      async () => {
+        const result = await listReportsCommand(createCommandContextFromEvent(event), filters)
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取报表列表失败')
       }
     )
   )
@@ -84,12 +58,13 @@ export function registerReportingHandlers(): void {
             ledgerId: payload.ledgerId ?? null
           }
         },
-        () => {
-          requireAuth(event)
-          const db = getDatabase()
-          const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-          requireLedgerAccess(event, db, detail.ledger_id)
-          return detail
+        async () => {
+          const result = await getReportDetailCommand(createCommandContextFromEvent(event), payload)
+          if (isCommandSuccess(result)) {
+            return result.data
+          }
+
+          throw new Error(result.error?.message ?? '获取报表详情失败')
         }
       )
   )
@@ -117,10 +92,13 @@ export function registerReportingHandlers(): void {
         },
         async () => {
           try {
-            const user = requireAuth(event)
             const db = getDatabase()
-            const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-            requireLedgerAccess(event, db, detail.ledger_id)
+            const detail = (
+              await getReportDetailCommand(createCommandContextFromEvent(event), {
+                snapshotId: payload.snapshotId,
+                ledgerId: payload.ledgerId
+              })
+            ).data as ReportSnapshotDetail
             const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
             const defaultPath = buildReportExportDefaultPath(preferredDir, detail, payload.format)
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
@@ -143,30 +121,18 @@ export function registerReportingHandlers(): void {
               }
             }
 
-            const exportPath = await exportReportSnapshotToFile(
-              detail,
-              payload.format,
-              saveResult.filePath,
-              printReportHtmlToPdf
-            )
-            rememberReportExportDir(db, exportPath)
-
-            appendOperationLog(db, {
-              ledgerId: detail.ledger_id,
-              userId: user.id,
-              username: user.username,
-              module: 'reporting',
-              action: 'export_snapshot',
-              targetType: 'report_snapshot',
-              targetId: detail.id,
-              details: {
-                reportType: detail.report_type,
-                period: detail.period,
-                reportName: detail.report_name,
-                exportPath,
-                format: payload.format
-              }
+            const result = await exportReportCommand(createCommandContextFromEvent(event), {
+              ...payload,
+              filePath: saveResult.filePath
             })
+            if (!isCommandSuccess(result)) {
+              return {
+                success: false,
+                error: result.error?.message ?? '导出报表失败'
+              }
+            }
+            const exportPath = result.data.filePath
+            rememberReportExportDir(db, exportPath)
 
             return {
               success: true,
@@ -205,19 +171,20 @@ export function registerReportingHandlers(): void {
         },
         async () => {
           try {
-            const user = requireAuth(event)
             const db = getDatabase()
 
             if (!Array.isArray(payload.snapshotIds) || payload.snapshotIds.length === 0) {
               return { success: false, error: '请先选择至少一张报表' }
             }
 
-            const details = payload.snapshotIds.map((snapshotId) =>
-              getReportSnapshotDetail(db, snapshotId, payload.ledgerId)
+            await Promise.all(
+              payload.snapshotIds.map((snapshotId) =>
+                getReportDetailCommand(createCommandContextFromEvent(event), {
+                  snapshotId,
+                  ledgerId: payload.ledgerId
+                })
+              )
             )
-            for (const detail of details) {
-              requireLedgerAccess(event, db, detail.ledger_id)
-            }
             const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const openResult = payload.directoryPath
@@ -237,29 +204,18 @@ export function registerReportingHandlers(): void {
             }
 
             const directoryPath = openResult.filePaths[0]
-            const filePaths = await exportReportSnapshotsBatch(
-              details,
-              payload.format,
-              directoryPath,
-              (detail, filePath) =>
-                exportReportSnapshotToFile(detail, payload.format, filePath, printReportHtmlToPdf)
-            )
-            rememberReportExportDir(db, directoryPath)
-
-            appendOperationLog(db, {
-              ledgerId: details[0]?.ledger_id ?? null,
-              userId: user.id,
-              username: user.username,
-              module: 'reporting',
-              action: 'export_snapshot_batch',
-              targetType: 'report_snapshot_batch',
-              targetId: payload.snapshotIds.join(','),
-              details: {
-                reportCount: details.length,
-                format: payload.format,
-                directoryPath
-              }
+            const result = await exportReportsBatchCommand(createCommandContextFromEvent(event), {
+              ...payload,
+              directoryPath
             })
+            if (!isCommandSuccess(result)) {
+              return {
+                success: false,
+                error: result.error?.message ?? '批量导出报表失败'
+              }
+            }
+            const filePaths = result.data.filePaths
+            rememberReportExportDir(db, directoryPath)
 
             return {
               success: true,
@@ -286,40 +242,11 @@ export function registerReportingHandlers(): void {
           snapshotId: payload.snapshotId
         }
       },
-      () => {
-        try {
-          const user = requireAuth(event)
-          const db = getDatabase()
-          requireLedgerAccess(event, db, payload.ledgerId)
-          const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
-          const deleted = deleteReportSnapshot(db, payload.snapshotId, payload.ledgerId)
-
-          if (!deleted) {
-            return { success: false, error: '报表快照不存在或已删除' }
-          }
-
-          appendOperationLog(db, {
-            ledgerId: payload.ledgerId,
-            userId: user.id,
-            username: user.username,
-            module: 'reporting',
-            action: 'delete_snapshot',
-            targetType: 'report_snapshot',
-            targetId: payload.snapshotId,
-            details: {
-              reportType: detail.report_type,
-              period: detail.period,
-              reportName: detail.report_name
-            }
-          })
-
-          return { success: true }
-        } catch (error) {
-          return {
-            success: false,
-            error: error instanceof Error ? error.message : '删除报表快照失败'
-          }
-        }
+      async () => {
+        return toLegacySuccess(
+          await deleteReportCommand(createCommandContextFromEvent(event), payload),
+          () => ({})
+        )
       }
     )
   )
@@ -338,41 +265,13 @@ export function registerReportingHandlers(): void {
           includeUnpostedVouchers: payload.includeUnpostedVouchers === true
         }
       },
-      () => {
-        try {
-          const user = requireAuth(event)
-          const db = getDatabase()
-          requireLedgerAccess(event, db, payload.ledgerId)
-          const snapshot = generateReportSnapshot(db, {
-            ...payload,
-            generatedBy: user.id
+      async () => {
+        return toLegacySuccess(
+          await generateReportCommand(createCommandContextFromEvent(event), payload),
+          (commandData) => ({
+            snapshot: commandData.snapshot
           })
-
-          appendOperationLog(db, {
-            ledgerId: snapshot.ledger_id,
-            userId: user.id,
-            username: user.username,
-            module: 'reporting',
-            action: 'generate_snapshot',
-            targetType: 'report_snapshot',
-            targetId: snapshot.id,
-            details: {
-              reportType: snapshot.report_type,
-              period: snapshot.period,
-              reportName: snapshot.report_name
-            }
-          })
-
-          return {
-            success: true,
-            snapshot
-          }
-        } catch (error) {
-          return {
-            success: false,
-            error: error instanceof Error ? error.message : '生成报表快照失败'
-          }
-        }
+        )
       }
     )
   )

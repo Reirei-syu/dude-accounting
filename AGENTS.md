@@ -33,6 +33,7 @@
 数据与接口约束：
 
 - 涉及合规模块开发时，优先复用或维护以下模块：`AuditLogModule`、`BackupRecoveryModule`、`ElectronicVoucherModule`、`ArchiveExportModule`、`ReportingOutputModule`。
+- CLI 现已作为正式接口形态之一；新增 CLI 命令时必须通过 `src/main/commands` / `src/main/services` 进入业务，不得在 CLI 层直接访问数据库或绕过权限、账套访问校验与操作日志。
 - 打包版升级、重装或变更安装目录时，禁止将主数据库、用户设置、用户偏好、壁纸和默认日志等用户数据绑定到安装目录；默认应落在稳定的 `userData` 范围内，并对历史错误路径提供兼容迁移。
 - 新增或修改 IPC 时，必须同步更新 preload 暴露与类型声明，确保 `src/main`、`src/preload`、`src/renderer` 三层接口一致。
 - 账簿打印预览设置如需记忆，只允许按 `bookType` 写入当前用户 `user_preferences`，不得写入 `system_settings` 或新增临时全局状态。

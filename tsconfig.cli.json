@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.node.json",
+  "include": [
+    "src/cli/**/*",
+    "src/main/commands/**/*",
+    "src/main/runtime/**/*",
+    "src/main/database/**/*",
+    "src/main/security/**/*",
+    "src/main/services/**/*"
+  ],
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "out/cli",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "composite": false,
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"]
+  }
+}

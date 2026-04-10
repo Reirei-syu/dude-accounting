@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
-import { app } from 'electron'
 import { normalizeLedgerStartPeriods } from '../services/ledgerStartPeriod'
 import { ensurePrimaryDatabasePath } from '../services/runtimeDatabasePath'
+import { getRuntimeContext } from '../runtime/runtimeContext'
 import { seedAdminUser, seedSubjects, seedCashFlowItems, seedPLCarryForwardRules } from './seed'
 import { ALL_SUBJECT_CATEGORIES } from './subjectCategoryRules'
 
@@ -13,10 +13,11 @@ export function getDatabasePath(): string {
     return databasePath
   }
 
+  const runtime = getRuntimeContext()
   const state = ensurePrimaryDatabasePath({
-    userDataPath: app.getPath('userData'),
-    isDevelopment: !app.isPackaged,
-    executablePath: process.execPath
+    userDataPath: runtime.userDataPath,
+    isDevelopment: runtime.isDevelopment,
+    executablePath: runtime.executablePath
   })
   databasePath = state.targetPath
   return databasePath
@@ -29,6 +30,11 @@ export function getDatabase(): Database.Database {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   return db
+}
+
+export function resetDatabaseHandle(): void {
+  closeDatabase()
+  databasePath = null
 }
 
 export function initializeDatabase(): void {

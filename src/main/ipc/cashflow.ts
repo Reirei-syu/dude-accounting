@@ -1,12 +1,13 @@
 import { ipcMain } from 'electron'
 import { getDatabase } from '../database/init'
 import {
-  createCashFlowMapping,
-  deleteCashFlowMapping,
-  listCashFlowMappings,
-  updateCashFlowMapping
-} from '../services/cashFlowMapping'
-import { requireAuth, requireLedgerAccess, requirePermission } from './session'
+  createCashFlowMappingCommand,
+  deleteCashFlowMappingCommand,
+  listCashFlowMappingsCommand,
+  updateCashFlowMappingCommand
+} from '../commands/accountCommands'
+import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
+import { requireAuth, requireLedgerAccess } from './session'
 
 export function registerCashFlowHandlers(): void {
   const db = getDatabase()
@@ -24,10 +25,15 @@ export function registerCashFlowHandlers(): void {
       .all(ledgerId)
   })
 
-  ipcMain.handle('cashflow:getMappings', (event, ledgerId: number) => {
-    requireAuth(event)
-    requireLedgerAccess(event, db, ledgerId)
-    return listCashFlowMappings(db, ledgerId)
+  ipcMain.handle('cashflow:getMappings', async (event, ledgerId: number) => {
+    const result = await listCashFlowMappingsCommand(createCommandContextFromEvent(event), {
+      ledgerId
+    })
+    if (isCommandSuccess(result)) {
+      return result.data
+    }
+
+    throw new Error(result.error?.message ?? '获取现金流匹配规则失败')
   })
 
   ipcMain.handle(
@@ -41,16 +47,10 @@ export function registerCashFlowHandlers(): void {
         entryDirection: 'inflow' | 'outflow'
         cashFlowItemId: number
       }
-    ) => {
-      try {
-        requirePermission(event, 'ledger_settings')
-        requireLedgerAccess(event, db, data.ledgerId)
-        const id = createCashFlowMapping(db, data)
-        return { success: true, id }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+    ) =>
+      createCashFlowMappingCommand(createCommandContextFromEvent(event), data).then((result) =>
+        toLegacySuccess(result, (commandData) => ({ id: commandData.mappingId }))
+      )
   )
 
   ipcMain.handle(
@@ -64,38 +64,16 @@ export function registerCashFlowHandlers(): void {
         entryDirection: 'inflow' | 'outflow'
         cashFlowItemId: number
       }
-    ) => {
-      try {
-        requirePermission(event, 'ledger_settings')
-        const mapping = db.prepare('SELECT ledger_id FROM cash_flow_mappings WHERE id = ?').get(data.id) as
-          | { ledger_id: number }
-          | undefined
-        if (!mapping) {
-          return { success: false, error: '现金流量匹配规则不存在' }
-        }
-        requireLedgerAccess(event, db, mapping.ledger_id)
-        updateCashFlowMapping(db, data)
-        return { success: true }
-      } catch (error) {
-        return { success: false, error: (error as Error).message }
-      }
-    }
+    ) =>
+      updateCashFlowMappingCommand(createCommandContextFromEvent(event), data).then((result) =>
+        toLegacySuccess(result, () => ({}))
+      )
   )
 
-  ipcMain.handle('cashflow:deleteMapping', (event, id: number) => {
-    try {
-      requirePermission(event, 'ledger_settings')
-      const mapping = db.prepare('SELECT ledger_id FROM cash_flow_mappings WHERE id = ?').get(id) as
-        | { ledger_id: number }
-        | undefined
-      if (!mapping) {
-        return { success: false, error: '现金流量匹配规则不存在' }
-      }
-      requireLedgerAccess(event, db, mapping.ledger_id)
-      deleteCashFlowMapping(db, id)
-      return { success: true }
-    } catch (error) {
-      return { success: false, error: (error as Error).message }
-    }
-  })
+  ipcMain.handle('cashflow:deleteMapping', async (event, id: number) =>
+    toLegacySuccess(
+      await deleteCashFlowMappingCommand(createCommandContextFromEvent(event), { id }),
+      () => ({})
+    )
+  )
 }

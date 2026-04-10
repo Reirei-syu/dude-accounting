@@ -29,13 +29,24 @@ import { registerPrintHandlers } from './ipc/print'
 import { registerDiagnosticsHandlers } from './ipc/diagnostics'
 import { installGlobalErrorLogging } from './services/errorLog'
 import { getRuntimeUserDataPath } from './services/runtimeAppPaths'
+import { setRuntimeContext } from './runtime/runtimeContext'
+import { runEmbeddedCli } from '../cli/embedded'
 
 const runtimeUserDataPath = getRuntimeUserDataPath(app.getPath('appData'), is.dev)
-if (runtimeUserDataPath) {
-  app.setPath('userData', runtimeUserDataPath)
-}
+app.setPath('userData', runtimeUserDataPath)
 
 installGlobalErrorLogging(() => app.getPath('userData'))
+
+const CLI_FLAG = '--cli'
+
+function getEmbeddedCliArgv(argv: string[]): string[] | null {
+  const cliFlagIndex = argv.indexOf(CLI_FLAG)
+  if (cliFlagIndex < 0) {
+    return null
+  }
+
+  return argv.slice(cliFlagIndex + 1)
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -99,6 +110,16 @@ function flushPendingRestoreLog(): void {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.dudeaccounting')
 
+  setRuntimeContext({
+    productName: 'dude-app',
+    appDataPath: app.getPath('appData'),
+    documentsPath: app.getPath('documents'),
+    userDataPath: app.getPath('userData'),
+    executablePath: process.execPath,
+    isDevelopment: is.dev,
+    isPackaged: app.isPackaged
+  })
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -112,6 +133,14 @@ app.whenReady().then(() => {
       error instanceof Error ? error.message : '初始化数据库失败，请检查安装目录与数据目录权限。'
     )
     app.quit()
+    return
+  }
+
+  const embeddedCliArgv = getEmbeddedCliArgv(process.argv)
+  if (embeddedCliArgv) {
+    void runEmbeddedCli(embeddedCliArgv).finally(() => {
+      app.quit()
+    })
     return
   }
 

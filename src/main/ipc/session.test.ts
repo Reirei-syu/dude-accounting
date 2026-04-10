@@ -59,7 +59,8 @@ describe('ipc session', () => {
       id: 1,
       username: 'tester',
       permissions: { voucher_entry: true },
-      isAdmin: false
+      isAdmin: false,
+      source: 'ipc'
     }
     setSessionByEvent(event as never, user)
     expect(getSessionByEvent(event as never)?.username).toBe('tester')
@@ -74,7 +75,8 @@ describe('ipc session', () => {
       id: 9,
       username: 'destroy-me',
       permissions: { voucher_entry: true },
-      isAdmin: false
+      isAdmin: false,
+      source: 'ipc'
     }
 
     setSessionByEvent(event as never, user)
@@ -91,7 +93,8 @@ describe('ipc session', () => {
       id: 19,
       username: 'preview-user',
       permissions: { voucher_entry: true, system_settings: true },
-      isAdmin: false
+      isAdmin: false,
+      source: 'ipc'
     }
 
     setSessionBySender(previewSender.sender, user)
@@ -113,7 +116,8 @@ describe('ipc session', () => {
       id: 2,
       username: 'normal',
       permissions: { voucher_entry: true },
-      isAdmin: false
+      isAdmin: false,
+      source: 'ipc'
     }
     setSessionByEvent(event as never, user)
 
@@ -130,7 +134,8 @@ describe('ipc session', () => {
       id: 3,
       username: 'ledger-user',
       permissions: { voucher_entry: true },
-      isAdmin: false
+      isAdmin: false,
+      source: 'ipc'
     }
     setSessionByEvent(regularEvent as never, regularUser)
 
@@ -144,7 +149,8 @@ describe('ipc session', () => {
       id: 4,
       username: 'admin',
       permissions: {},
-      isAdmin: true
+      isAdmin: true,
+      source: 'ipc'
     }
     setSessionByEvent(adminEvent as never, adminUser)
 
