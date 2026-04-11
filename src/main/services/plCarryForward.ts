@@ -180,6 +180,50 @@ function getLeafSourceSubjects(
   )
 }
 
+function getLeafTargetSubjects(
+  subjects: SubjectWithChildrenRow[],
+  standardType: 'enterprise' | 'npo'
+): SubjectWithChildrenRow[] {
+  const targetPrefixes = getAllowedTargetPrefixes(standardType)
+
+  return subjects.filter(
+    (subject) =>
+      isCarryForwardTargetCategory(standardType, subject.category) &&
+      subject.has_children === 0 &&
+      isSubjectWithinPrefixes(subject.code, targetPrefixes)
+  )
+}
+
+function resolveEffectiveCarryForwardTargetCode(
+  targetCode: string,
+  standardType: 'enterprise' | 'npo',
+  subjectByCode: Map<string, SubjectWithChildrenRow>,
+  leafTargets: SubjectWithChildrenRow[]
+): string | null {
+  if (leafTargets.some((subject) => subject.code === targetCode)) {
+    return targetCode
+  }
+
+  const targetSubject = subjectByCode.get(targetCode)
+  if (!targetSubject) {
+    return null
+  }
+
+  if (!isCarryForwardTargetCategory(standardType, targetSubject.category)) {
+    return null
+  }
+
+  if (!isSubjectWithinPrefixes(targetCode, getAllowedTargetPrefixes(standardType))) {
+    return null
+  }
+
+  const descendantLeafTargets = leafTargets.filter(
+    (subject) => subject.code !== targetCode && subject.code.startsWith(targetCode)
+  )
+
+  return descendantLeafTargets.length === 1 ? descendantLeafTargets[0].code : null
+}
+
 function normalizeStoredCarryForwardRules(
   db: Database.Database,
   ledgerId: number,
@@ -199,6 +243,7 @@ function normalizeStoredCarryForwardRules(
       subject
     ])
   )
+  const leafTargets = getLeafTargetSubjects(currentSubjects, currentLedger.standard_type)
   const storedRules = listStoredCarryForwardRules(db, ledgerId)
   const effectiveRulesBySource = new Map<string, StoredCarryForwardRuleRow>()
   const conflictingTargetsBySource = new Map<string, Set<string>>()
@@ -208,19 +253,34 @@ function normalizeStoredCarryForwardRules(
       continue
     }
 
+    const effectiveTargetCode =
+      resolveEffectiveCarryForwardTargetCode(
+        rule.to_subject_code,
+        currentLedger.standard_type,
+        subjectByCode,
+        leafTargets
+      ) ?? rule.to_subject_code
+    const normalizedRule =
+      effectiveTargetCode === rule.to_subject_code
+        ? rule
+        : {
+            ...rule,
+            to_subject_code: effectiveTargetCode
+          }
+
     const existingRule = effectiveRulesBySource.get(rule.from_subject_code)
     if (!existingRule) {
-      effectiveRulesBySource.set(rule.from_subject_code, rule)
+      effectiveRulesBySource.set(rule.from_subject_code, normalizedRule)
       continue
     }
 
-    if (existingRule.to_subject_code === rule.to_subject_code) {
+    if (existingRule.to_subject_code === normalizedRule.to_subject_code) {
       continue
     }
 
     const targetSet = conflictingTargetsBySource.get(rule.from_subject_code) ?? new Set<string>()
     targetSet.add(existingRule.to_subject_code)
-    targetSet.add(rule.to_subject_code)
+    targetSet.add(normalizedRule.to_subject_code)
     conflictingTargetsBySource.set(rule.from_subject_code, targetSet)
   }
 
@@ -399,13 +459,7 @@ function assertCarryForwardRulesConfigured(
   const subjects = context?.subjects ?? listLedgerSubjectsWithChildren(db, ledgerId)
   const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
   const sourceSubjects = getLeafSourceSubjects(subjects, ledger.standard_type)
-  const targetPrefixes = getAllowedTargetPrefixes(ledger.standard_type)
-  const targetSubjects = subjects.filter(
-    (subject) =>
-      isCarryForwardTargetCategory(ledger.standard_type, subject.category) &&
-      subject.has_children === 0 &&
-      isSubjectWithinPrefixes(subject.code, targetPrefixes)
-  )
+  const targetSubjects = getLeafTargetSubjects(subjects, ledger.standard_type)
   const sourceByCode = new Map(sourceSubjects.map((subject) => [subject.code, subject]))
   const targetByCode = new Map(targetSubjects.map((subject) => [subject.code, subject]))
   const normalizedRules = normalizeSaveRules(rules)

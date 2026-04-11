@@ -659,6 +659,28 @@ describe('pl carry forward service', () => {
     ])
   })
 
+  it('resolves a legacy parent target to the unique leaf target when listing carry-forward rules', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 2, '410102', '捐赠收入-限定性', 'income', -1)
+    seedSubject(db, 2, '3102', '限定性净资产', 'net_assets', -1)
+    seedSubject(db, 2, '310201', '开办资金', 'net_assets', -1)
+    seedRule(db, 2, '410102', '3102')
+
+    const rules = listPLCarryForwardRules(db as never, 2)
+
+    expect(rules).toEqual([
+      {
+        id: expect.any(Number),
+        fromSubjectCode: '410102',
+        fromSubjectName: '捐赠收入-限定性',
+        toSubjectCode: '310201',
+        toSubjectName: '开办资金'
+      }
+    ])
+  })
+
   it('auto-fills a missing sibling leaf rule when the parent only keeps descendant rules', () => {
     const db = createTestDb()
     openDbs.push(db)
@@ -1094,6 +1116,63 @@ describe('pl carry forward service', () => {
         creditAmount: 20000
       }
     ])
+  })
+
+  it('resolves a parent net-asset target to its unique leaf child during preview', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 2, '1002', '银行存款', 'asset', 1)
+    seedSubject(db, 2, '410102', '捐赠收入-限定性', 'income', -1)
+    seedSubject(db, 2, '3102', '限定性净资产', 'net_assets', -1)
+    seedSubject(db, 2, '310201', '开办资金', 'net_assets', -1)
+    seedRule(db, 2, '410102', '3102')
+
+    insertVoucher(db, {
+      ledgerId: 2,
+      period: '2026-03',
+      voucherDate: '2026-03-12',
+      voucherNumber: 2,
+      status: 2,
+      entries: [
+        { subjectCode: '1002', debitAmount: 20000, creditAmount: 0 },
+        { subjectCode: '410102', debitAmount: 0, creditAmount: 20000 }
+      ]
+    })
+
+    const preview = previewPLCarryForward(db as never, { ledgerId: 2, period: '2026-03' })
+
+    expect(preview.entries).toEqual([
+      {
+        summary: '期末损益结转',
+        subjectCode: '410102',
+        subjectName: '捐赠收入-限定性',
+        debitAmount: 20000,
+        creditAmount: 0
+      },
+      {
+        summary: '期末损益结转',
+        subjectCode: '310201',
+        subjectName: '开办资金',
+        debitAmount: 0,
+        creditAmount: 20000
+      }
+    ])
+  })
+
+  it('rejects preview when a parent target expands to multiple allowed leaf targets', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 2, '410102', '捐赠收入-限定性', 'income', -1)
+    seedSubject(db, 2, '3102', '限定性净资产', 'net_assets', -1)
+    seedSubject(db, 2, '310201', '开办资金', 'net_assets', -1)
+    seedSubject(db, 2, '310202', '受托资产', 'net_assets', -1)
+    seedRule(db, 2, '410102', '3102')
+
+    expect(() => previewPLCarryForward(db as never, { ledgerId: 2, period: '2026-03' })).toThrow(
+      '以下结转目标科目无效或不是允许的末级科目：410102 -> 3102'
+    )
   })
 
   it('rejects preview when the same leaf source keeps multiple carry-forward targets', () => {
