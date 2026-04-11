@@ -188,6 +188,9 @@ export function registerReportingHandlers(): void {
         ledgerId?: number
         format: ReportExportFormat
         directoryPath?: string
+        renderOptions?: {
+          showCashflowPreviousAmount?: boolean
+        }
       }
     ) =>
       withIpcTelemetry(

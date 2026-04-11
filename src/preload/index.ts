@@ -380,6 +380,9 @@ const api = {
       ledgerId?: number
       format: 'xlsx' | 'pdf'
       directoryPath?: string
+      renderOptions?: {
+        showCashflowPreviousAmount?: boolean
+      }
     }) => ipcRenderer.invoke('reporting:exportBatch', payload),
     delete: (payload: { snapshotId: number; ledgerId: number }) =>
       ipcRenderer.invoke('reporting:delete', payload)

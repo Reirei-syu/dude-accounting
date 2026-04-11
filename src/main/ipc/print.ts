@@ -66,6 +66,7 @@ export type PrintPreparePayload =
       batchType: 'report'
       ledgerId?: number
       snapshotIds: number[]
+      renderOptions?: ReportRenderOptions
     }
   | {
       type: 'book'
@@ -991,7 +992,7 @@ function buildVoucherRecords(
   }
 }
 
-function createPrintDocument(
+export function createPrintDocument(
   db: ReturnType<typeof getDatabase>,
   payload: PrintPreparePayload
 ): {
@@ -1044,7 +1045,7 @@ function createPrintDocument(
       title: `${details[0].content.title} 批量打印`,
       orientation: reportType === 'equity_statement' ? 'landscape' : 'portrait',
       showPageNumber: false,
-      segments: details.map((detail) => getReportSegment(detail))
+      segments: details.map((detail) => getReportSegment(detail, payload.renderOptions))
     }
     const reportSettings = resolveReportPrintSettings(
       reportType,

@@ -23,6 +23,7 @@ import {
   type ReportType
 } from './reportingShared'
 import { prepareAndOpenPrintPreview } from './printUtils'
+import type { ReportRenderOptions } from '../../../shared/reportTablePresentation'
 
 function toggleValue<T extends string | number>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
@@ -99,6 +100,7 @@ export default function ReportQuery(): JSX.Element {
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [exportingFormat, setExportingFormat] = useState<'xlsx' | 'pdf' | null>(null)
+  const [showCashflowPreviousAmount, setShowCashflowPreviousAmount] = useState(false)
   const [queryHeaderFade, setQueryHeaderFade] = useState(0)
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
@@ -137,6 +139,29 @@ export default function ReportQuery(): JSX.Element {
       : selectedSnapshotId !== null
         ? [selectedSnapshotId]
         : []
+  const actionTargetRows = useMemo(
+    () =>
+      exportTargetIds
+        .map((snapshotId) => rows.find((row) => row.id === snapshotId) ?? null)
+        .filter((row): row is ReportSnapshotSummary => Boolean(row)),
+    [exportTargetIds, rows]
+  )
+  const actionReportType: ReportType | null = useMemo(() => {
+    if (detail?.report_type) {
+      return detail.report_type
+    }
+
+    if (actionTargetRows.length === 0) {
+      return null
+    }
+
+    const firstType = actionTargetRows[0].report_type
+    return actionTargetRows.every((row) => row.report_type === firstType) ? firstType : null
+  }, [actionTargetRows, detail?.report_type])
+  const renderOptions: ReportRenderOptions | undefined =
+    actionReportType === 'cashflow_statement'
+      ? { showCashflowPreviousAmount }
+      : undefined
   const allFilteredSelected =
     filteredRows.length > 0 && filteredRows.every((row) => selectedSnapshotIds.includes(row.id))
   const compactToolbarOpacity = queryHeaderFade
@@ -222,6 +247,7 @@ export default function ReportQuery(): JSX.Element {
     setIsDetailOpen(false)
     setSelectedSnapshotId(null)
     setSelectedSnapshotIds([])
+    setShowCashflowPreviousAmount(false)
 
     if (!currentLedger) {
       setRows([])
@@ -264,6 +290,7 @@ export default function ReportQuery(): JSX.Element {
         ledgerId: currentLedger.id
       })
       setDetail(nextDetail)
+      setShowCashflowPreviousAmount(false)
       setIsDetailOpen(true)
     } catch (err) {
       setDetail(null)
@@ -348,7 +375,8 @@ export default function ReportQuery(): JSX.Element {
       const result = await window.api.reporting.export({
         snapshotId,
         ledgerId: currentLedger.id,
-        format
+        format,
+        renderOptions
       })
       if (result.cancelled) {
         return
@@ -391,7 +419,8 @@ export default function ReportQuery(): JSX.Element {
       const result = await window.api.reporting.exportBatch({
         snapshotIds: exportTargetIds,
         ledgerId: currentLedger.id,
-        format
+        format,
+        renderOptions
       })
       if (result.cancelled) {
         return
@@ -419,7 +448,8 @@ export default function ReportQuery(): JSX.Element {
     const result = await prepareAndOpenPrintPreview({
       type: 'report',
       snapshotId,
-      ledgerId: currentLedger.id
+      ledgerId: currentLedger.id,
+      renderOptions
     })
     if (!result.success) {
       setError(result.error || '打开打印预览失败')
@@ -445,13 +475,15 @@ export default function ReportQuery(): JSX.Element {
         ? {
             type: 'report',
             snapshotId: exportTargetIds[0],
-            ledgerId: currentLedger.id
+            ledgerId: currentLedger.id,
+            renderOptions
           }
         : {
             type: 'batch',
             batchType: 'report',
             snapshotIds: exportTargetIds,
-            ledgerId: currentLedger.id
+            ledgerId: currentLedger.id,
+            renderOptions
           }
     )
     if (!result.success) {
@@ -773,6 +805,20 @@ export default function ReportQuery(): JSX.Element {
           </div>
         )}
 
+        {actionReportType === 'cashflow_statement' && (
+          <label
+            className="inline-flex shrink-0 items-center gap-2 text-sm"
+            style={{ color: 'var(--color-text-secondary)' }}
+          >
+            <input
+              type="checkbox"
+              checked={showCashflowPreviousAmount}
+              onChange={(event) => setShowCashflowPreviousAmount(event.target.checked)}
+            />
+            <span>显示上年金额</span>
+          </label>
+        )}
+
         <div
           className="glass-panel min-h-[96px] shrink-0 flex items-center justify-center text-sm"
           style={{ color: 'var(--color-text-muted)' }}
@@ -835,7 +881,7 @@ export default function ReportQuery(): JSX.Element {
                 </button>
               </div>
             </div>
-            <ReportSnapshotViewer detail={detail} />
+            <ReportSnapshotViewer detail={detail} renderOptions={renderOptions} />
           </div>
         </div>
       )}

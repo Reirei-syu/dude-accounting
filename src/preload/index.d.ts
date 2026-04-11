@@ -1291,6 +1291,9 @@ interface ReportingAPI {
     ledgerId?: number
     format: 'xlsx' | 'pdf'
     directoryPath?: string
+    renderOptions?: {
+      showCashflowPreviousAmount?: boolean
+    }
   }) => Promise<{
     success: boolean
     cancelled?: boolean

@@ -313,4 +313,37 @@ describe('reporting IPC handlers', () => {
     })
     expect(reportingMocks.exportReportsBatchCommand).not.toHaveBeenCalled()
   })
+
+  it('passes renderOptions through batch export payloads', async () => {
+    reportingMocks.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ['D:/exports']
+    })
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:exportBatch')
+
+    const result = await handler?.(event, {
+      snapshotIds: [11, 12],
+      ledgerId: 1,
+      format: 'pdf',
+      renderOptions: {
+        showCashflowPreviousAmount: false
+      }
+    })
+
+    expect(reportingMocks.exportReportsBatchCommand).toHaveBeenCalledWith(expect.anything(), {
+      snapshotIds: [11, 12],
+      ledgerId: 1,
+      format: 'pdf',
+      directoryPath: 'D:/exports',
+      renderOptions: {
+        showCashflowPreviousAmount: false
+      }
+    })
+    expect(result).toEqual({
+      success: true,
+      directoryPath: 'D:/exports',
+      filePaths: ['D:/exports/one.pdf', 'D:/exports/two.pdf']
+    })
+  })
 })

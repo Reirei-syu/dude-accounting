@@ -202,6 +202,7 @@ export async function exportReportsBatchCommand(
     ledgerId?: number
     format: ReportExportFormat
     directoryPath: string
+    renderOptions?: ReportRenderOptions
   }
 ): Promise<CommandResult<{ directoryPath: string; filePaths: string[] }>> {
   return withCommandResult(context, async () => {
@@ -223,8 +224,8 @@ export async function exportReportsBatchCommand(
       payload.directoryPath,
       async (detail, filePath) =>
         payload.format === 'xlsx'
-          ? writeReportSnapshotExcel(filePath, detail)
-          : writeReportSnapshotPdf(filePath, detail)
+          ? writeReportSnapshotExcel(filePath, detail, payload.renderOptions)
+          : writeReportSnapshotPdf(filePath, detail, payload.renderOptions)
     )
     rememberReportExportDir(context.db, payload.directoryPath)
 
