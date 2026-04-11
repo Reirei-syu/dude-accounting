@@ -6,6 +6,7 @@ import {
   type ReportSnapshotDetail
 } from './reportingShared'
 import { prepareAndOpenPrintPreview } from './printUtils'
+import type { ReportRenderOptions } from '../../../shared/reportTablePresentation'
 
 interface Props {
   title: string
@@ -25,9 +26,14 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
   const [exportingFormat, setExportingFormat] = useState<'xlsx' | 'pdf' | null>(null)
   const [error, setError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [showCashflowPreviousAmount, setShowCashflowPreviousAmount] = useState(true)
 
   const reportType = getReportTypeByComponent(componentType)
   const isDynamicReport = reportType !== 'balance_sheet'
+  const renderOptions: ReportRenderOptions | undefined =
+    reportType === 'cashflow_statement'
+      ? { showCashflowPreviousAmount }
+      : undefined
 
   useEffect(() => {
     const defaultStartPeriod =
@@ -39,6 +45,7 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
     setError('')
     setSuccessMessage('')
     setIncludeUnposted(false)
+    setShowCashflowPreviousAmount(true)
     setIsDetailOpen(false)
     setMonth(currentPeriod || '')
     setStartPeriod(defaultStartPeriod)
@@ -117,7 +124,8 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
       const result = await window.api.reporting.export({
         snapshotId: detail.id,
         ledgerId: detail.ledger_id,
-        format
+        format,
+        renderOptions
       })
       if (result.cancelled) {
         return
@@ -145,7 +153,8 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
     const result = await prepareAndOpenPrintPreview({
       type: 'report',
       snapshotId: detail.id,
-      ledgerId: detail.ledger_id
+      ledgerId: detail.ledger_id,
+      renderOptions
     })
     if (!result.success) {
       setError(result.error || '打开打印预览失败')
@@ -212,6 +221,19 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
             />
             <span>未记账凭证</span>
           </label>
+          {reportType === 'cashflow_statement' && (
+            <label
+              className="flex items-center gap-2 text-sm"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              <input
+                type="checkbox"
+                checked={showCashflowPreviousAmount}
+                onChange={(event) => setShowCashflowPreviousAmount(event.target.checked)}
+              />
+              <span>显示上年金额</span>
+            </label>
+          )}
           <p className="text-xs leading-5" style={{ color: 'var(--color-text-muted)' }}>
             默认仅统计已记账凭证。刚保存但未记账的凭证如果需要立即体现在报表里，请勾选“未记账凭证”，或先去“凭证管理”完成记账。
           </p>
@@ -303,7 +325,7 @@ export default function ReportWorkspacePage({ title, componentType }: Props): JS
                 关闭
               </button>
             </div>
-            <ReportSnapshotViewer detail={detail} />
+            <ReportSnapshotViewer detail={detail} renderOptions={renderOptions} />
           </div>
         </div>
       )}

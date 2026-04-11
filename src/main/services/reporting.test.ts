@@ -907,6 +907,43 @@ describe('reporting service', () => {
     expect(() => getReportSnapshotDetail(testDb, snapshot.id, 2)).toThrow('报表快照不存在')
   })
 
+  it('captures net-asset transfer rows in ngo activity statements', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoLedger(db)
+
+    db.vouchers.push(
+      { id: 203, ledger_id: 2, period: '2026-03', voucher_date: '2026-03-25', status: 2, is_carry_forward: 0 },
+      { id: 204, ledger_id: 2, period: '2026-03', voucher_date: '2026-03-26', status: 2, is_carry_forward: 0 }
+    )
+    db.voucherEntries.push(
+      { id: 23, voucher_id: 203, row_order: 1, subject_code: '3102', debit_amount: 1_800, credit_amount: 0, cash_flow_item_id: null },
+      { id: 24, voucher_id: 203, row_order: 2, subject_code: '3101', debit_amount: 0, credit_amount: 1_800, cash_flow_item_id: null },
+      { id: 25, voucher_id: 204, row_order: 1, subject_code: '3101', debit_amount: 600, credit_amount: 0, cash_flow_item_id: null },
+      { id: 26, voucher_id: 204, row_order: 2, subject_code: '3102', debit_amount: 0, credit_amount: 600, cash_flow_item_id: null }
+    )
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'activity_statement',
+      startPeriod: '2026-03',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-09T11:02:00.000Z'
+    })
+
+    expect(findTableRow(snapshot, '三、限定性净资产转为非限定性净资产')?.cells[1]?.value).toBe(1_800)
+    expect(findTableRow(snapshot, '三、限定性净资产转为非限定性净资产')?.cells[2]?.value).toBe(-1_800)
+    expect(findTableRow(snapshot, '三、限定性净资产转为非限定性净资产')?.cells[3]?.value).toBe(0)
+    expect(findTableRow(snapshot, '四、非限定性净资产转为限定性净资产')?.cells[1]?.value).toBe(-600)
+    expect(findTableRow(snapshot, '四、非限定性净资产转为限定性净资产')?.cells[2]?.value).toBe(600)
+    expect(findTableRow(snapshot, '四、非限定性净资产转为限定性净资产')?.cells[3]?.value).toBe(0)
+    expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[1]?.value).toBe(16_200)
+    expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[2]?.value).toBe(-1_200)
+    expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[3]?.value).toBe(15_000)
+  })
+
   it('uses the official NGO cash flow statement table structure', () => {
     const db = createTestDb()
     const testDb = db as never
@@ -1038,6 +1075,8 @@ describe('reporting service', () => {
     expect(totalRow?.cells?.opening).toBe(50_000)
     expect(totalRow?.cells?.closing).toBe(65_000)
     expect(snapshot.content.tableColumns?.map((column) => column.label)).toEqual(['年初数', '期末数'])
+    expect(snapshot.content.tables?.[0]?.rows.at(-1)?.cells[0]?.value).toBe('资产总计')
+    expect(snapshot.content.tables?.[0]?.rows.at(-1)?.cells[3]?.value).toBe('负债和净资产总计')
   })
 
   it('aggregates descendant npo subjects into balance sheet and cash flow statement rows', () => {

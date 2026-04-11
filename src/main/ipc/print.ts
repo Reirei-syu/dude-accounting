@@ -6,13 +6,18 @@ import { randomUUID } from 'node:crypto'
 
 import { getDatabase } from '../database/init'
 import { sanitizePathSegment } from '../services/fileIntegrity'
-import { getReportSnapshotDetail, type ReportSnapshotDetail } from '../services/reporting'
+import {
+  getReportSnapshotDetail,
+  type ReportSnapshotDetail,
+  type ReportType
+} from '../services/reporting'
 import {
   resolveBookPrintOrientation,
   normalizePrintPreviewSettings,
   type PrintLayoutResult,
   type PrintDocument,
   type PrintJobType,
+  type PrintPreviewModel,
   type PrintTableSegment,
   type PrintTableColumn,
   type PrintTableRow,
@@ -23,6 +28,7 @@ import {
 import {
   buildTableLayoutResult,
   buildVoucherLayoutResult,
+  estimateSinglePageScalePercent,
   estimateTableRowGroups
 } from '../services/printLayout'
 import { buildTableMeasurementHtml } from '../services/printMeasurement'
@@ -33,6 +39,10 @@ import { requireCommandActor, requireCommandLedgerAccess } from '../commands/aut
 import { CommandError } from '../commands/types'
 import type { CommandActor } from '../commands/types'
 import { requireAuth, requireLedgerAccess } from './session'
+import {
+  buildPresentedReportTables,
+  type ReportRenderOptions
+} from '../../shared/reportTablePresentation'
 
 export type PrintJobStatus = 'preparing' | 'ready' | 'failed'
 export type PrintCommandPayload =
@@ -49,6 +59,7 @@ export type PrintPreparePayload =
       type: 'report'
       ledgerId?: number
       snapshotId: number
+      renderOptions?: ReportRenderOptions
     }
   | {
       type: 'batch'
@@ -93,6 +104,10 @@ interface PrintJobRecord {
   sourceDocument: PrintDocument | null
   layoutResult: PrintLayoutResult | null
   layoutVersion: number
+  controlLocks: {
+    orientation?: boolean
+    scalePercent?: boolean
+  } | null
   error: string | null
   previewWebContentsId: number | null
 }
@@ -277,6 +292,54 @@ export function buildDefaultPreviewSettings(
   }
 }
 
+function shouldForceSinglePageForReport(reportType: ReportType): boolean {
+  return (
+    reportType === 'balance_sheet' ||
+    reportType === 'activity_statement' ||
+    reportType === 'cashflow_statement'
+  )
+}
+
+function resolveReportPrintSettings(
+  reportType: ReportType,
+  segment: PrintTableSegment,
+  settings: Partial<PrintPreviewSettings> | undefined,
+  fallbackOrientation: 'portrait' | 'landscape'
+): {
+  settings: PrintPreviewSettings
+  controlLocks: {
+    orientation?: boolean
+    scalePercent?: boolean
+  } | null
+} {
+  const normalized = normalizePrintPreviewSettings(settings, fallbackOrientation)
+  if (!shouldForceSinglePageForReport(reportType)) {
+    return {
+      settings: normalized,
+      controlLocks: null
+    }
+  }
+
+  const orientation = fallbackOrientation
+  const scalePercent = estimateSinglePageScalePercent(segment, {
+    ...normalized,
+    orientation,
+    scalePercent: 100
+  })
+
+  return {
+    settings: {
+      ...normalized,
+      orientation,
+      scalePercent
+    },
+    controlLocks: {
+      orientation: true,
+      scalePercent: true
+    }
+  }
+}
+
 function getPreviewPreferenceKey(bookType: string | null): string | null {
   return bookType ? `book_print_settings_${bookType}` : null
 }
@@ -371,14 +434,15 @@ export function resolveMeasuredTableRowGroups(
 
 function buildPreviewModel(
   job: PrintJobRecord
-): (PrintLayoutResult & { layoutVersion: number }) | null {
+): PrintPreviewModel | null {
   if (!job.layoutResult) {
     return null
   }
 
   return {
     ...job.layoutResult,
-    layoutVersion: job.layoutVersion
+    layoutVersion: job.layoutVersion,
+    controlLocks: job.controlLocks ?? undefined
   }
 }
 
@@ -662,6 +726,14 @@ async function layoutPrintDocument(
   if (tableSegments.length > 0) {
     const measuredGroups = await Promise.all(
       tableSegments.map(async (segment) => {
+        if (segment.forceSinglePage) {
+          return {
+            segment,
+            rowKeyGroups: [segment.rows.map((row) => row.key)],
+            oversizeRowKeys: []
+          }
+        }
+
         const fallback = estimateTableRowGroups(segment, settings)
         try {
           const measured = await Promise.race([
@@ -702,12 +774,25 @@ async function layoutPrintDocument(
   })
 }
 
-function getReportSegment(detail: ReportSnapshotDetail): PrintTableSegment {
+function getReportSegment(
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
+): PrintTableSegment {
+  const presentedTables = buildPresentedReportTables(
+    detail.report_type,
+    detail.content.tables,
+    renderOptions,
+    'yuan'
+  )
   const headers =
-    detail.content.tables?.[0]?.columns?.map((column) => ({
+    presentedTables?.[0]?.columns?.map((column) => ({
       key: column.key,
       label: column.label,
-      align: (column.key === 'label' ? 'left' : 'right') as 'left' | 'right'
+      align: (
+        column.key === 'item' || column.key.endsWith('label') || column.key === 'label'
+          ? 'left'
+          : 'right'
+      ) as 'left' | 'right'
     })) ??
     (detail.content.tableColumns && detail.content.tableColumns.length > 0
       ? [
@@ -724,7 +809,7 @@ function getReportSegment(detail: ReportSnapshotDetail): PrintTableSegment {
         ])
 
   const rows =
-    detail.content.tables?.flatMap((table) =>
+    presentedTables?.flatMap((table) =>
       table.rows.map((row) => ({
         key: `${table.key}-${row.key}`,
         cells: row.cells.map((cell, index) => ({
@@ -762,6 +847,7 @@ function getReportSegment(detail: ReportSnapshotDetail): PrintTableSegment {
     ledgerName: detail.ledger_name,
     periodLabel: detail.period,
     unitLabel: '元',
+    forceSinglePage: shouldForceSinglePageForReport(detail.report_type),
     columns: headers,
     rows
   }
@@ -913,21 +999,35 @@ function createPrintDocument(
   type: PrintJobType
   ledgerId: number | null
   orientation: 'portrait' | 'landscape'
+  settings: PrintPreviewSettings
+  controlLocks: {
+    orientation?: boolean
+    scalePercent?: boolean
+  } | null
   document: PrintDocument
 } {
   if (payload.type === 'report') {
     const detail = getReportSnapshotDetail(db, payload.snapshotId, payload.ledgerId)
+    const segment = getReportSegment(detail, payload.renderOptions)
     const document: PrintDocument = {
       title: detail.report_name,
       orientation: detail.report_type === 'equity_statement' ? 'landscape' : 'portrait',
       showPageNumber: false,
-      segments: [getReportSegment(detail)]
+      segments: [segment]
     }
+    const reportSettings = resolveReportPrintSettings(
+      detail.report_type,
+      segment,
+      undefined,
+      document.orientation
+    )
     return {
       title: detail.report_name,
       type: 'report',
       ledgerId: detail.ledger_id,
-      orientation: document.orientation,
+      orientation: reportSettings.settings.orientation,
+      settings: reportSettings.settings,
+      controlLocks: reportSettings.controlLocks,
       document
     }
   }
@@ -946,11 +1046,19 @@ function createPrintDocument(
       showPageNumber: false,
       segments: details.map((detail) => getReportSegment(detail))
     }
+    const reportSettings = resolveReportPrintSettings(
+      reportType,
+      document.segments[0] as PrintTableSegment,
+      undefined,
+      document.orientation
+    )
     return {
       title: document.title,
       type: 'batch',
       ledgerId: details[0].ledger_id,
-      orientation: document.orientation,
+      orientation: reportSettings.settings.orientation,
+      settings: reportSettings.settings,
+      controlLocks: reportSettings.controlLocks,
       document
     }
   }
@@ -981,6 +1089,8 @@ function createPrintDocument(
       type: 'book',
       ledgerId: payload.ledgerId,
       orientation: document.orientation,
+      settings: buildDefaultPreviewSettings(document.orientation),
+      controlLocks: null,
       document
     }
   }
@@ -1009,6 +1119,8 @@ function createPrintDocument(
     type: voucherPayload.voucherIds.length > 1 ? 'batch' : 'voucher',
     ledgerId: voucherData.ledgerId,
     orientation: document.orientation,
+    settings: buildDefaultPreviewSettings(document.orientation),
+    controlLocks: null,
     document
   }
 }
@@ -1172,6 +1284,7 @@ export async function preparePrintJobForActor(
     sourceDocument: null,
     layoutResult: null,
     layoutVersion: 0,
+    controlLocks: null,
     error: null,
     previewWebContentsId: null
   })
@@ -1247,7 +1360,7 @@ export function getPrintPreviewModelForActor(
   db: ReturnType<typeof getDatabase>,
   actor: CommandActor | null,
   jobId: string
-): (PrintLayoutResult & { layoutVersion: number }) | null {
+): PrintPreviewModel | null {
   const job = getAccessiblePrintJobForActor(db, actor, jobId)
   if (!job) {
     return null
@@ -1260,13 +1373,31 @@ export async function updatePrintPreviewSettingsForActor(
   db: ReturnType<typeof getDatabase>,
   actor: CommandActor | null,
   payload: { jobId: string; settings: Partial<PrintPreviewSettings> }
-): Promise<(PrintLayoutResult & { layoutVersion: number }) | null> {
+): Promise<PrintPreviewModel | null> {
   const job = getAccessiblePrintJobForActor(db, actor, payload.jobId)
   if (!job || !job.sourceDocument) {
     return null
   }
 
-  const nextSettings = normalizePrintPreviewSettings(payload.settings, job.settings.orientation)
+  const requestedSettings = normalizePrintPreviewSettings(
+    { ...job.settings, ...payload.settings },
+    job.settings.orientation
+  )
+  const forceSinglePage =
+    job.sourceDocument.segments.some(
+      (segment) => segment.kind === 'table' && segment.forceSinglePage === true
+    ) && job.sourceDocument.segments[0]?.kind === 'table'
+  const nextSettings = forceSinglePage
+    ? resolveReportPrintSettings(
+        'balance_sheet',
+        job.sourceDocument.segments[0] as PrintTableSegment,
+        {
+          ...requestedSettings,
+          orientation: job.sourceDocument.orientation
+        },
+        job.sourceDocument.orientation
+      ).settings
+    : requestedSettings
   const layoutResult = await layoutPrintDocument(job.sourceDocument, nextSettings)
   job.settings = nextSettings
   job.orientation = nextSettings.orientation
@@ -1508,6 +1639,7 @@ export function registerPrintHandlers(): void {
       sourceDocument: null,
       layoutResult: null,
       layoutVersion: 0,
+      controlLocks: null,
       error: null,
       previewWebContentsId: null
     })
@@ -1517,12 +1649,9 @@ export function registerPrintHandlers(): void {
       if (!job) return
       try {
         const prepared = createPrintDocument(db, payload)
-        const settings = loadPersistedPreviewSettings(
-          db,
-          user.id,
-          preferenceKey,
-          prepared.orientation
-        )
+        const settings = prepared.controlLocks
+          ? prepared.settings
+          : loadPersistedPreviewSettings(db, user.id, preferenceKey, prepared.orientation)
         const layoutResult = await layoutPrintDocument(prepared.document, settings)
         job.type = prepared.type
         job.title = prepared.title
@@ -1532,6 +1661,7 @@ export function registerPrintHandlers(): void {
         job.sourceDocument = prepared.document
         job.layoutResult = layoutResult
         job.layoutVersion = 1
+        job.controlLocks = prepared.controlLocks
         job.status = 'ready'
         job.error = null
         savePrintJob(job)

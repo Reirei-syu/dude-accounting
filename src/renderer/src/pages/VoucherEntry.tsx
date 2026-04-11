@@ -18,6 +18,10 @@ import {
   inheritSummaryFromPreviousRow
 } from './voucherEntryRowUtils'
 import {
+  buildVoucherSubjectPath,
+  filterLeafVoucherSubjectsByKeyword
+} from './voucherSubjectUtils'
+import {
   getDefaultVoucherDateForNewVoucher,
   sortVouchersForDisplay
 } from './voucherOrdering'
@@ -159,7 +163,6 @@ const createEmptyRow = (): VoucherRow => ({
 
 const DEFAULT_ROWS = 4
 const AMOUNT_PATTERN = /^\d+(\.\d{0,2})?$/
-const NUMERIC_SUBJECT_KEYWORD_PATTERN = /^\d+$/
 const getSubjectCategoryOrder = (standardType?: 'enterprise' | 'npo'): string[] =>
   standardType === 'npo'
     ? ['asset', 'liability', 'net_assets', 'income', 'expense']
@@ -314,26 +317,6 @@ const buildSubjectTreeRows = (
   }
 
   return treeRows
-}
-
-const filterSubjectsByKeyword = (subjects: VoucherSubject[], keyword: string): VoucherSubject[] => {
-  const normalizedKeyword = keyword.trim()
-  if (!normalizedKeyword) {
-    return []
-  }
-
-  const isNumericKeyword = NUMERIC_SUBJECT_KEYWORD_PATTERN.test(normalizedKeyword)
-  const filtered = subjects.filter((subject) => {
-    if (isNumericKeyword) {
-      return (
-        subject.code.startsWith(normalizedKeyword) || subject.name.startsWith(normalizedKeyword)
-      )
-    }
-
-    return subject.code.startsWith(normalizedKeyword) || subject.name.includes(normalizedKeyword)
-  })
-
-  return filtered.sort((left, right) => left.code.localeCompare(right.code)).slice(0, 20)
 }
 
 const findFirstLeafSubject = (
@@ -505,6 +488,7 @@ export default function VoucherEntry({
   const [cashFlowItems, setCashFlowItems] = useState<CashFlowItem[]>([])
   const [activeSubjectRowId, setActiveSubjectRowId] = useState<string | null>(null)
   const [manualSubjectRowId, setManualSubjectRowId] = useState<string | null>(null)
+  const [manualSubjectSearchKeyword, setManualSubjectSearchKeyword] = useState('')
   const [manualTreeExpandedCodes, setManualTreeExpandedCodes] = useState<Set<string>>(new Set())
   const [cashFlowDialogOpen, setCashFlowDialogOpen] = useState(false)
   const [cashFlowDraft, setCashFlowDraft] = useState<Record<string, CashFlowDraft>>({})
@@ -532,6 +516,24 @@ export default function VoucherEntry({
   const inputRefs = useRef<(HTMLInputElement | null)[][]>([])
   const lastFocusedCellRef = useRef<{ rowIdx: number; colIdx: number } | null>(null)
   const subjectHierarchy = useMemo(() => buildSubjectHierarchy(allSubjects), [allSubjects])
+  const subjectByCode = useMemo(
+    () => new Map(allSubjects.map((subject) => [subject.code, subject])),
+    [allSubjects]
+  )
+  const subjectPathByCode = useMemo(
+    () =>
+      new Map(
+        allSubjects.map((subject) => [
+          subject.code,
+          buildVoucherSubjectPath(
+            subject.code,
+            subjectByCode,
+            subjectHierarchy.logicalParentByCode
+          )
+        ])
+      ),
+    [allSubjects, subjectByCode, subjectHierarchy.logicalParentByCode]
+  )
   const manualTreeRows = useMemo(
     () => buildSubjectTreeRows(allSubjects, subjectHierarchy, currentLedger?.standard_type),
     [allSubjects, currentLedger?.standard_type, subjectHierarchy]
@@ -567,6 +569,15 @@ export default function VoucherEntry({
         return true
       }),
     [manualTreeExpandedCodes, manualTreeNodeByCode, manualTreeRows]
+  )
+  const manualSearchResults = useMemo(
+    () =>
+      filterLeafVoucherSubjectsByKeyword(
+        allSubjects,
+        manualSubjectSearchKeyword,
+        subjectHierarchy.hasChildrenCodes
+      ),
+    [allSubjects, manualSubjectSearchKeyword, subjectHierarchy.hasChildrenCodes]
   )
 
   useEffect(() => {
@@ -871,7 +882,11 @@ export default function VoucherEntry({
   const updateSubjectOptions = (rowId: string, keyword: string): void => {
     setSubjectOptions((prev) => ({
       ...prev,
-      [rowId]: filterSubjectsByKeyword(allSubjects, keyword)
+      [rowId]: filterLeafVoucherSubjectsByKeyword(
+        allSubjects,
+        keyword,
+        subjectHierarchy.hasChildrenCodes
+      )
     }))
   }
 
@@ -939,12 +954,14 @@ export default function VoucherEntry({
     }
 
     setActiveSubjectRowId(null)
+    setManualSubjectSearchKeyword('')
     setManualTreeExpandedCodes(new Set())
     setManualSubjectRowId(rowId)
   }
 
   const closeManualSubjectDialog = useCallback((): void => {
     setManualSubjectRowId(null)
+    setManualSubjectSearchKeyword('')
     setManualTreeExpandedCodes(new Set())
   }, [])
 
@@ -1471,6 +1488,31 @@ export default function VoucherEntry({
     setDate(nextDate)
   }
 
+  const handleDateInputKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key !== 'Enter') {
+      return
+    }
+
+    event.preventDefault()
+    const nextDate = event.currentTarget.value
+
+    if (!isDateWithinRange(nextDate, periodDateRange)) {
+      if (periodDateRange) {
+        setMessage({
+          type: 'error',
+          text: `凭证日期必须在当前会计期间内（${periodDateRange.min} ~ ${periodDateRange.max}）`
+        })
+      }
+      return
+    }
+
+    setMessage(null)
+    setDate(nextDate)
+    window.requestAnimationFrame(() => {
+      focusCell(0, 0)
+    })
+  }
+
   const handleOpenPrintDialog = (): void => {
     setMessage(null)
     if (editingVoucherId === null) {
@@ -1668,6 +1710,7 @@ export default function VoucherEntry({
             min={periodDateRange?.min}
             max={periodDateRange?.max}
             onChange={(e) => handleDateChange(e.target.value)}
+            onKeyDown={handleDateInputKeyDown}
             disabled={!canEditFields}
           />
         </div>
@@ -1769,6 +1812,7 @@ export default function VoucherEntry({
                     placeholder="输入末级科目代码或名称"
                     disabled={!canEditFields}
                     aria-label="voucher-row-subject"
+                    title={row.subjectCode ? (subjectPathByCode.get(row.subjectCode) ?? '') : ''}
                   />
                   <button
                     type="button"
@@ -1960,6 +2004,16 @@ export default function VoucherEntry({
               </button>
             </div>
 
+            <div className="mt-4">
+              <input
+                type="text"
+                className="glass-input w-full px-3 py-2 text-sm"
+                value={manualSubjectSearchKeyword}
+                onChange={(event) => setManualSubjectSearchKeyword(event.target.value)}
+                placeholder="搜索科目代码或名称，仅显示末级科目结果"
+              />
+            </div>
+
             <div
               className="mt-4 overflow-auto rounded-md border max-h-[60vh]"
               style={{ borderColor: 'var(--color-glass-border-light)' }}
@@ -1976,7 +2030,47 @@ export default function VoucherEntry({
                 <div className="text-right">类型</div>
               </div>
 
-              {manualVisibleTreeRows.length === 0 ? (
+              {manualSubjectSearchKeyword.trim() !== '' ? (
+                manualSearchResults.length === 0 ? (
+                  <div
+                    className="py-10 text-center text-sm"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    未找到匹配的末级科目
+                  </div>
+                ) : (
+                  manualSearchResults.map((subject) => (
+                    <button
+                      key={subject.id}
+                      type="button"
+                      className="grid w-full grid-cols-[140px_minmax(0,1fr)_88px] gap-3 px-3 py-2 text-left text-sm items-start border-b last:border-b-0 hover:bg-black/5"
+                      style={{
+                        borderColor: 'var(--color-glass-border-light)',
+                        color: 'var(--color-text-primary)'
+                      }}
+                      onClick={() => selectSubjectFromDialog(subject)}
+                      title={subjectPathByCode.get(subject.code) ?? ''}
+                    >
+                      <div className="truncate">{subject.code}</div>
+                      <div className="min-w-0">
+                        <div className="truncate">{subject.name}</div>
+                        <div
+                          className="mt-1 truncate text-xs"
+                          style={{ color: 'var(--color-text-muted)' }}
+                        >
+                          {subjectPathByCode.get(subject.code) ?? ''}
+                        </div>
+                      </div>
+                      <div
+                        className="text-right text-xs"
+                        style={{ color: 'var(--color-text-secondary)' }}
+                      >
+                        末级
+                      </div>
+                    </button>
+                  ))
+                )
+              ) : manualVisibleTreeRows.length === 0 ? (
                 <div
                   className="py-10 text-center text-sm"
                   style={{ color: 'var(--color-text-muted)' }}

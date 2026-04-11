@@ -1,5 +1,9 @@
 import Decimal from 'decimal.js'
 import type { JSX } from 'react'
+import {
+  buildPresentedReportTables,
+  type ReportRenderOptions
+} from '../../../shared/reportTablePresentation'
 
 export type ReportType =
   | 'balance_sheet'
@@ -136,11 +140,17 @@ export function formatGeneratedAt(raw: string): string {
 
 interface ViewerProps {
   detail: ReportSnapshotDetail
+  renderOptions?: ReportRenderOptions
 }
 
-export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
+export function ReportSnapshotViewer({ detail, renderOptions }: ViewerProps): JSX.Element {
   const isMultiColumn = (detail.content.tableColumns?.length ?? 0) > 0
-  const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
+  const presentedTables = buildPresentedReportTables(
+    detail.report_type,
+    detail.content.tables,
+    renderOptions
+  )
+  const hasOfficialTables = (presentedTables?.length ?? 0) > 0
 
   return (
     <div className="glass-panel-light p-4 flex flex-col gap-4">
@@ -204,7 +214,7 @@ export function ReportSnapshotViewer({ detail }: ViewerProps): JSX.Element {
 
       <div className="grid gap-4 xl:grid-cols-2">
         {hasOfficialTables
-          ? detail.content.tables?.map((table) => (
+          ? presentedTables?.map((table) => (
               <div
                 key={table.key}
                 className="rounded-2xl border overflow-hidden xl:col-span-2"

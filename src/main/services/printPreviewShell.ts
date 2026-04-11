@@ -23,6 +23,17 @@ export function buildPagedPrintPreviewHtml(
     initialModel.settings,
     initialModel.settings.orientation
   )
+  const scaleOptions = Array.from({ length: 15 }, (_, index) => 100 - index * 5).filter(
+    (value) => value >= 30
+  )
+  const orientationDisabledAttr = initialModel.controlLocks?.orientation ? ' disabled' : ''
+  const scaleDisabledAttr = initialModel.controlLocks?.scalePercent ? ' disabled' : ''
+  const scaleOptionsHtml = scaleOptions
+    .map(
+      (value) =>
+        `<option value="${value}"${defaultSettings.scalePercent === value ? ' selected' : ''}>${value}%</option>`
+    )
+    .join('')
   const serializedModel = JSON.stringify(initialModel).replace(/</g, '\\u003c')
 
   return `<!doctype html>
@@ -356,21 +367,14 @@ export function buildPagedPrintPreviewHtml(
       <span id="preview-status" class="preview-status"></span>
       <label class="preview-control preview-control--orientation" for="preview-orientation-select">
         纸张方向
-        <select id="preview-orientation-select" onchange="handleSettingChange({ orientation: this.value })">
+        <select id="preview-orientation-select" onchange="handleSettingChange({ orientation: this.value })"${orientationDisabledAttr}>
           <option value="portrait"${defaultSettings.orientation === 'portrait' ? ' selected' : ''}>竖向</option>
           <option value="landscape"${defaultSettings.orientation === 'landscape' ? ' selected' : ''}>横向</option>
         </select>
       </label>
       <label class="preview-control" for="preview-scale-select">
         缩放
-        <select id="preview-scale-select" onchange="handleSettingChange({ scalePercent: Number(this.value) })">
-          <option value="100"${defaultSettings.scalePercent === 100 ? ' selected' : ''}>100%</option>
-          <option value="95"${defaultSettings.scalePercent === 95 ? ' selected' : ''}>95%</option>
-          <option value="90"${defaultSettings.scalePercent === 90 ? ' selected' : ''}>90%</option>
-          <option value="85"${defaultSettings.scalePercent === 85 ? ' selected' : ''}>85%</option>
-          <option value="80"${defaultSettings.scalePercent === 80 ? ' selected' : ''}>80%</option>
-          <option value="75"${defaultSettings.scalePercent === 75 ? ' selected' : ''}>75%</option>
-        </select>
+        <select id="preview-scale-select" onchange="handleSettingChange({ scalePercent: Number(this.value) })"${scaleDisabledAttr}>${scaleOptionsHtml}</select>
       </label>
       <label class="preview-control preview-control--margin" for="preview-margin-select">
         页边距
@@ -407,6 +411,7 @@ export function buildPagedPrintPreviewHtml(
       const rootStyle = document.documentElement.style;
       const initialPreviewModel = ${serializedModel};
       const defaultPreviewSettings = ${JSON.stringify(defaultSettings)};
+      const lockedPreviewControls = ${JSON.stringify(initialModel.controlLocks ?? {})};
       const marginPresetMap = {
         default: { paddingY: '16mm', paddingX: '14mm' },
         narrow: { paddingY: '10mm', paddingX: '8mm' },
@@ -446,7 +451,10 @@ export function buildPagedPrintPreviewHtml(
             orientationCandidate === 'landscape' || orientationCandidate === 'portrait'
               ? orientationCandidate
               : fallbackOrientation,
-          scalePercent: [75, 80, 85, 90, 95, 100].includes(scalePercent) ? scalePercent : 100,
+          scalePercent:
+            Number.isInteger(scalePercent) && scalePercent >= 30 && scalePercent <= 100 && scalePercent % 5 === 0
+              ? scalePercent
+              : 100,
           marginPreset: ['default', 'narrow', 'extra-narrow'].includes(candidate?.marginPreset)
             ? candidate.marginPreset
             : 'default',
@@ -568,8 +576,15 @@ export function buildPagedPrintPreviewHtml(
       }
 
       window.handleSettingChange = (partialSettings) => {
+        const normalizedPartialSettings = { ...partialSettings };
+        if (lockedPreviewControls.orientation) {
+          delete normalizedPartialSettings.orientation;
+        }
+        if (lockedPreviewControls.scalePercent) {
+          delete normalizedPartialSettings.scalePercent;
+        }
         const nextSettings = normalizePreviewSettings(
-          { ...activePreviewSettings, ...partialSettings },
+          { ...activePreviewSettings, ...normalizedPartialSettings },
           defaultPreviewSettings.orientation
         );
         void refreshPreviewModel(nextSettings);

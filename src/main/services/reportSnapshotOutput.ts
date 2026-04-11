@@ -4,6 +4,10 @@ import ExcelJS from 'exceljs'
 import PDFDocument from 'pdfkit'
 import { buildTimestampToken, ensureDirectory, sanitizePathSegment } from './fileIntegrity'
 import type { ReportExportFormat, ReportSnapshotDetail, ReportSnapshotScope } from './reporting'
+import {
+  buildPresentedReportTables,
+  type ReportRenderOptions
+} from '../../shared/reportTablePresentation'
 
 const REPORT_EXPORT_FALLBACK_NAME = '报表导出'
 
@@ -104,9 +108,18 @@ function resolveRowHighlightKindByLabel(label: string): 'subtotal' | 'total' | n
   return null
 }
 
-function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
-  if (detail.content.tables && detail.content.tables.length > 0) {
-    return detail.content.tables[0].columns.map(
+function getExportTableHeaders(
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
+): string[] {
+  const presentedTables = buildPresentedReportTables(
+    detail.report_type,
+    detail.content.tables,
+    renderOptions
+  )
+
+  if (presentedTables && presentedTables.length > 0) {
+    return presentedTables[0].columns.map(
       (column, index) => normalizeText(column.label) ?? getHeaderFallbackLabel(index)
     )
   }
@@ -117,10 +130,17 @@ function getExportTableHeaders(detail: ReportSnapshotDetail): string[] {
 }
 
 function getExportTableRows(
-  detail: ReportSnapshotDetail
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
 ): Array<{ section: string; values: string[] }> {
-  if (detail.content.tables && detail.content.tables.length > 0) {
-    return detail.content.tables.flatMap((table) =>
+  const presentedTables = buildPresentedReportTables(
+    detail.report_type,
+    detail.content.tables,
+    renderOptions
+  )
+
+  if (presentedTables && presentedTables.length > 0) {
+    return presentedTables.flatMap((table) =>
       table.rows.map((row) => ({
         section: table.key,
         values: row.cells.map((cell) =>
@@ -150,7 +170,10 @@ function getExportTableRows(
   )
 }
 
-export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
+export function buildReportSnapshotHtml(
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
+): string {
   const title = escapeHtml(getDisplayTitle(detail))
   const ledgerName = escapeHtml(detail.ledger_name)
   const period = escapeHtml(formatExportPeriodLabel(detail.content.scope))
@@ -158,10 +181,15 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
   const bodyFontSize = detail.report_type === 'equity_statement' ? 10 : 12
   const titleFontSize = detail.report_type === 'equity_statement' ? 18 : 20
   const cellPadding = detail.report_type === 'equity_statement' ? '4px 6px' : '6px 8px'
+  const presentedTables = buildPresentedReportTables(
+    detail.report_type,
+    detail.content.tables,
+    renderOptions
+  )
 
   const sectionHtml =
-    detail.content.tables && detail.content.tables.length > 0
-      ? detail.content.tables
+    presentedTables && presentedTables.length > 0
+      ? presentedTables
           .map((table) => {
             const headerCells = table.columns
               .map((column) => `<th>${escapeHtml(column.label)}</th>`)
@@ -263,7 +291,7 @@ export function buildReportSnapshotHtml(detail: ReportSnapshotDetail): string {
     .join('')
   const totalsSectionHtml =
     detail.report_type === 'balance_sheet' ||
-    (detail.content.tables && detail.content.tables.length > 0)
+    (presentedTables && presentedTables.length > 0)
       ? ''
       : `
       <section class="report-section totals">
@@ -390,18 +418,20 @@ export function buildDefaultReportExportFileName(
 export function writeReportSnapshotHtml(
   outputDir: string,
   detail: ReportSnapshotDetail,
-  now: Date = new Date()
+  now: Date = new Date(),
+  renderOptions?: ReportRenderOptions
 ): string {
   ensureDirectory(outputDir)
   const fileName = `${sanitizeFileName(detail.report_name)}-${buildTimestampToken(now)}.html`
   const filePath = path.join(outputDir, fileName)
-  fs.writeFileSync(filePath, buildReportSnapshotHtml(detail), 'utf8')
+  fs.writeFileSync(filePath, buildReportSnapshotHtml(detail, renderOptions), 'utf8')
   return filePath
 }
 
 export async function writeReportSnapshotExcel(
   filePath: string,
-  detail: ReportSnapshotDetail
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
 ): Promise<string> {
   const workbook = new ExcelJS.Workbook()
   const displayTitle = getDisplayTitle(detail)
@@ -409,9 +439,11 @@ export async function writeReportSnapshotExcel(
     views: [{ state: 'frozen', ySplit: 4 }]
   })
 
-  const headers = getExportTableHeaders(detail)
-  const rows = getExportTableRows(detail)
-  const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
+  const headers = getExportTableHeaders(detail, renderOptions)
+  const rows = getExportTableRows(detail, renderOptions)
+  const hasOfficialTables =
+    (buildPresentedReportTables(detail.report_type, detail.content.tables, renderOptions)?.length ??
+      0) > 0
   const exportPeriod = formatExportPeriodLabel(detail.content.scope)
 
   worksheet.mergeCells(1, 1, 1, headers.length)
@@ -539,7 +571,8 @@ export async function writeReportSnapshotExcel(
 
 export async function writeReportSnapshotPdf(
   filePath: string,
-  detail: ReportSnapshotDetail
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
 ): Promise<string> {
   ensureDirectory(path.dirname(filePath))
 
@@ -554,9 +587,11 @@ export async function writeReportSnapshotPdf(
     document.pipe(stream)
 
     const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right
-    const headers = getExportTableHeaders(detail)
-    const rows = getExportTableRows(detail)
-    const hasOfficialTables = (detail.content.tables?.length ?? 0) > 0
+    const headers = getExportTableHeaders(detail, renderOptions)
+    const rows = getExportTableRows(detail, renderOptions)
+    const hasOfficialTables =
+      (buildPresentedReportTables(detail.report_type, detail.content.tables, renderOptions)?.length ??
+        0) > 0
     const columnWidth = headers.length > 0 ? pageWidth / headers.length : pageWidth
     const exportPeriod = formatExportPeriodLabel(detail.content.scope)
 

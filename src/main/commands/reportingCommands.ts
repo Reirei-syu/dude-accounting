@@ -15,6 +15,7 @@ import {
   type ReportListFilters
 } from '../services/reporting'
 import { writeReportSnapshotExcel, writeReportSnapshotPdf } from '../services/reportSnapshotOutput'
+import type { ReportRenderOptions } from '../../shared/reportTablePresentation'
 import {
   buildBookQueryExportDefaultPath,
   exportBookQueryToFile,
@@ -161,6 +162,7 @@ export async function exportReportCommand(
     ledgerId?: number
     format: ReportExportFormat
     filePath?: string
+    renderOptions?: ReportRenderOptions
   }
 ): Promise<CommandResult<{ filePath: string }>> {
   return withCommandResult(context, async () => {
@@ -170,8 +172,8 @@ export async function exportReportCommand(
     const targetPath = resolveReportExportPath(context, payload.format, payload.filePath, detail)
     const exportPath =
       payload.format === 'xlsx'
-        ? await writeReportSnapshotExcel(targetPath, detail)
-        : await writeReportSnapshotPdf(targetPath, detail)
+        ? await writeReportSnapshotExcel(targetPath, detail, payload.renderOptions)
+        : await writeReportSnapshotPdf(targetPath, detail, payload.renderOptions)
     rememberReportExportDir(context.db, exportPath)
 
     appendActorOperationLog(context, {

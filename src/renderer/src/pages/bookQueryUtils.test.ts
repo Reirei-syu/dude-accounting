@@ -14,6 +14,14 @@ describe('bookQueryUtils', () => {
       startDate: '2026-02-01',
       endDate: '2026-02-28'
     })
+    expect(getPeriodDateRange('2024-02')).toEqual({
+      startDate: '2024-02-01',
+      endDate: '2024-02-29'
+    })
+    expect(getPeriodDateRange('2026-12')).toEqual({
+      startDate: '2026-12-01',
+      endDate: '2026-12-31'
+    })
   })
 
   it('builds current-year date range from january first to today', () => {

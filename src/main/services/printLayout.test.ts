@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildTableLayoutResult,
-  buildVoucherLayoutResult
+  buildVoucherLayoutResult,
+  estimateSinglePageScalePercent
 } from './printLayout'
 import type { PrintTableSegment, PrintVoucherSegment, PrintPreviewSettings } from './print'
 
@@ -182,5 +183,32 @@ describe('printLayout service', () => {
     expect(result.pages[1]?.firstRowKey).toBe('3')
     expect(result.pages[0]?.pageHtml).toContain('voucher-page double')
     expect(result.pages[1]?.pageHtml).toContain('记-0003')
+  })
+
+  it('estimates a reduced scale for single-page report tables', () => {
+    const segment: PrintTableSegment = {
+      kind: 'table',
+      title: '现金流量表',
+      ledgerName: '测试账套',
+      periodLabel: '2026.01-2026.12',
+      unitLabel: '元',
+      forceSinglePage: true,
+      columns: [
+        { key: 'item', label: '项目', align: 'left' },
+        { key: 'current', label: '本年金额', align: 'right' },
+        { key: 'previous', label: '上年金额', align: 'right' }
+      ],
+      rows: Array.from({ length: 40 }, (_, index) => ({
+        key: `row-${index + 1}`,
+        cells: [
+          { value: `第 ${index + 1} 行非常长的现金流量项目名称` },
+          { value: 123456.78, isAmount: true },
+          { value: 23456.78, isAmount: true }
+        ]
+      }))
+    }
+
+    expect(estimateSinglePageScalePercent(segment, settings)).toBeLessThan(100)
+    expect(estimateSinglePageScalePercent(segment, settings)).toBeGreaterThanOrEqual(30)
   })
 })

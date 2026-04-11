@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import {
   filterSubjectRowsByCodeRange,
   getCurrentYearDateRange,
+  getPeriodDateRange,
   resolveAuxiliaryItemsForSubject,
   type AuxiliaryItemOption,
   type SubjectOption,
@@ -83,8 +84,13 @@ function clampMenuPosition(x: number, y: number): { x: number; y: number } {
 
 export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element {
   const currentLedger = useLedgerStore((state) => state.currentLedger)
+  const currentPeriod = useLedgerStore((state) => state.currentPeriod)
   const openTab = useUIStore((state) => state.openTab)
   const defaultRange = useMemo(() => getCurrentYearDateRange(), [])
+  const currentMonthRange = useMemo(
+    () => (currentPeriod ? getPeriodDateRange(currentPeriod) : null),
+    [currentPeriod]
+  )
 
   const [dateFrom, setDateFrom] = useState(props.presetStartDate ?? defaultRange.startDate)
   const [dateTo, setDateTo] = useState(props.presetEndDate ?? defaultRange.endDate)
@@ -317,6 +323,17 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
 
   const handleOpenPreview = (): void => {
     void executeQuery({ openPreview: true })
+  }
+
+  const handleApplyCurrentMonthRange = (): void => {
+    if (!currentMonthRange) {
+      setError('请先选择当前会计期间')
+      return
+    }
+
+    setError('')
+    setDateFrom(currentMonthRange.startDate)
+    setDateTo(currentMonthRange.endDate)
   }
 
   const handleExport = async (format: BookExportFormat): Promise<void> => {
@@ -708,6 +725,14 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
           <button
             className="glass-btn-secondary px-5 py-2"
             type="button"
+            onClick={handleApplyCurrentMonthRange}
+            disabled={!currentMonthRange}
+          >
+            本月
+          </button>
+          <button
+            className="glass-btn-secondary px-5 py-2"
+            type="button"
             onClick={handleOpenPreview}
           >
             {loading ? '查询中...' : '全屏查看'}
@@ -834,6 +859,14 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
             />
             <button className="glass-btn-secondary px-5 py-2" type="submit">
               {loading ? '查询中...' : '查询'}
+            </button>
+            <button
+              className="glass-btn-secondary px-5 py-2"
+              type="button"
+              onClick={handleApplyCurrentMonthRange}
+              disabled={!currentMonthRange}
+            >
+              本月
             </button>
             <button
               className="glass-btn-secondary px-5 py-2"

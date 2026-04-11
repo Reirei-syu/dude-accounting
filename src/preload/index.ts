@@ -366,7 +366,14 @@ const api = {
     }) => ipcRenderer.invoke('reporting:list', filters),
     getDetail: (payload: { snapshotId: number; ledgerId?: number }) =>
       ipcRenderer.invoke('reporting:getDetail', payload),
-    export: (payload: { snapshotId: number; ledgerId?: number; format: 'xlsx' | 'pdf' }) =>
+    export: (payload: {
+      snapshotId: number
+      ledgerId?: number
+      format: 'xlsx' | 'pdf'
+      renderOptions?: {
+        showCashflowPreviousAmount?: boolean
+      }
+    }) =>
       ipcRenderer.invoke('reporting:export', payload),
     exportBatch: (payload: {
       snapshotIds: number[]

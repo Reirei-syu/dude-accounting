@@ -53,6 +53,53 @@ function buildColumnWidthPercents(segment: PrintTableSegment): number[] {
   return rawWeights.map((weight) => (weight / totalWeight) * 100)
 }
 
+function resolveTablePageMetrics(
+  segment: PrintTableSegment,
+  settings: PrintPreviewSettings
+): {
+  columnWidths: number[]
+  pageHeight: number
+  headerHeight: number
+  columnHeaderHeight: number
+  availableBodyHeight: number
+} {
+  const columnWidths = buildColumnWidthPercents(segment)
+  const pageHeight =
+    settings.orientation === 'landscape'
+      ? settings.marginPreset === 'extra-narrow'
+        ? 690
+        : settings.marginPreset === 'narrow'
+          ? 640
+          : 590
+      : settings.marginPreset === 'extra-narrow'
+        ? 1040
+        : settings.marginPreset === 'narrow'
+          ? 980
+          : 920
+  const headerHeight =
+    segment.headerMode === 'book'
+      ? settings.orientation === 'landscape'
+        ? 150
+        : 170
+      : settings.orientation === 'landscape'
+        ? 108
+        : 124
+  const columnHeaderHeight =
+    settings.densityPreset === 'ultra-compact'
+      ? 28
+      : settings.densityPreset === 'compact'
+        ? 32
+        : 38
+
+  return {
+    columnWidths,
+    pageHeight,
+    headerHeight,
+    columnHeaderHeight,
+    availableBodyHeight: Math.max(160, pageHeight - headerHeight - columnHeaderHeight)
+  }
+}
+
 function estimateTableRowHeight(
   row: PrintTableRow,
   settings: PrintPreviewSettings,
@@ -96,35 +143,7 @@ export function estimateTableRowGroups(
   rowKeyGroups: string[][]
   oversizeRowKeys: string[]
 } {
-  const columnWidths = buildColumnWidthPercents(segment)
-  const pageHeight =
-    settings.orientation === 'landscape'
-      ? settings.marginPreset === 'extra-narrow'
-        ? 690
-        : settings.marginPreset === 'narrow'
-          ? 640
-          : 590
-      : settings.marginPreset === 'extra-narrow'
-        ? 1040
-        : settings.marginPreset === 'narrow'
-          ? 980
-          : 920
-  const headerHeight =
-    segment.headerMode === 'book'
-      ? settings.orientation === 'landscape'
-        ? 150
-        : 170
-      : settings.orientation === 'landscape'
-        ? 108
-        : 124
-  const columnHeaderHeight =
-    settings.densityPreset === 'ultra-compact'
-      ? 28
-      : settings.densityPreset === 'compact'
-        ? 32
-        : 38
-
-  const availableBodyHeight = Math.max(160, pageHeight - headerHeight - columnHeaderHeight)
+  const { columnWidths, availableBodyHeight } = resolveTablePageMetrics(segment, settings)
   const rowKeyGroups: string[][] = []
   const oversizeRowKeys: string[] = []
   let currentGroup: string[] = []
@@ -152,6 +171,32 @@ export function estimateTableRowGroups(
     rowKeyGroups,
     oversizeRowKeys
   }
+}
+
+export function estimateSinglePageScalePercent(
+  segment: PrintTableSegment,
+  settings: PrintPreviewSettings
+): number {
+  const scaleBaselineSettings: PrintPreviewSettings = {
+    ...settings,
+    scalePercent: 100
+  }
+  const { columnWidths, headerHeight, columnHeaderHeight, pageHeight } = resolveTablePageMetrics(
+    segment,
+    scaleBaselineSettings
+  )
+  const bodyHeight = segment.rows.reduce(
+    (sum, row) => sum + estimateTableRowHeight(row, scaleBaselineSettings, columnWidths),
+    0
+  )
+  const totalContentHeight = headerHeight + columnHeaderHeight + bodyHeight
+
+  if (totalContentHeight <= 0 || totalContentHeight <= pageHeight) {
+    return 100
+  }
+
+  const rawScalePercent = Math.floor((pageHeight / totalContentHeight) * 100 * 0.98)
+  return Math.max(30, Math.min(100, Math.floor(rawScalePercent / 5) * 5))
 }
 
 function finalizePrintLayoutResult(

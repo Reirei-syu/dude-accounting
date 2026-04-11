@@ -30,6 +30,7 @@ export interface PrintTableSegment {
   titleMetaLines?: string[]
   headerMode?: 'default' | 'book'
   metaLines?: string[]
+  forceSinglePage?: boolean
   columns: PrintTableColumn[]
   rows: PrintTableRow[]
 }
@@ -100,6 +101,10 @@ export interface PrintLayoutResult {
 
 export interface PrintPreviewModel extends PrintLayoutResult {
   layoutVersion: number
+  controlLocks?: {
+    orientation?: boolean
+    scalePercent?: boolean
+  }
 }
 
 export type PrintPreviewMarginPreset = 'default' | 'narrow' | 'extra-narrow'
@@ -112,7 +117,9 @@ export interface PrintPreviewSettings {
   densityPreset: PrintPreviewDensityPreset
 }
 
-const PRINT_PREVIEW_SCALE_OPTIONS = new Set([75, 80, 85, 90, 95, 100])
+const PRINT_PREVIEW_SCALE_OPTIONS = new Set(
+  Array.from({ length: 15 }, (_, index) => 100 - index * 5).filter((value) => value >= 30)
+)
 
 export function normalizePrintPreviewSettings(
   settings: Partial<PrintPreviewSettings> | undefined,

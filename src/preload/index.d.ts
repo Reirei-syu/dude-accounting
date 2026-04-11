@@ -1271,7 +1271,14 @@ interface ReportingAPI {
     periods?: string[]
   }) => Promise<ReportSnapshotSummary[]>
   getDetail: (payload: { snapshotId: number; ledgerId?: number }) => Promise<ReportSnapshotDetail>
-  export: (payload: { snapshotId: number; ledgerId?: number; format: 'xlsx' | 'pdf' }) => Promise<{
+  export: (payload: {
+    snapshotId: number
+    ledgerId?: number
+    format: 'xlsx' | 'pdf'
+    renderOptions?: {
+      showCashflowPreviousAmount?: boolean
+    }
+  }) => Promise<{
     success: boolean
     cancelled?: boolean
     error?: string

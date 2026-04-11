@@ -7,7 +7,8 @@ import {
   buildDefaultReportExportFileName,
   buildReportSnapshotHtml,
   writeReportSnapshotExcel,
-  writeReportSnapshotHtml
+  writeReportSnapshotHtml,
+  writeReportSnapshotPdf
 } from './reportSnapshotOutput'
 import type { ReportSnapshotDetail } from './reporting'
 
@@ -289,5 +290,56 @@ describe('reportSnapshotOutput service', () => {
     expect(worksheet?.getCell(4, 1).value).toBe('项目')
     expect(worksheet?.getCell(4, 2).value).toBe('列2')
     expect(worksheet?.getCell(4, 3).value).toBe('列3')
+  })
+
+  it('hides cashflow previous columns across html, excel and pdf exports when requested', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail: ReportSnapshotDetail = {
+      ...createCrossYearDetail(),
+      report_type: 'cashflow_statement',
+      report_name: '现金流量表',
+      content: {
+        ...createCrossYearDetail().content,
+        title: '现金流量表',
+        reportType: 'cashflow_statement',
+        tables: [
+          {
+            key: 'cashflow',
+            columns: [
+              { key: 'item', label: '项目' },
+              { key: 'current', label: '本年金额' },
+              { key: 'previous', label: '上年金额' }
+            ],
+            rows: [
+              {
+                key: 'operating-net',
+                cells: [
+                  { value: '业务活动产生的现金流量净额' },
+                  { value: 13_000, isAmount: true },
+                  { value: 4_500, isAmount: true }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+    const xlsxPath = path.join(tempDir, 'cashflow.xlsx')
+    const pdfPath = path.join(tempDir, 'cashflow.pdf')
+
+    const html = buildReportSnapshotHtml(detail, { showCashflowPreviousAmount: false })
+    await writeReportSnapshotExcel(xlsxPath, detail, { showCashflowPreviousAmount: false })
+    await writeReportSnapshotPdf(pdfPath, detail, { showCashflowPreviousAmount: false })
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(xlsxPath)
+    const worksheet = workbook.worksheets[0]
+
+    expect(html).toContain('本年金额')
+    expect(html).not.toContain('上年金额')
+    expect(worksheet?.getCell(4, 1).value).toBe('项目')
+    expect(worksheet?.getCell(4, 2).value).toBe('本年金额')
+    expect(worksheet?.getCell(4, 3).value).not.toBe('上年金额')
+    expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
   })
 })
