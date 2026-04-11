@@ -779,7 +779,11 @@ export function seedPLCarryForwardRulesForLedger(
   const subjectDefs = getStandardSubjects(standardType)
   const sourceCategories = new Set(getCarryForwardSourceCategories(standardType))
   const plCodes = subjectDefs
-    .filter((subject) => sourceCategories.has(subject.category))
+    .filter(
+      (subject) =>
+        sourceCategories.has(subject.category) &&
+        !subjectDefs.some((candidate) => candidate.parent_code === subject.code)
+    )
     .map((subject) => subject.code)
 
   const insertMany = db.transaction(() => {

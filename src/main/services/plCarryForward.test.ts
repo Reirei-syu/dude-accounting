@@ -260,7 +260,7 @@ class FakeDatabase {
 
     if (
       normalized ===
-      'SELECT from_subject_code, to_subject_code FROM pl_carry_forward_rules WHERE ledger_id = ? ORDER BY from_subject_code ASC'
+      'SELECT id, from_subject_code, to_subject_code FROM pl_carry_forward_rules WHERE ledger_id = ? ORDER BY from_subject_code ASC, id ASC'
     ) {
       return {
         get: () => undefined,
@@ -268,8 +268,12 @@ class FakeDatabase {
           this.rules
             .filter((item) => item.ledger_id === Number(ledgerId))
             .slice()
-            .sort((left, right) => left.from_subject_code.localeCompare(right.from_subject_code))
+            .sort((left, right) => {
+              const byFrom = left.from_subject_code.localeCompare(right.from_subject_code)
+              return byFrom !== 0 ? byFrom : left.id - right.id
+            })
             .map((rule) => ({
+              id: rule.id,
               from_subject_code: rule.from_subject_code,
               to_subject_code: rule.to_subject_code
             })),
@@ -277,10 +281,14 @@ class FakeDatabase {
       }
     }
 
-    if (normalized.includes('COALESCE(SUM(ve.debit_amount), 0) AS debit_sum')) {
+    if (
+      normalized.includes('ve.subject_code AS subject_code') &&
+      normalized.includes('FROM vouchers v') &&
+      normalized.includes('INNER JOIN voucher_entries ve')
+    ) {
       return {
         get: () => undefined,
-        all: (period, ledgerId) => {
+        all: (ledgerId, period) => {
           const currentLedgerId = Number(ledgerId)
           const currentPeriod = String(period)
           const includeUnpostedVouchers = !normalized.includes('AND v.status = 2')
@@ -296,39 +304,36 @@ class FakeDatabase {
               .map((voucher) => voucher.id)
           )
 
-          return this.rules
-            .filter((item) => item.ledger_id === currentLedgerId)
-            .slice()
-            .sort((left, right) => {
-              const byFrom = left.from_subject_code.localeCompare(right.from_subject_code)
-              return byFrom !== 0
-                ? byFrom
-                : left.to_subject_code.localeCompare(right.to_subject_code)
-            })
-            .map((rule) => {
-              const fromSubject = this.subjects.find(
-                (subject) =>
-                  subject.ledger_id === currentLedgerId && subject.code === rule.from_subject_code
-              )
-              const toSubject = this.subjects.find(
-                (subject) =>
-                  subject.ledger_id === currentLedgerId && subject.code === rule.to_subject_code
-              )
-              const entries = this.voucherEntries.filter(
-                (entry) =>
-                  entry.subject_code === rule.from_subject_code &&
-                  eligibleVoucherIds.has(entry.voucher_id)
-              )
-              return {
-                rule_id: rule.id,
-                from_subject_code: rule.from_subject_code,
-                from_subject_name: fromSubject?.name ?? '',
-                to_subject_code: rule.to_subject_code,
-                to_subject_name: toSubject?.name ?? '',
-                debit_sum: entries.reduce((sum, entry) => sum + entry.debit_amount, 0),
-                credit_sum: entries.reduce((sum, entry) => sum + entry.credit_amount, 0)
+          const movementBySubjectCode = new Map<
+            string,
+            { subject_code: string; subject_name: string; debit_sum: number; credit_sum: number }
+          >()
+
+          this.voucherEntries
+            .filter((entry) => eligibleVoucherIds.has(entry.voucher_id))
+            .forEach((entry) => {
+              const current = movementBySubjectCode.get(entry.subject_code)
+              if (current) {
+                current.debit_sum += entry.debit_amount
+                current.credit_sum += entry.credit_amount
+                return
               }
+
+              movementBySubjectCode.set(entry.subject_code, {
+                subject_code: entry.subject_code,
+                subject_name:
+                  this.subjects.find(
+                    (subject) =>
+                      subject.ledger_id === currentLedgerId && subject.code === entry.subject_code
+                  )?.name ?? '',
+                debit_sum: entry.debit_amount,
+                credit_sum: entry.credit_amount
+              })
             })
+
+          return [...movementBySubjectCode.values()].sort((left, right) =>
+            left.subject_code.localeCompare(right.subject_code)
+          )
         },
         run: () => ({})
       }
@@ -620,6 +625,40 @@ describe('pl carry forward service', () => {
     ])
   })
 
+  it('filters duplicate legacy parent rules when listing carry-forward rules', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 2, '4101', '捐赠收入', 'income', -1)
+    seedSubject(db, 2, '410101', '捐赠收入-非限定性', 'income', -1)
+    seedSubject(db, 2, '410102', '捐赠收入-限定性', 'income', -1)
+    seedSubject(db, 2, '3101', '非限定性净资产', 'net_assets', -1)
+    seedSubject(db, 2, '3102', '限定性净资产', 'net_assets', -1)
+    seedRule(db, 2, '4101', '3101')
+    seedRule(db, 2, '4101', '3101')
+    seedRule(db, 2, '410101', '3101')
+    seedRule(db, 2, '410102', '3102')
+
+    const rules = listPLCarryForwardRules(db as never, 2)
+
+    expect(rules).toEqual([
+      {
+        id: expect.any(Number),
+        fromSubjectCode: '410101',
+        fromSubjectName: '捐赠收入-非限定性',
+        toSubjectCode: '3101',
+        toSubjectName: '非限定性净资产'
+      },
+      {
+        id: expect.any(Number),
+        fromSubjectCode: '410102',
+        fromSubjectName: '捐赠收入-限定性',
+        toSubjectCode: '3102',
+        toSubjectName: '限定性净资产'
+      }
+    ])
+  })
+
   it('auto-fills a missing sibling leaf rule when the parent only keeps descendant rules', () => {
     const db = createTestDb()
     openDbs.push(db)
@@ -726,6 +765,81 @@ describe('pl carry forward service', () => {
     expect(() => previewPLCarryForward(db as never, { ledgerId: 1, period: '2026-03' })).toThrow(
       '以下损益科目尚未配置结转目标：6602 管理费用'
     )
+  })
+
+  it('previews successfully when duplicate parent rules exist but leaf rules are complete', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 2, '1002', '银行存款', 'asset', 1)
+    seedSubject(db, 2, '4101', '捐赠收入', 'income', -1)
+    seedSubject(db, 2, '410101', '捐赠收入-非限定性', 'income', -1)
+    seedSubject(db, 2, '410102', '捐赠收入-限定性', 'income', -1)
+    seedSubject(db, 2, '3101', '非限定性净资产', 'net_assets', -1)
+    seedSubject(db, 2, '3102', '限定性净资产', 'net_assets', -1)
+    seedRule(db, 2, '4101', '3101')
+    seedRule(db, 2, '4101', '3101')
+    seedRule(db, 2, '410101', '3101')
+    seedRule(db, 2, '410102', '3102')
+
+    insertVoucher(db, {
+      ledgerId: 2,
+      period: '2026-03',
+      voucherDate: '2026-03-08',
+      voucherNumber: 1,
+      status: 2,
+      entries: [
+        { subjectCode: '1002', debitAmount: 50000, creditAmount: 0 },
+        { subjectCode: '410101', debitAmount: 0, creditAmount: 50000 }
+      ]
+    })
+    insertVoucher(db, {
+      ledgerId: 2,
+      period: '2026-03',
+      voucherDate: '2026-03-12',
+      voucherNumber: 2,
+      status: 2,
+      entries: [
+        { subjectCode: '1002', debitAmount: 20000, creditAmount: 0 },
+        { subjectCode: '410102', debitAmount: 0, creditAmount: 20000 }
+      ]
+    })
+
+    const preview = previewPLCarryForward(db as never, { ledgerId: 2, period: '2026-03' })
+
+    expect(preview.required).toBe(true)
+    expect(preview.totalDebit).toBe(70000)
+    expect(preview.totalCredit).toBe(70000)
+    expect(preview.entries).toEqual([
+      {
+        summary: '期末损益结转',
+        subjectCode: '410101',
+        subjectName: '捐赠收入-非限定性',
+        debitAmount: 50000,
+        creditAmount: 0
+      },
+      {
+        summary: '期末损益结转',
+        subjectCode: '410102',
+        subjectName: '捐赠收入-限定性',
+        debitAmount: 20000,
+        creditAmount: 0
+      },
+      {
+        summary: '期末损益结转',
+        subjectCode: '3101',
+        subjectName: '非限定性净资产',
+        debitAmount: 0,
+        creditAmount: 50000
+      },
+      {
+        summary: '期末损益结转',
+        subjectCode: '3102',
+        subjectName: '限定性净资产',
+        debitAmount: 0,
+        creditAmount: 20000
+      }
+    ])
   })
 
   it('previews enterprise carry-forward entries for the selected period', () => {
@@ -980,6 +1094,21 @@ describe('pl carry forward service', () => {
         creditAmount: 20000
       }
     ])
+  })
+
+  it('rejects preview when the same leaf source keeps multiple carry-forward targets', () => {
+    const db = createTestDb()
+    openDbs.push(db)
+
+    seedSubject(db, 2, '410101', '捐赠收入-非限定性', 'income', -1)
+    seedSubject(db, 2, '3101', '非限定性净资产', 'net_assets', -1)
+    seedSubject(db, 2, '3102', '限定性净资产', 'net_assets', -1)
+    seedRule(db, 2, '410101', '3101')
+    seedRule(db, 2, '410101', '3102')
+
+    expect(() => previewPLCarryForward(db as never, { ledgerId: 2, period: '2026-03' })).toThrow(
+      /410101.*3101.*3102/
+    )
   })
 
   it('rebuilds draft carry-forward vouchers and auto-bookkeeps when the system setting allows it', () => {

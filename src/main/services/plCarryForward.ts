@@ -102,6 +102,7 @@ type SubjectWithChildrenRow = {
 }
 
 type StoredCarryForwardRuleRow = {
+  id: number
   from_subject_code: string
   to_subject_code: string
 }
@@ -161,12 +162,88 @@ function listStoredCarryForwardRules(
 ): StoredCarryForwardRuleRow[] {
   return db
     .prepare(
-      `SELECT from_subject_code, to_subject_code
+      `SELECT id, from_subject_code, to_subject_code
        FROM pl_carry_forward_rules
        WHERE ledger_id = ?
-       ORDER BY from_subject_code ASC`
+       ORDER BY from_subject_code ASC, id ASC`
     )
     .all(ledgerId) as StoredCarryForwardRuleRow[]
+}
+
+function getLeafSourceSubjects(
+  subjects: SubjectWithChildrenRow[],
+  standardType: 'enterprise' | 'npo'
+): SubjectWithChildrenRow[] {
+  return subjects.filter(
+    (subject) =>
+      isCarryForwardSourceCategory(standardType, subject.category) && subject.has_children === 0
+  )
+}
+
+function normalizeStoredCarryForwardRules(
+  db: Database.Database,
+  ledgerId: number,
+  ledger?: LedgerRow,
+  subjects?: SubjectWithChildrenRow[]
+): {
+  ledger: LedgerRow
+  subjects: SubjectWithChildrenRow[]
+  rules: StoredCarryForwardRuleRow[]
+} {
+  const currentLedger = ledger ?? getLedgerRow(db, ledgerId)
+  const currentSubjects = subjects ?? listLedgerSubjectsWithChildren(db, ledgerId)
+  const subjectByCode = new Map(currentSubjects.map((subject) => [subject.code, subject]))
+  const leafSourceByCode = new Map(
+    getLeafSourceSubjects(currentSubjects, currentLedger.standard_type).map((subject) => [
+      subject.code,
+      subject
+    ])
+  )
+  const storedRules = listStoredCarryForwardRules(db, ledgerId)
+  const effectiveRulesBySource = new Map<string, StoredCarryForwardRuleRow>()
+  const conflictingTargetsBySource = new Map<string, Set<string>>()
+
+  for (const rule of storedRules) {
+    if (!leafSourceByCode.has(rule.from_subject_code)) {
+      continue
+    }
+
+    const existingRule = effectiveRulesBySource.get(rule.from_subject_code)
+    if (!existingRule) {
+      effectiveRulesBySource.set(rule.from_subject_code, rule)
+      continue
+    }
+
+    if (existingRule.to_subject_code === rule.to_subject_code) {
+      continue
+    }
+
+    const targetSet = conflictingTargetsBySource.get(rule.from_subject_code) ?? new Set<string>()
+    targetSet.add(existingRule.to_subject_code)
+    targetSet.add(rule.to_subject_code)
+    conflictingTargetsBySource.set(rule.from_subject_code, targetSet)
+  }
+
+  if (conflictingTargetsBySource.size > 0) {
+    const firstConflict = [...conflictingTargetsBySource.entries()].sort((left, right) =>
+      left[0].localeCompare(right[0])
+    )[0]
+    const [sourceCode, targetCodes] = firstConflict
+    const sourceText = formatSubjectList([sourceCode], subjectByCode)
+    const targetText = formatSubjectList(
+      [...targetCodes].sort((left, right) => left.localeCompare(right)),
+      subjectByCode
+    )
+    throw new Error(`末级结转来源科目 ${sourceText} 同时配置了多个结转目标：${targetText}`)
+  }
+
+  return {
+    ledger: currentLedger,
+    subjects: currentSubjects,
+    rules: [...effectiveRulesBySource.values()].sort((left, right) =>
+      left.from_subject_code.localeCompare(right.from_subject_code)
+    )
+  }
 }
 
 function findClosestAncestorCode(
@@ -214,11 +291,7 @@ function resolveInheritedTargetFromRules(
 function autoAttachInheritedCarryForwardRules(db: Database.Database, ledgerId: number): void {
   const ledger = getLedgerRow(db, ledgerId)
   const subjects = listLedgerSubjectsWithChildren(db, ledgerId)
-  const sourceSubjects = subjects.filter(
-    (subject) =>
-      isCarryForwardSourceCategory(ledger.standard_type, subject.category) &&
-      subject.has_children === 0
-  )
+  const sourceSubjects = getLeafSourceSubjects(subjects, ledger.standard_type)
   const rules = listStoredCarryForwardRules(db, ledgerId)
   const existingSourceCodes = new Set(rules.map((rule) => rule.from_subject_code))
   const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
@@ -249,8 +322,9 @@ function autoAttachInheritedCarryForwardRules(db: Database.Database, ledgerId: n
         continue
       }
 
-      insert.run(ledgerId, subject.code, inferredTargetCode)
+      const insertResult = insert.run(ledgerId, subject.code, inferredTargetCode)
       rules.push({
+        id: Number(insertResult.lastInsertRowid ?? 0),
         from_subject_code: subject.code,
         to_subject_code: inferredTargetCode
       })
@@ -315,16 +389,16 @@ function normalizeSaveRules(
 function assertCarryForwardRulesConfigured(
   db: Database.Database,
   ledgerId: number,
-  rules: SavePLCarryForwardRuleItem[]
+  rules: SavePLCarryForwardRuleItem[],
+  context?: {
+    ledger: LedgerRow
+    subjects: SubjectWithChildrenRow[]
+  }
 ): void {
-  const ledger = getLedgerRow(db, ledgerId)
-  const subjects = listLedgerSubjectsWithChildren(db, ledgerId)
+  const ledger = context?.ledger ?? getLedgerRow(db, ledgerId)
+  const subjects = context?.subjects ?? listLedgerSubjectsWithChildren(db, ledgerId)
   const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
-  const sourceSubjects = subjects.filter(
-    (subject) =>
-      isCarryForwardSourceCategory(ledger.standard_type, subject.category) &&
-      subject.has_children === 0
-  )
+  const sourceSubjects = getLeafSourceSubjects(subjects, ledger.standard_type)
   const targetPrefixes = getAllowedTargetPrefixes(ledger.standard_type)
   const targetSubjects = subjects.filter(
     (subject) =>
@@ -407,40 +481,52 @@ function getRuleMovements(
   db: Database.Database,
   ledgerId: number,
   period: string,
-  includeUnpostedVouchers: boolean
+  includeUnpostedVouchers: boolean,
+  rules: StoredCarryForwardRuleRow[],
+  subjects: SubjectWithChildrenRow[]
 ): RuleMovementRow[] {
   const voucherStatusCondition = includeUnpostedVouchers ? '' : 'AND v.status = 2'
-
-  return db
+  const subjectMovements = db
     .prepare(
       `SELECT
-       r.id AS rule_id,
-       r.from_subject_code AS from_subject_code,
-       fs.name AS from_subject_name,
-       r.to_subject_code AS to_subject_code,
-       ts.name AS to_subject_name,
+       ve.subject_code AS subject_code,
+       s.name AS subject_name,
        COALESCE(SUM(ve.debit_amount), 0) AS debit_sum,
        COALESCE(SUM(ve.credit_amount), 0) AS credit_sum
-     FROM pl_carry_forward_rules r
-     INNER JOIN subjects fs
-       ON fs.ledger_id = r.ledger_id
-      AND fs.code = r.from_subject_code
-     INNER JOIN subjects ts
-       ON ts.ledger_id = r.ledger_id
-      AND ts.code = r.to_subject_code
-     LEFT JOIN vouchers v
-       ON v.ledger_id = r.ledger_id
-      AND v.period = ?
-      ${voucherStatusCondition}
-      AND v.is_carry_forward = 0
-     LEFT JOIN voucher_entries ve
+     FROM vouchers v
+     INNER JOIN voucher_entries ve
        ON ve.voucher_id = v.id
-      AND ve.subject_code = r.from_subject_code
-     WHERE r.ledger_id = ?
-     GROUP BY r.id, r.from_subject_code, fs.name, r.to_subject_code, ts.name
-     ORDER BY r.from_subject_code ASC, r.to_subject_code ASC`
+     INNER JOIN subjects s
+       ON s.ledger_id = v.ledger_id
+      AND s.code = ve.subject_code
+     WHERE v.ledger_id = ?
+       AND v.period = ?
+       ${voucherStatusCondition}
+       AND v.is_carry_forward = 0
+     GROUP BY ve.subject_code, s.name
+     ORDER BY ve.subject_code ASC`
     )
-    .all(period, ledgerId) as RuleMovementRow[]
+    .all(ledgerId, period) as Array<{
+    subject_code: string
+    subject_name: string
+    debit_sum: number | null
+    credit_sum: number | null
+  }>
+  const movementBySubjectCode = new Map(subjectMovements.map((row) => [row.subject_code, row]))
+  const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
+
+  return rules.map((rule) => {
+    const movement = movementBySubjectCode.get(rule.from_subject_code)
+    return {
+      rule_id: rule.id,
+      from_subject_code: rule.from_subject_code,
+      from_subject_name: subjectByCode.get(rule.from_subject_code)?.name ?? '',
+      to_subject_code: rule.to_subject_code,
+      to_subject_name: subjectByCode.get(rule.to_subject_code)?.name ?? '',
+      debit_sum: movement?.debit_sum ?? 0,
+      credit_sum: movement?.credit_sum ?? 0
+    }
+  })
 }
 
 function buildPreviewEntries(movements: RuleMovementRow[]): PLCarryForwardEntryView[] {
@@ -556,42 +642,16 @@ export function listPLCarryForwardRules(
 ): PLCarryForwardRuleView[] {
   assertLedgerExists(db, ledgerId)
   autoAttachInheritedCarryForwardRules(db, ledgerId)
+  const { rules, subjects } = normalizeStoredCarryForwardRules(db, ledgerId)
+  const subjectByCode = new Map(subjects.map((subject) => [subject.code, subject]))
 
-  return db
-    .prepare(
-      `SELECT
-         r.id AS id,
-         r.from_subject_code AS from_subject_code,
-         fs.name AS from_subject_name,
-         r.to_subject_code AS to_subject_code,
-         ts.name AS to_subject_name
-       FROM pl_carry_forward_rules r
-       INNER JOIN subjects fs
-         ON fs.ledger_id = r.ledger_id
-        AND fs.code = r.from_subject_code
-       INNER JOIN subjects ts
-         ON ts.ledger_id = r.ledger_id
-        AND ts.code = r.to_subject_code
-       WHERE r.ledger_id = ?
-       ORDER BY r.from_subject_code ASC, r.to_subject_code ASC`
-    )
-    .all(ledgerId)
-    .map((row) => {
-      const typedRow = row as {
-        id: number
-        from_subject_code: string
-        from_subject_name: string
-        to_subject_code: string
-        to_subject_name: string
-      }
-      return {
-        id: typedRow.id,
-        fromSubjectCode: typedRow.from_subject_code,
-        fromSubjectName: typedRow.from_subject_name,
-        toSubjectCode: typedRow.to_subject_code,
-        toSubjectName: typedRow.to_subject_name
-      }
-    })
+  return rules.map((rule) => ({
+    id: rule.id,
+    fromSubjectCode: rule.from_subject_code,
+    fromSubjectName: subjectByCode.get(rule.from_subject_code)?.name ?? '',
+    toSubjectCode: rule.to_subject_code,
+    toSubjectName: subjectByCode.get(rule.to_subject_code)?.name ?? ''
+  }))
 }
 
 export function savePLCarryForwardRules(
@@ -628,16 +688,28 @@ export function previewPLCarryForward(
   assertLedgerExists(db, ledgerId)
   assertPeriodFormat(period)
   autoAttachInheritedCarryForwardRules(db, ledgerId)
+  const normalizedStoredRules = normalizeStoredCarryForwardRules(db, ledgerId)
   assertCarryForwardRulesConfigured(
     db,
     ledgerId,
-    listStoredCarryForwardRules(db, ledgerId).map((rule) => ({
+    normalizedStoredRules.rules.map((rule) => ({
       fromSubjectCode: rule.from_subject_code,
       toSubjectCode: rule.to_subject_code
-    }))
+    })),
+    {
+      ledger: normalizedStoredRules.ledger,
+      subjects: normalizedStoredRules.subjects
+    }
   )
 
-  const movements = getRuleMovements(db, ledgerId, period, includeUnpostedVouchers)
+  const movements = getRuleMovements(
+    db,
+    ledgerId,
+    period,
+    includeUnpostedVouchers,
+    normalizedStoredRules.rules,
+    normalizedStoredRules.subjects
+  )
   const entries = buildPreviewEntries(movements)
   const existingVouchers = getExistingCarryForwardVouchers(db, ledgerId, period)
   const draftVoucherIds = existingVouchers

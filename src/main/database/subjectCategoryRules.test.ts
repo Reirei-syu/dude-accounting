@@ -117,5 +117,20 @@ describe('subject category rules', () => {
         { ledgerId: 1, fromSubjectCode: '5101', toSubjectCode: '3101' }
       ])
     )
+    expect(db.rules).not.toEqual(
+      expect.arrayContaining([
+        { ledgerId: 1, fromSubjectCode: '4101', toSubjectCode: '3101' },
+        { ledgerId: 1, fromSubjectCode: '4201', toSubjectCode: '3101' }
+      ])
+    )
+
+    const subjectCodesWithChildren = new Set(
+      db.subjects
+        .filter((subject) => db.subjects.some((candidate) => candidate.parentCode === subject.code))
+        .map((subject) => subject.code)
+    )
+    expect(
+      db.rules.every((rule) => !subjectCodesWithChildren.has(rule.fromSubjectCode))
+    ).toBe(true)
   })
 })
