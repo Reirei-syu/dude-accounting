@@ -15,6 +15,16 @@ export interface CommandMetadata {
   promptHints: CommandPromptHintKey[]
 }
 
+export interface CommandHelpEntry {
+  domain: string
+  action: string
+  command: string
+  aliasZh: string
+  description: string
+  requiresSession: boolean
+  desktopAssisted: boolean
+}
+
 const commandMetadata: CommandMetadata[] = [
   {
     domain: 'auth',
@@ -1461,17 +1471,58 @@ const commandMetadata: CommandMetadata[] = [
   }
 ]
 
+function cloneCommandMetadata(item: CommandMetadata): CommandMetadata {
+  return {
+    ...item,
+    aliases: [...item.aliases],
+    uiMethods: [...item.uiMethods],
+    uiAssistedMethods: [...item.uiAssistedMethods],
+    promptHints: [...item.promptHints]
+  }
+}
+
+function normalizeCommandMetadata(item: CommandMetadata): CommandMetadata {
+  const normalizedAlias = item.aliases.find((alias) => alias.trim()) ?? item.description.trim()
+  return {
+    ...item,
+    aliases: [normalizedAlias]
+  }
+}
+
+function getNormalizedCommandMetadata(): CommandMetadata[] {
+  const normalizedItems = commandMetadata.map(normalizeCommandMetadata)
+  const aliasMap = new Map<string, string>()
+
+  for (const item of normalizedItems) {
+    const alias = item.aliases[0]
+    if (!alias) {
+      throw new Error(`命令缺少中文别名：${item.domain} ${item.action}`)
+    }
+
+    const key = alias.trim()
+    const commandKey = `${item.domain} ${item.action}`
+    const existing = aliasMap.get(key)
+    if (existing && existing !== commandKey) {
+      throw new Error(`检测到重复中文命令别名：${key}（${existing} / ${commandKey}）`)
+    }
+    aliasMap.set(key, commandKey)
+  }
+
+  return normalizedItems.map(cloneCommandMetadata)
+}
+
 export function getCommandMetadata(): CommandMetadata[] {
-  return [...commandMetadata]
+  return getNormalizedCommandMetadata()
 }
 
 export function findCommandMetadata(domain: string, action: string): CommandMetadata | undefined {
-  return commandMetadata.find((item) => item.domain === domain && item.action === action)
+  const matched = commandMetadata.find((item) => item.domain === domain && item.action === action)
+  return matched ? normalizeCommandMetadata(matched) : undefined
 }
 
 export function findCommandMetadataByAlias(alias: string): CommandMetadata | undefined {
   const normalizedAlias = alias.trim()
-  return commandMetadata.find((item) => item.aliases.includes(normalizedAlias))
+  return getNormalizedCommandMetadata().find((item) => item.aliases.includes(normalizedAlias))
 }
 
 export function listCommandKeys(): string[] {
@@ -1484,7 +1535,7 @@ export function searchCommandMetadata(keyword: string): CommandMetadata[] {
     return []
   }
 
-  return commandMetadata.filter((item) =>
+  return getNormalizedCommandMetadata().filter((item) =>
     [
       item.domain,
       item.action,
@@ -1497,4 +1548,16 @@ export function searchCommandMetadata(keyword: string): CommandMetadata[] {
       .toLowerCase()
       .includes(normalizedKeyword)
   )
+}
+
+export function listCommandHelpEntries(): CommandHelpEntry[] {
+  return getNormalizedCommandMetadata().map((item) => ({
+    domain: item.domain,
+    action: item.action,
+    command: `${item.domain} ${item.action}`,
+    aliasZh: item.aliases[0],
+    description: item.description,
+    requiresSession: item.requiresSession,
+    desktopAssisted: item.desktopAssisted
+  }))
 }

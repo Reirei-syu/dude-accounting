@@ -9,39 +9,54 @@ const execFileAsync = promisify(execFile)
 const loginPayloadPath = path.join(os.tmpdir(), 'dude-cli-login-payload.json')
 
 function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
-  const statusIndex = output.lastIndexOf('"status"')
-  if (statusIndex < 0) {
-    throw new Error(`未找到 CLI JSON 输出：\n${output}`)
-  }
+  const matches: Array<{ status: string; data: unknown; error: unknown }> = []
 
-  const startIndex = output.lastIndexOf('{', statusIndex)
-  if (startIndex < 0) {
-    throw new Error(`未找到 CLI JSON 起始位置：\n${output}`)
-  }
+  for (let startIndex = 0; startIndex < output.length; startIndex += 1) {
+    if (output[startIndex] !== '{') {
+      continue
+    }
 
-  let depth = 0
-  for (let index = startIndex; index < output.length; index += 1) {
-    const current = output[index]
-    if (current === '{') depth += 1
-    if (current === '}') {
-      depth -= 1
-      if (depth === 0) {
-        return JSON.parse(output.slice(startIndex, index + 1)) as {
-          status: string
-          data: unknown
-          error: unknown
+    let depth = 0
+    for (let index = startIndex; index < output.length; index += 1) {
+      const current = output[index]
+      if (current === '{') depth += 1
+      if (current === '}') {
+        depth -= 1
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(output.slice(startIndex, index + 1)) as {
+              status?: unknown
+              data?: unknown
+              error?: unknown
+            }
+
+            if (
+              typeof parsed.status === 'string' &&
+              Object.prototype.hasOwnProperty.call(parsed, 'data') &&
+              Object.prototype.hasOwnProperty.call(parsed, 'error')
+            ) {
+              matches.push(parsed as { status: string; data: unknown; error: unknown })
+            }
+          } catch {
+            // ignore invalid json slices
+          }
+          break
         }
       }
     }
   }
 
-  throw new Error(`CLI JSON 输出不完整：\n${output}`)
+  if (matches.length > 0) {
+    return matches[matches.length - 1]
+  }
+
+  throw new Error(`未找到 CLI JSON 输出：\n${output}`)
 }
 
 async function runCli(args: string[]): Promise<{ status: string; data: unknown; error: unknown }> {
   const { stdout, stderr } = await execFileAsync(
     'node',
-    ['scripts/run-with-utf8.mjs', 'npx', 'electron-vite', 'preview', '--', '--cli', ...args],
+    ['scripts/run-cli.mjs', ...args],
     {
       cwd: process.cwd(),
       windowsHide: true,
@@ -66,6 +81,33 @@ describe('embedded cli integration', () => {
       expect(result.status).toBe('success')
       expect(result.data).toMatchObject({
         product: 'dude-accounting'
+      })
+    },
+    120_000
+  )
+
+  it(
+    'prints full command catalog in help all mode',
+    async () => {
+      const result = await runCli(['--help', '--all'])
+      expect(result.status).toBe('success')
+      expect(result.data).toMatchObject({
+        product: 'dude-accounting',
+        builtinCommands: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'help'
+          })
+        ]),
+        domains: expect.arrayContaining(['auth', 'ledger', 'print']),
+        allCommands: expect.arrayContaining([
+          expect.objectContaining({
+            command: 'auth create-user',
+            aliasZh: '创建用户'
+          }),
+          expect.objectContaining({
+            command: 'print open-preview'
+          })
+        ])
       })
     },
     120_000
