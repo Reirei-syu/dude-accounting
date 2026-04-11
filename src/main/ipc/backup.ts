@@ -247,6 +247,7 @@ export function registerBackupHandlers(): void {
           try {
             const db = getDatabase()
             const preferredDir = getPreferredBackupDir(db, BACKUP_IMPORT_LAST_DIR_KEY)
+            let selectedPackagePath: string | undefined
 
             if (typeof payload?.backupId === 'number') {
               const row = getDatabase()
@@ -283,6 +284,7 @@ export function registerBackupHandlers(): void {
                 return { success: false, cancelled: true }
               }
 
+              selectedPackagePath = picked.directoryPath
               rememberPathPreference(
                 db,
                 BACKUP_IMPORT_LAST_DIR_KEY,
@@ -293,7 +295,7 @@ export function registerBackupHandlers(): void {
 
             const result = await importBackupCommand(createCommandContextFromEvent(event), {
               backupId: payload?.backupId,
-              packagePath: payload?.backupId ? undefined : payload?.packagePath
+              packagePath: payload?.backupId ? undefined : selectedPackagePath
             })
             if (!isCommandSuccess(result)) {
               return {

@@ -214,6 +214,38 @@ describe('backup IPC handlers', () => {
     })
   })
 
+  it('passes the actually picked directory path into importBackupCommand', async () => {
+    backupHandlerMocks.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ['D:/exports/selected-parent-dir']
+    })
+    backupHandlerMocks.importBackupCommand.mockResolvedValue({
+      status: 'success',
+      data: {
+        importedLedgerId: 12,
+        importedLedgerName: '导入账套'
+      },
+      error: null
+    })
+    const handler = backupHandlerMocks.handlers.get('backup:import')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event, {})
+
+    expect(backupHandlerMocks.resolveBackupArtifactPaths).toHaveBeenCalledWith(
+      'D:/exports/selected-parent-dir'
+    )
+    expect(backupHandlerMocks.importBackupCommand).toHaveBeenCalledWith(expect.anything(), {
+      backupId: undefined,
+      packagePath: 'D:/exports/selected-parent-dir'
+    })
+    expect(result).toEqual({
+      success: true,
+      importedLedgerId: 12,
+      importedLedgerName: '导入账套'
+    })
+  })
+
   it('surfaces record-only deletion guidance when the physical package is already missing', async () => {
     backupHandlerMocks.deleteBackupCommand.mockResolvedValue({
       status: 'error',

@@ -179,6 +179,66 @@ describe('backupRecovery service', () => {
     })
   })
 
+  it('resolves backup paths from a parent directory that contains exactly one backup package child', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backup-'))
+    const sourcePath = path.join(tempDir, 'ledger.db')
+    const backupDir = path.join(tempDir, 'backups')
+    fs.writeFileSync(sourcePath, 'sqlite-bytes', 'utf8')
+
+    const result = createBackupArtifact({
+      sourcePath,
+      backupDir,
+      ledgerId: 8,
+      ledgerName: 'test-ledger',
+      period: '2026-03',
+      fiscalYear: '2026',
+      now: new Date(2026, 2, 8, 9, 10, 11)
+    })
+
+    expect(resolveBackupArtifactPaths(backupDir)).toEqual({
+      backupPath: result.backupPath,
+      manifestPath: result.manifestPath
+    })
+  })
+
+  it('fails with a clear error when a parent directory contains multiple backup package children', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backup-'))
+    const sourcePath = path.join(tempDir, 'ledger.db')
+    const backupDir = path.join(tempDir, 'backups')
+    fs.writeFileSync(sourcePath, 'sqlite-bytes', 'utf8')
+
+    createBackupArtifact({
+      sourcePath,
+      backupDir,
+      ledgerId: 8,
+      ledgerName: 'test-ledger-a',
+      period: '2026-03',
+      fiscalYear: '2026',
+      now: new Date(2026, 2, 8, 9, 10, 11)
+    })
+    createBackupArtifact({
+      sourcePath,
+      backupDir,
+      ledgerId: 9,
+      ledgerName: 'test-ledger-b',
+      period: '2026-04',
+      fiscalYear: '2026',
+      now: new Date(2026, 2, 8, 9, 10, 12)
+    })
+
+    expect(() => resolveBackupArtifactPaths(backupDir)).toThrow(
+      '所选目录中包含多个备份包，请进入具体备份目录后再导入'
+    )
+  })
+
+  it('fails with a clear error when no backup package exists in the selected directory', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backup-'))
+    const emptyDir = path.join(tempDir, 'empty')
+    fs.mkdirSync(emptyDir, { recursive: true })
+
+    expect(() => resolveBackupArtifactPaths(emptyDir)).toThrow('所选目录中未找到备份包')
+  })
+
   it('creates a ledger-scoped backup package that keeps only the selected ledger and bundled voucher files', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backup-'))
     const sourcePath = path.join(tempDir, 'source.db')

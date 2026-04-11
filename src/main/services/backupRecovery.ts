@@ -105,6 +105,27 @@ export interface ResolvedBackupArtifactPaths {
   manifestPath: string
 }
 
+function tryResolveDirectBackupArtifactPaths(packageDir: string): ResolvedBackupArtifactPaths | null {
+  const manifestPath = path.join(packageDir, 'manifest.json')
+  if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
+    return null
+  }
+
+  const databaseFiles = fs
+    .readdirSync(packageDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.db'))
+    .map((entry) => path.join(packageDir, entry.name))
+
+  if (databaseFiles.length !== 1) {
+    throw new Error('所选备份包目录必须且只能包含一个数据库备份文件')
+  }
+
+  return {
+    backupPath: databaseFiles[0],
+    manifestPath
+  }
+}
+
 function buildBackupPackageName(
   ledgerName?: string | null,
   period?: string | null,
@@ -264,24 +285,33 @@ export function resolveBackupArtifactPaths(packageDir: string): ResolvedBackupAr
     throw new Error('所选恢复路径不是有效的备份包目录')
   }
 
-  const manifestPath = path.join(packageDir, 'manifest.json')
-  if (!fs.existsSync(manifestPath)) {
-    throw new Error('所选备份包目录缺少 manifest.json')
+  const directPackage = tryResolveDirectBackupArtifactPaths(packageDir)
+  if (directPackage) {
+    return directPackage
   }
 
-  const databaseFiles = fs
+  const candidatePackages = fs
     .readdirSync(packageDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.db'))
+    .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(packageDir, entry.name))
+    .flatMap((childDir) => {
+      try {
+        const resolved = tryResolveDirectBackupArtifactPaths(childDir)
+        return resolved ? [resolved] : []
+      } catch {
+        return []
+      }
+    })
 
-  if (databaseFiles.length !== 1) {
-    throw new Error('所选备份包目录必须且只能包含一个数据库备份文件')
+  if (candidatePackages.length === 1) {
+    return candidatePackages[0]
   }
 
-  return {
-    backupPath: databaseFiles[0],
-    manifestPath
+  if (candidatePackages.length > 1) {
+    throw new Error('所选目录中包含多个备份包，请进入具体备份目录后再导入')
   }
+
+  throw new Error('所选目录中未找到备份包')
 }
 
 export function createBackupArtifact(input: {

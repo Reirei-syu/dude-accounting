@@ -67,8 +67,8 @@ describe('importBackupCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     backupImportMocks.resolveBackupArtifactPaths.mockReturnValue({
-      backupPath: 'D:/backups/ledger-backup/data.db',
-      manifestPath: 'D:/backups/ledger-backup/manifest.json'
+      backupPath: 'D:/imports/backups/ledger-backup/data.db',
+      manifestPath: 'D:/imports/backups/ledger-backup/manifest.json'
     })
     backupImportMocks.importLedgerBackupArtifact.mockReturnValue({
       importedLedgerId: 12,
@@ -76,21 +76,21 @@ describe('importBackupCommand', () => {
     })
   })
 
-  it('remembers import directories when importing from an explicit package path', async () => {
+  it('remembers import directories when importing from a parent directory path', async () => {
     const result = await importBackupCommand(context as never, {
-      packagePath: 'D:/backups/ledger-backup'
+      packagePath: 'D:/imports/backups'
     })
 
     expect(result.status).toBe('success')
     expect(backupImportMocks.rememberPathPreference).toHaveBeenCalledWith(
       expect.anything(),
       'backup_import_last_dir',
-      'D:/backups'
+      'D:/imports'
     )
     expect(backupImportMocks.importLedgerBackupArtifact).toHaveBeenCalledWith(
       expect.objectContaining({
-        backupPath: 'D:/backups/ledger-backup/data.db',
-        manifestPath: 'D:/backups/ledger-backup/manifest.json',
+        backupPath: 'D:/imports/backups/ledger-backup/data.db',
+        manifestPath: 'D:/imports/backups/ledger-backup/manifest.json',
         targetPath: 'D:/tmp/dude-accounting.db'
       })
     )

@@ -204,4 +204,39 @@ describe('restoreBackupCommand', () => {
       tempDir
     )
   })
+
+  it('still guides users to backup import when a parent directory resolves to a ledger backup package', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-restore-command-'))
+    const packageDir = path.join(tempDir, 'ledger-backup')
+    const manifestPath = path.join(packageDir, 'manifest.json')
+    fs.mkdirSync(packageDir, { recursive: true })
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        checksum: 'checksum-1',
+        ledgerId: 7,
+        packageType: 'ledger_backup'
+      }),
+      'utf8'
+    )
+    backupMocks.resolveBackupArtifactPaths.mockReturnValue({
+      backupPath: path.join(packageDir, 'data.db'),
+      manifestPath
+    })
+
+    const result = await restoreBackupCommand(context as never, {
+      packagePath: tempDir
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
+      details: {
+        packagePath: tempDir,
+        packageType: 'ledger_backup'
+      }
+    })
+    expect(backupMocks.validateBackupArtifact).not.toHaveBeenCalled()
+  })
 })
