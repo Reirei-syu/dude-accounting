@@ -1,11 +1,16 @@
 import { executeCliCommand, listCommands } from './executor'
-import { runInteractiveCli, shouldEnterInteractiveShell } from './interactive'
+import {
+  listShellBuiltInCommands,
+  runInteractiveCli,
+  shouldEnterInteractiveShell
+} from './interactive'
 import { renderCommandOutput } from './output'
 import { parseCliArgs } from './parse'
 import { resolveCliPayload } from './payload'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
+import { listCommandHelpEntries } from '../main/commands/catalog'
 
 export function getExitCodeForResult(result: CommandResult<unknown>): number {
   if (result.status === 'success') {
@@ -32,13 +37,25 @@ export function getExitCodeForResult(result: CommandResult<unknown>): number {
   }
 }
 
-function buildHelpResult(): CommandResult<{
+function buildHelpResult(showAll = false): CommandResult<{
   product: string
   aliases: string[]
   usage: string
   interactiveEntry: string
   commands: string[]
+  builtinCommands?: Array<{ name: string; aliases: string[]; description: string }>
+  allCommands?: Array<{
+    domain: string
+    action: string
+    command: string
+    aliasZh: string
+    description: string
+    requiresSession: boolean
+    desktopAssisted: boolean
+  }>
+  domains?: string[]
 }> {
+  const allCommandEntries = showAll ? listCommandHelpEntries() : []
   return {
     status: 'success',
     data: {
@@ -47,7 +64,10 @@ function buildHelpResult(): CommandResult<{
       usage:
         'dudeacc|dude-accounting <domain> <action> [--payload-file path | --payload-json json | --key value]',
       interactiveEntry: '无参数且当前终端为 TTY 时，直接进入 dudeacc 交互式命令壳',
-      commands: listCommands()
+      commands: listCommands(),
+      builtinCommands: showAll ? listShellBuiltInCommands() : undefined,
+      allCommands: showAll ? allCommandEntries : undefined,
+      domains: showAll ? [...new Set(allCommandEntries.map((item) => item.domain))] : undefined
     },
     error: null
   }
@@ -67,7 +87,7 @@ export async function runCliBatch(runtime: RuntimeContext, argv: string[]): Prom
 
   try {
     if (argv.length === 0 || argv.includes('--help')) {
-      result = buildHelpResult()
+      result = buildHelpResult(argv.includes('--all'))
     } else {
       const parsed = parseCliArgs(argv)
       outputMode = parsed.outputMode

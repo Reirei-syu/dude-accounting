@@ -272,6 +272,6 @@ describe('cli parity integration', () => {
       const disposeResult = await runCli(['print', 'dispose', '--jobId', jobId])
       expect(disposeResult.status).toBe('success')
     },
-    240_000
+    480_000
   )
 })

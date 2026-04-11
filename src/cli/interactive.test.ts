@@ -44,6 +44,12 @@ interface InteractiveModule {
     handled: boolean
     shouldExit?: boolean
     nextState: { outputMode: 'json' | 'pretty'; ledgerId?: number; period?: string }
+    text?: string
+    result?: {
+      status: string
+      data: unknown
+      error: unknown
+    }
   }
 }
 
@@ -112,6 +118,39 @@ describe('interactive cli helpers', () => {
     expect(interactive?.resolveInteractiveCommand?.('帮助')).toMatchObject({
       kind: 'builtin',
       name: 'help'
+    })
+
+    expect(interactive?.resolveInteractiveCommand?.('创建用户')).toMatchObject({
+      kind: 'command',
+      domain: 'auth',
+      action: 'create-user'
+    })
+  })
+
+  it('returns complete command catalog for help all', async () => {
+    const interactive = await loadInteractiveModule()
+
+    expect(
+      interactive?.executeShellBuiltin?.(['help', 'all'], {
+        outputMode: 'pretty'
+      })
+    ).toMatchObject({
+      handled: true,
+      result: {
+        status: 'success',
+        data: {
+          domains: expect.arrayContaining(['auth', 'ledger', 'print']),
+          allCommands: expect.arrayContaining([
+            expect.objectContaining({
+              command: 'auth create-user',
+              aliasZh: '创建用户'
+            }),
+            expect.objectContaining({
+              command: 'print open-preview'
+            })
+          ])
+        }
+      }
     })
   })
 

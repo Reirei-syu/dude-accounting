@@ -8,7 +8,7 @@ import { resolveCliPayload } from './payload'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
-import { getCommandMetadata } from '../main/commands/catalog'
+import { getCommandMetadata, listCommandHelpEntries, type CommandHelpEntry } from '../main/commands/catalog'
 
 export interface InteractiveShellState {
   outputMode: CommandOutputMode
@@ -93,6 +93,24 @@ const commandSpecs: CliCommandSpec[] = getCommandMetadata()
     aliases: item.aliases,
     description: item.description
   }))
+
+const featuredCommandKeys = new Set([
+  'auth login',
+  'ledger list',
+  'ledger periods',
+  'voucher list',
+  'period status',
+  'report list',
+  'book subject-balances'
+])
+
+const featuredCommandSpecs = commandSpecs.filter((item) =>
+  featuredCommandKeys.has(`${item.domain} ${item.action}`)
+)
+
+const featuredCommandHelpEntries = listCommandHelpEntries().filter((item) =>
+  featuredCommandKeys.has(item.command)
+)
 
 function createSuccessResult<T>(data: T): CommandResult<T> {
   return {
@@ -250,12 +268,18 @@ function formatStateSummary(state: InteractiveShellState): string {
   return parts.join(', ')
 }
 
-function buildInteractiveHelpResult(): CommandResult<{
+function buildInteractiveHelpResult(showAll = false): CommandResult<{
   entrypoints: string[]
   builtinCommands: Array<{ name: string; aliases: string[]; description: string }>
   commandAliases: Array<{ alias: string; command: string; description: string }>
   rawCommands: string[]
+  allCommands?: CommandHelpEntry[]
+  domains?: string[]
 }> {
+  const visibleCommandSpecs = showAll ? commandSpecs : featuredCommandSpecs
+  const allCommandEntries = showAll ? listCommandHelpEntries() : []
+  const domains = showAll ? [...new Set(allCommandEntries.map((item) => item.domain))] : undefined
+
   return createSuccessResult({
     entrypoints: ['dudeacc', 'dude-accounting'],
     builtinCommands: builtinCommands.map((item) => ({
@@ -263,22 +287,32 @@ function buildInteractiveHelpResult(): CommandResult<{
       aliases: item.aliases,
       description: item.description
     })),
-    commandAliases: commandSpecs.map((item) => ({
+    commandAliases: visibleCommandSpecs.map((item) => ({
       alias: item.aliases[0],
       command: `${item.domain} ${item.action}`,
       description: item.description
     })),
-    rawCommands: listCommands()
+    rawCommands: listCommands(),
+    allCommands: showAll ? allCommandEntries : undefined,
+    domains
   })
 }
 
-function buildInteractiveHelpText(): string {
+function formatInteractiveCommandEntry(entry: CommandHelpEntry): string {
+  const markers = [
+    entry.requiresSession ? '需登录' : '免登录',
+    entry.desktopAssisted ? '桌面辅助' : '批处理安全'
+  ]
+  return `  ${entry.aliasZh}  ->  ${entry.command}  - ${entry.description}（${markers.join(' / ')}）`
+}
+
+function buildInteractiveHelpText(showAll = false): string {
   const builtinLines = builtinCommands.map((item) => {
     const aliasText = item.aliases.length > 0 ? ` / ${item.aliases.join(' / ')}` : ''
     return `  ${item.name}${aliasText}  - ${item.description}`
   })
-  const aliasLines = commandSpecs.map(
-    (item) => `  ${item.aliases[0]}  ->  ${item.domain} ${item.action}`
+  const aliasLines = (showAll ? listCommandHelpEntries() : featuredCommandHelpEntries).map(
+    formatInteractiveCommandEntry
   )
 
   return [
@@ -287,14 +321,22 @@ function buildInteractiveHelpText(): string {
     '内建命令：',
     ...builtinLines,
     '',
-    '高频中文别名：',
+    showAll ? '完整命令大全：' : '高频中文命令：',
     ...aliasLines,
     '',
     '说明：',
     '  1. 无参数且终端为 TTY 时进入交互态。',
     '  2. 也可以直接输入英文原始命令，例如：ledger list',
-    '  3. 账套和期间上下文只在当前交互会话内有效。'
+    '  3. 输入 help all 或 帮助 all 可查看完整命令大全。',
+    '  4. 账套和期间上下文只在当前交互会话内有效。'
   ].join('\n')
+}
+
+export function listShellBuiltInCommands(): ShellBuiltInCommand[] {
+  return builtinCommands.map((item) => ({
+    ...item,
+    aliases: [...item.aliases]
+  }))
 }
 
 export function formatInteractivePrompt(state: InteractiveShellState): string {
@@ -502,13 +544,15 @@ export function executeShellBuiltin(
   }
 
   switch (builtinName) {
-    case 'help':
+    case 'help': {
+      const showAll = normalizedTokens[1] === 'all' || normalizedTokens[1] === '全部'
       return {
         handled: true,
         nextState: state,
-        text: buildInteractiveHelpText(),
-        result: buildInteractiveHelpResult()
+        text: buildInteractiveHelpText(showAll),
+        result: buildInteractiveHelpResult(showAll)
       }
+    }
     case 'exit':
       return {
         handled: true,
