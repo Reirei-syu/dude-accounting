@@ -2083,16 +2083,20 @@ function buildNgoActivityStatementSnapshot(
   scope: ReportSnapshotScope,
   generatedAt: string
 ): ReportSnapshotContent {
-  const vouchers = selectEffectiveVouchers(
-    listVouchersInDateRange(db, ledger.id, scope.startDate, scope.endDate),
+  const selectedEntries = listEffectiveEntries(
+    db,
+    ledger.id,
+    scope.startDate,
+    scope.endDate,
     scope.includeUnpostedVouchers
   )
-  const entries = mergeEntriesWithVouchers(
-    vouchers,
-    listVoucherEntriesByVoucherIds(
-      db,
-      vouchers.map((voucher) => voucher.id)
-    )
+  const cumulativeStartDate = `${scope.endPeriod.slice(0, 4)}-01-01`
+  const cumulativeEntries = listEffectiveEntries(
+    db,
+    ledger.id,
+    cumulativeStartDate,
+    scope.endDate,
+    scope.includeUnpostedVouchers
   )
 
   const incomeGroups = [
@@ -2137,20 +2141,20 @@ function buildNgoActivityStatementSnapshot(
     rowOf(
       `income-${group.prefixes[0]}`,
       group.label,
-      sumEntriesByPrefixes(entries, group.prefixes, 'income', scope.endPeriod),
-      sumEntriesByPrefixes(entries, group.prefixes, 'income')
+      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'income'),
+      sumEntriesByPrefixes(cumulativeEntries, group.prefixes, 'income')
     )
   )
   const expenseRows = expenseGroups.map((group) =>
     rowOf(
       `expense-${group.prefixes[0]}`,
       group.label,
-      sumEntriesByPrefixes(entries, group.prefixes, 'expense', scope.endPeriod),
-      sumEntriesByPrefixes(entries, group.prefixes, 'expense')
+      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'expense'),
+      sumEntriesByPrefixes(cumulativeEntries, group.prefixes, 'expense')
     )
   )
-  const currentTransfers = sumNgoNetAssetTransfers(entries, scope.endPeriod)
-  const cumulativeTransfers = sumNgoNetAssetTransfers(entries)
+  const currentTransfers = sumNgoNetAssetTransfers(selectedEntries)
+  const cumulativeTransfers = sumNgoNetAssetTransfers(cumulativeEntries)
   const restrictedToUnrestrictedCurrent = {
     unrestricted: currentTransfers.restrictedToUnrestricted,
     restricted: -currentTransfers.restrictedToUnrestricted
