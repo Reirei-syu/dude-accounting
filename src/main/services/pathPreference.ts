@@ -9,6 +9,20 @@ export function getPathPreference(db: Database.Database, key: string): string | 
   return row?.value ?? null
 }
 
+export function getPathPreferenceWithFallback(
+  db: Database.Database,
+  keys: string[]
+): string | null {
+  for (const key of keys) {
+    const value = getPathPreference(db, key)
+    if (value) {
+      return value
+    }
+  }
+
+  return null
+}
+
 export function rememberPathPreference(
   db: Database.Database,
   key: string,

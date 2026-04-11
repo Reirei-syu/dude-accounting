@@ -41,7 +41,10 @@ import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
-const BACKUP_LAST_DIR_KEY = 'backup_last_dir'
+export const BACKUP_LAST_DIR_LEGACY_KEY = 'backup_last_dir'
+export const BACKUP_CREATE_LAST_DIR_KEY = 'backup_create_last_dir'
+export const BACKUP_IMPORT_LAST_DIR_KEY = 'backup_import_last_dir'
+export const BACKUP_RESTORE_LAST_DIR_KEY = 'backup_restore_last_dir'
 
 function getElectronicVoucherRootDir(context: CommandContext): string {
   return path.join(context.runtime.userDataPath, 'electronic-vouchers')
@@ -58,7 +61,7 @@ function assertRestorePackageSupported(
   if (packageType === 'ledger_backup') {
     throw new CommandError(
       'VALIDATION_ERROR',
-      '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+      '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
       details,
       2
     )
@@ -93,18 +96,18 @@ export async function createBackupCommand(
       throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId: payload.ledgerId }, 5)
     }
 
-    rememberPathPreference(context.db, BACKUP_LAST_DIR_KEY, payload.directoryPath)
+    rememberPathPreference(context.db, BACKUP_CREATE_LAST_DIR_KEY, payload.directoryPath)
     context.db.pragma('wal_checkpoint(TRUNCATE)')
     const createdAtDate = context.now
-    const backupPeriod = payload.period?.trim() || null
-    const fiscalYear = backupPeriod ? backupPeriod.slice(0, 4) : null
+    const backupPeriod = null
+    const fiscalYear = null
     const artifact = createLedgerBackupArtifact({
       sourcePath: getDatabasePath(),
       backupDir: payload.directoryPath,
       ledgerId: payload.ledgerId,
       ledgerName: ledger.name,
-      period: backupPeriod,
-      fiscalYear,
+      period: null,
+      fiscalYear: null,
       now: createdAtDate
     })
     const createdAt = formatLocalDateTime(createdAtDate)
@@ -113,7 +116,7 @@ export async function createBackupCommand(
       backupPeriod,
       fiscalYear,
       packageType: 'ledger_backup',
-      packageSchemaVersion: '2.0',
+      packageSchemaVersion: '2.1',
       backupPath: artifact.backupPath,
       manifestPath: artifact.manifestPath,
       checksum: artifact.checksum,
@@ -142,7 +145,7 @@ export async function createBackupCommand(
           manifestPath: artifact.manifestPath,
           fileSize: artifact.fileSize,
           createdAt,
-          backupMode: 'ledger_backup_package',
+          backupMode: 'ledger_current_state_backup',
           packageType: 'ledger_backup'
         }
       }
@@ -248,7 +251,7 @@ export async function importBackupCommand(
       }
       requireCommandLedgerAccess(context.db, context.actor, row.ledger_id)
       if (row.package_type !== 'ledger_backup') {
-        throw new CommandError('VALIDATION_ERROR', '历史整库快照不支持导入为新账套', null, 2)
+        throw new CommandError('VALIDATION_ERROR', '历史整库备份不支持导入为新账套', null, 2)
       }
       backupPath = row.backup_path
       manifestPath = row.manifest_path ?? ''
@@ -257,9 +260,9 @@ export async function importBackupCommand(
     } else {
       const packagePath = payload.packagePath?.trim()
       if (!packagePath) {
-        throw new CommandError('VALIDATION_ERROR', '请提供账套备份包目录路径', null, 2)
+        throw new CommandError('VALIDATION_ERROR', '请提供账套备份目录路径', null, 2)
       }
-      rememberPathPreference(context.db, BACKUP_LAST_DIR_KEY, path.dirname(packagePath))
+      rememberPathPreference(context.db, BACKUP_IMPORT_LAST_DIR_KEY, path.dirname(packagePath))
       const resolved = resolveBackupArtifactPaths(packagePath)
       backupPath = resolved.backupPath
       manifestPath = resolved.manifestPath
@@ -418,8 +421,9 @@ export async function restoreBackupCommand(
     } else {
       const packagePath = payload.packagePath?.trim()
       if (!packagePath) {
-        throw new CommandError('VALIDATION_ERROR', '请提供备份包目录路径', null, 2)
+        throw new CommandError('VALIDATION_ERROR', '请提供整库备份包目录路径', null, 2)
       }
+      rememberPathPreference(context.db, BACKUP_RESTORE_LAST_DIR_KEY, path.dirname(packagePath))
       const resolved = resolveBackupArtifactPaths(packagePath)
       const manifest = readBackupManifest(resolved.manifestPath)
       assertRestorePackageSupported(manifest.packageType, {

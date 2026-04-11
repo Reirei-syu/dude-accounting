@@ -24,10 +24,13 @@ const settingsMocks = vi.hoisted(() => {
     exportDiagnosticLogs: vi.fn(),
     setDiagnosticsLogDirectory: vi.fn(),
     resetDiagnosticsLogDirectory: vi.fn(),
+    getPathPreferenceWithFallback: vi.fn(),
+    rememberPathPreference: vi.fn(),
     getSystemParamSnapshot: vi.fn(),
     getRuntimeDefaultsSnapshot: vi.fn(),
     isSystemParamKey: vi.fn(),
     updateSystemParam: vi.fn(),
+    writeCustomTopLevelSubjectImportTemplate: vi.fn(),
     requireAuth: vi.fn(),
     requireAdmin: vi.fn(),
     requirePermission: vi.fn()
@@ -68,7 +71,7 @@ vi.mock('../services/subjectTemplate', () => ({
   readCustomTopLevelSubjectTemplateImport: vi.fn(),
   saveIndependentCustomSubjectTemplate: vi.fn(),
   saveCustomTopLevelSubjectTemplate: vi.fn(),
-  writeCustomTopLevelSubjectImportTemplate: vi.fn()
+  writeCustomTopLevelSubjectImportTemplate: settingsMocks.writeCustomTopLevelSubjectImportTemplate
 }))
 
 vi.mock('../services/wallpaperPreference', () => ({
@@ -89,6 +92,11 @@ vi.mock('../services/errorLog', () => ({
 vi.mock('../services/diagnosticsLogPath', () => ({
   setDiagnosticsLogDirectory: settingsMocks.setDiagnosticsLogDirectory,
   resetDiagnosticsLogDirectory: settingsMocks.resetDiagnosticsLogDirectory
+}))
+
+vi.mock('../services/pathPreference', () => ({
+  getPathPreferenceWithFallback: settingsMocks.getPathPreferenceWithFallback,
+  rememberPathPreference: settingsMocks.rememberPathPreference
 }))
 
 vi.mock('../services/systemSettings', () => ({
@@ -152,6 +160,10 @@ describe('settings IPC handlers', () => {
         path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000', 'error-2026-03-19.jsonl')
       ]
     })
+    settingsMocks.getPathPreferenceWithFallback.mockReturnValue(null)
+    settingsMocks.writeCustomTopLevelSubjectImportTemplate.mockResolvedValue(
+      'D:/Templates/企业一级科目导入模板.xlsx'
+    )
     settingsMocks.listDiagnosticLogFiles.mockReturnValue([
       path.join(tempDir, 'logs', 'runtime-2026-03-19.jsonl'),
       path.join(tempDir, 'logs', 'error-2026-03-19.jsonl')
@@ -373,6 +385,11 @@ describe('settings IPC handlers', () => {
       properties: ['openDirectory', 'createDirectory']
     })
     expect(settingsMocks.exportDiagnosticLogs).toHaveBeenCalledWith(tempDir, 'D:/Logs')
+    expect(settingsMocks.rememberPathPreference).toHaveBeenCalledWith(
+      expect.anything(),
+      'diagnostics_export_last_dir',
+      'D:/Logs'
+    )
     expect(result).toEqual({
       success: true,
       exportDirectory: path.join('D:/Logs', 'DudeAccounting-logs-20260319-120000'),
@@ -465,5 +482,68 @@ describe('settings IPC handlers', () => {
     })
     expect(settingsMocks.showOpenDialog).not.toHaveBeenCalled()
     expect(settingsMocks.exportDiagnosticLogs).not.toHaveBeenCalled()
+  })
+
+  it('uses dedicated remembered directories for diagnostics export and template download', async () => {
+    settingsMocks.getPathPreferenceWithFallback
+      .mockReturnValueOnce('D:/RememberedLogs')
+      .mockReturnValueOnce('D:/RememberedTemplates')
+    settingsMocks.showOpenDialog.mockResolvedValue({
+      canceled: true,
+      filePaths: []
+    })
+    settingsMocks.showSaveDialog.mockResolvedValue({
+      canceled: true,
+      filePath: undefined
+    })
+    const event = { sender: { id: 1 } }
+
+    const exportHandler = settingsMocks.handlers.get('settings:exportDiagnosticsLogs')
+    const downloadHandler = settingsMocks.handlers.get('settings:downloadSubjectTemplate')
+
+    await exportHandler?.(event)
+    await downloadHandler?.(event, 'enterprise')
+
+    expect(settingsMocks.getPathPreferenceWithFallback).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      ['diagnostics_export_last_dir']
+    )
+    expect(settingsMocks.getPathPreferenceWithFallback).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      ['subject_template_download_last_dir']
+    )
+    expect(settingsMocks.showOpenDialog.mock.calls[0]?.[0]).toMatchObject({
+      defaultPath: 'D:/RememberedLogs'
+    })
+    expect(settingsMocks.showSaveDialog.mock.calls[0]?.[0]).toMatchObject({
+      defaultPath: path.join('D:/RememberedTemplates', '企业一级科目导入模板.xlsx')
+    })
+  })
+
+  it('remembers the subject template download directory after saving', async () => {
+    settingsMocks.showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: 'D:/Templates/企业一级科目导入模板.xlsx'
+    })
+    const handler = settingsMocks.handlers.get('settings:downloadSubjectTemplate')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event, 'enterprise')
+
+    expect(settingsMocks.writeCustomTopLevelSubjectImportTemplate).toHaveBeenCalledWith(
+      'D:/Templates/企业一级科目导入模板.xlsx',
+      'enterprise'
+    )
+    expect(settingsMocks.rememberPathPreference).toHaveBeenCalledWith(
+      expect.anything(),
+      'subject_template_download_last_dir',
+      'D:/Templates/企业一级科目导入模板.xlsx'
+    )
+    expect(result).toEqual({
+      success: true,
+      filePath: 'D:/Templates/企业一级科目导入模板.xlsx'
+    })
   })
 })

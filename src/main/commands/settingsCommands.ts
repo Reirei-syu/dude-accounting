@@ -35,6 +35,7 @@ import {
   renderWallpaperCrop,
   type WallpaperAnalyzeResult
 } from '../services/wallpaperCropService'
+import { rememberPathPreference } from '../services/pathPreference'
 import {
   appendCliE2eEvent,
   shouldDryRunCliE2eDesktopActions
@@ -45,6 +46,9 @@ import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
 
 type StandardType = 'enterprise' | 'npo'
+
+const DIAGNOSTICS_EXPORT_LAST_DIR_KEY = 'diagnostics_export_last_dir'
+const SUBJECT_TEMPLATE_DOWNLOAD_LAST_DIR_KEY = 'subject_template_download_last_dir'
 
 function getUserPreferences(context: CommandContext, userId: number): Record<string, string> {
   const rows = context.db
@@ -238,7 +242,9 @@ export async function exportDiagnosticsLogsCommand(
 ): Promise<CommandResult<{ exportDirectory: string; filePaths: string[] }>> {
   return withCommandResult(context, () => {
     requireCommandPermission(context.actor, 'system_settings')
-    return exportDiagnosticLogs(context.runtime.userDataPath, payload.directoryPath)
+    const result = exportDiagnosticLogs(context.runtime.userDataPath, payload.directoryPath)
+    rememberPathPreference(context.db, DIAGNOSTICS_EXPORT_LAST_DIR_KEY, payload.directoryPath)
+    return result
   })
 }
 
@@ -485,6 +491,7 @@ export async function downloadSubjectTemplateCommand(
       payload.filePath,
       payload.standardType
     )
+    rememberPathPreference(context.db, SUBJECT_TEMPLATE_DOWNLOAD_LAST_DIR_KEY, filePath)
     return { filePath }
   })
 }

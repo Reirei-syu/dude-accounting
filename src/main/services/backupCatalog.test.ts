@@ -267,4 +267,28 @@ describe('backupCatalog service', () => {
     expect(getBackupPackageById(db as never, backupId)).toBeUndefined()
     expect(listBackupPackageIdsByLedger(db as never, 1)).toEqual([])
   })
+
+  it('allows snapshot records without backup period or fiscal year', () => {
+    const db = new FakeBackupCatalogDb()
+    const backupId = createBackupPackageRecord(db as never, {
+      ledgerId: 1,
+      backupPeriod: null,
+      fiscalYear: null,
+      packageType: 'ledger_backup',
+      packageSchemaVersion: '2.1',
+      backupPath: 'D:/tmp/backup-snapshot.db',
+      manifestPath: 'D:/tmp/backup-snapshot/manifest.json',
+      checksum: 'checksum-snapshot',
+      fileSize: 300,
+      createdBy: 1,
+      createdAt: '2026-04-11 18:00:00'
+    })
+
+    expect(getBackupPackageById(db as never, backupId)).toMatchObject({
+      id: backupId,
+      backup_period: null,
+      fiscal_year: null,
+      package_schema_version: '2.1'
+    })
+  })
 })

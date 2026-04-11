@@ -238,7 +238,12 @@ describe('ledger backup import', () => {
     const sourcePath = path.join(tempDir, 'source.db')
     const targetPath = path.join(tempDir, 'target.db')
     const backupDir = path.join(tempDir, 'backups')
-    const attachmentRootDir = path.join(tempDir, 'target-attachments')
+    const targetUserDataPath = path.join(tempDir, 'target-user-data')
+    const attachmentRootDir = path.join(targetUserDataPath, 'electronic-vouchers')
+    const sourceWallpaperDir = path.join(tempDir, 'wallpapers', 'user-2')
+    const sourceWallpaperPath = path.join(sourceWallpaperDir, 'current.webp')
+    fs.mkdirSync(sourceWallpaperDir, { recursive: true })
+    fs.writeFileSync(sourceWallpaperPath, 'source-wallpaper', 'utf8')
 
     const sourceDb = new DatabaseSync(sourcePath)
     createLedgerSchema(sourceDb)
@@ -272,6 +277,13 @@ describe('ledger backup import', () => {
       INSERT INTO voucher_source_links (voucher_id, source_type, source_record_id) VALUES (801, 'electronic_voucher', 811);
       INSERT INTO operation_logs (ledger_id, user_id, username, module, action, target_type, target_id, reason, approval_tag, details_json, created_at)
       VALUES (8, 2, 'maker', 'voucher', 'create', 'voucher', '801', '紧急逆转补录', 'APR-2026-03', '{}', '2026-03-01 09:30:00');
+      INSERT INTO user_preferences (user_id, key, value, updated_at) VALUES
+        (2, 'default_home_tab', 'report-query', '2026-04-02 09:05:00'),
+        (2, 'custom_wallpaper_relative_path', 'wallpapers/user-2/current.webp', '2026-04-02 09:06:00');
+      INSERT INTO system_settings (key, value) VALUES
+        ('backup_last_dir', 'D:/snapshot-backups'),
+        ('last_login_user_id', '2');
+      INSERT INTO user_ledger_permissions (user_id, ledger_id) VALUES (2, 8);
     `)
     sourceDb.close()
 
@@ -289,9 +301,14 @@ describe('ledger backup import', () => {
     createLedgerSchema(targetDb)
     targetDb.exec(`
       INSERT INTO users (id, username, real_name, password_hash, permissions, is_admin, created_at)
-      VALUES (1, 'admin', '管理员', '', '{}', 1, '2026-04-02 08:00:00');
+      VALUES
+        (1, 'admin', '管理员', '', '{}', 1, '2026-04-02 08:00:00'),
+        (2, 'maker', '旧制单员', 'old-hash', '{}', 0, '2026-04-02 08:05:00');
       INSERT INTO ledgers (id, name, standard_type, start_period, current_period, created_at)
       VALUES (1, '华北客户', 'enterprise', '2026-01', '2026-03', '2026-04-02 08:00:00');
+      INSERT INTO user_preferences (user_id, key, value, updated_at) VALUES
+        (2, 'default_home_tab', 'voucher-entry', '2026-04-02 08:10:00');
+      INSERT INTO system_settings (key, value) VALUES ('backup_last_dir', 'D:/old-backups');
     `)
     targetDb.close()
 
@@ -350,6 +367,30 @@ describe('ledger backup import', () => {
         .prepare('SELECT COUNT(1) AS count FROM user_ledger_permissions WHERE user_id = ? AND ledger_id = ?')
         .get(1, result.importedLedgerId) as { count: number }
     ).toEqual({ count: 1 })
+    expect(
+      importedDb
+        .prepare('SELECT COUNT(1) AS count FROM user_ledger_permissions WHERE user_id = ? AND ledger_id = ?')
+        .get(2, result.importedLedgerId) as { count: number }
+    ).toEqual({ count: 1 })
+    expect(
+      importedDb
+        .prepare('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?')
+        .get(2, 'default_home_tab') as { value: string }
+    ).toEqual({ value: 'report-query' })
+    const wallpaperPreference = importedDb
+      .prepare('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?')
+      .get(2, 'custom_wallpaper_relative_path') as { value: string }
+    expect(wallpaperPreference.value).toBe('wallpapers/user-2/current.webp')
+    expect(
+      importedDb.prepare('SELECT value FROM system_settings WHERE key = ?').get('backup_last_dir') as {
+        value: string
+      }
+    ).toEqual({ value: 'D:/snapshot-backups' })
+    expect(
+      importedDb.prepare('SELECT value FROM system_settings WHERE key = ?').get('last_login_user_id') as {
+        value: string
+      }
+    ).toEqual({ value: '2' })
     const fileRow = importedDb
       .prepare('SELECT stored_path, imported_by, ledger_id FROM electronic_voucher_files WHERE ledger_id = ?')
       .get(result.importedLedgerId) as { stored_path: string; imported_by: number; ledger_id: number }
@@ -372,5 +413,12 @@ describe('ledger backup import', () => {
 
     expect(fs.existsSync(fileRow.stored_path)).toBe(true)
     expect(fs.readFileSync(fileRow.stored_path, 'utf8')).toBe('source-voucher')
+    expect(fs.existsSync(path.join(tempDir, 'wallpapers', 'user-2', 'current.webp'))).toBe(true)
+    expect(
+      fs.existsSync(path.join(targetUserDataPath, wallpaperPreference.value))
+    ).toBe(true)
+    expect(
+      fs.readFileSync(path.join(targetUserDataPath, wallpaperPreference.value), 'utf8')
+    ).toBe('source-wallpaper')
   })
 })

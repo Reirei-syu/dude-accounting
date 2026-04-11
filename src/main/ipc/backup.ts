@@ -5,6 +5,10 @@ import { closeDatabase, getDatabase, getDatabasePath, initializeDatabase } from 
 import { appendOperationLog } from '../services/auditLog'
 import { getBackupPackageById } from '../services/backupCatalog'
 import {
+  BACKUP_CREATE_LAST_DIR_KEY,
+  BACKUP_IMPORT_LAST_DIR_KEY,
+  BACKUP_LAST_DIR_LEGACY_KEY,
+  BACKUP_RESTORE_LAST_DIR_KEY,
   createBackupCommand,
   deleteBackupCommand,
   importBackupCommand,
@@ -16,7 +20,10 @@ import {
   restoreBackupArtifact,
   validateBackupArtifact
 } from '../services/backupRecovery'
-import { getPathPreference, rememberPathPreference } from '../services/pathPreference'
+import {
+  getPathPreferenceWithFallback,
+  rememberPathPreference
+} from '../services/pathPreference'
 import {
   clearPendingRestoreLog,
   getPendingRestoreLogPath,
@@ -26,10 +33,18 @@ import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
 import { requireAdmin, requireLedgerAccess } from './session'
 
-const BACKUP_LAST_DIR_KEY = 'backup_last_dir'
-
 function getDefaultBackupRootDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '系统备份')
+}
+
+function getPreferredBackupDir(
+  db: ReturnType<typeof getDatabase>,
+  primaryKey: string
+): string {
+  return (
+    getPathPreferenceWithFallback(db, [primaryKey, BACKUP_LAST_DIR_LEGACY_KEY]) ??
+    getDefaultBackupRootDir()
+  )
 }
 
 async function pickDirectory(
@@ -70,7 +85,7 @@ function buildUnsupportedLedgerRestoreResponse(details: Record<string, unknown>)
 } {
   return {
     success: false,
-    error: '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+    error: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
     errorCode: 'VALIDATION_ERROR',
     errorDetails: details
   }
@@ -93,7 +108,7 @@ export function registerBackupHandlers(): void {
           baseDir: app.getPath('userData'),
           context: {
             ledgerId: payload.ledgerId,
-            period: payload.period ?? null,
+            period: null,
             hasDirectoryPath: Boolean(payload.directoryPath)
           }
         },
@@ -109,14 +124,12 @@ export function registerBackupHandlers(): void {
               return { success: false, error: '账套不存在' }
             }
 
-            const preferredDir =
-              getPathPreference(db, BACKUP_LAST_DIR_KEY) ?? getDefaultBackupRootDir()
-            const backupPeriod = payload.period?.trim() || null
+            const preferredDir = getPreferredBackupDir(db, BACKUP_CREATE_LAST_DIR_KEY)
             const picked = payload.directoryPath
               ? { cancelled: false, directoryPath: payload.directoryPath }
               : await pickDirectory(event.sender, {
                   defaultPath: preferredDir,
-                  title: '选择备份保存目录',
+                  title: '选择账套备份保存目录',
                   createDirectory: true
                 })
 
@@ -124,10 +137,10 @@ export function registerBackupHandlers(): void {
               return { success: false, cancelled: true }
             }
 
-            rememberPathPreference(db, BACKUP_LAST_DIR_KEY, picked.directoryPath)
+            rememberPathPreference(db, BACKUP_CREATE_LAST_DIR_KEY, picked.directoryPath)
             const result = await createBackupCommand(createCommandContextFromEvent(event), {
               ledgerId: payload.ledgerId,
-              period: backupPeriod,
+              period: null,
               directoryPath: picked.directoryPath
             })
             if (!isCommandSuccess(result)) {
@@ -233,8 +246,7 @@ export function registerBackupHandlers(): void {
         async () => {
           try {
             const db = getDatabase()
-            const preferredDir =
-              getPathPreference(db, BACKUP_LAST_DIR_KEY) ?? getDefaultBackupRootDir()
+            const preferredDir = getPreferredBackupDir(db, BACKUP_IMPORT_LAST_DIR_KEY)
 
             if (typeof payload?.backupId === 'number') {
               const row = getDatabase()
@@ -257,21 +269,25 @@ export function registerBackupHandlers(): void {
 
               requireLedgerAccess(event, db, row.ledger_id)
               if (row.package_type !== 'ledger_backup') {
-                return { success: false, error: '历史整库快照不支持导入为新账套' }
+                return { success: false, error: '历史整库备份不支持导入为新账套' }
               }
             } else {
               const picked = payload?.packagePath
                 ? { cancelled: false, directoryPath: payload.packagePath }
                 : await pickDirectory(event.sender, {
                     defaultPath: preferredDir,
-                    title: '选择需要导入的账套备份包目录'
+                    title: '选择需要导入的账套备份目录'
                   })
 
               if (picked.cancelled || !picked.directoryPath) {
                 return { success: false, cancelled: true }
               }
 
-              rememberPathPreference(db, BACKUP_LAST_DIR_KEY, path.dirname(picked.directoryPath))
+              rememberPathPreference(
+                db,
+                BACKUP_IMPORT_LAST_DIR_KEY,
+                path.dirname(picked.directoryPath)
+              )
               resolveBackupArtifactPaths(picked.directoryPath)
             }
 
@@ -378,8 +394,7 @@ export function registerBackupHandlers(): void {
           try {
             const user = requireAdmin(event)
             const db = getDatabase()
-            const preferredDir =
-              getPathPreference(db, BACKUP_LAST_DIR_KEY) ?? getDefaultBackupRootDir()
+            const preferredDir = getPreferredBackupDir(db, BACKUP_RESTORE_LAST_DIR_KEY)
 
             let backupPath = ''
             let manifestPath: string | null = null
@@ -418,7 +433,11 @@ export function registerBackupHandlers(): void {
                 return { success: false, cancelled: true }
               }
 
-              rememberPathPreference(db, BACKUP_LAST_DIR_KEY, path.dirname(picked.directoryPath))
+              rememberPathPreference(
+                db,
+                BACKUP_RESTORE_LAST_DIR_KEY,
+                path.dirname(picked.directoryPath)
+              )
               const resolved = resolveBackupArtifactPaths(picked.directoryPath)
               const manifest = JSON.parse(fs.readFileSync(resolved.manifestPath, 'utf8')) as {
                 checksum: string

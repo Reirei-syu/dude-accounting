@@ -3,34 +3,6 @@ export interface SelectablePeriod {
   is_closed: number
 }
 
-export function getBackupPeriodOptions(periods: SelectablePeriod[]): string[] {
-  return periods
-    .map((item) => item.period)
-    .sort((left, right) => (left < right ? 1 : left > right ? -1 : 0))
-}
-
-export function pickDefaultBackupPeriod(periods: SelectablePeriod[]): string {
-  return getBackupPeriodOptions(periods)[0] ?? ''
-}
-
-export function resolveBackupPeriodSelection(
-  periods: SelectablePeriod[],
-  currentPeriod?: string | null,
-  selectedPeriod?: string | null
-): string {
-  const options = getBackupPeriodOptions(periods)
-
-  if (selectedPeriod && options.includes(selectedPeriod)) {
-    return selectedPeriod
-  }
-
-  if (currentPeriod && options.includes(currentPeriod)) {
-    return currentPeriod
-  }
-
-  return options[0] ?? ''
-}
-
 export function getArchiveYearOptions(periods: SelectablePeriod[]): string[] {
   return Array.from(
     new Set(

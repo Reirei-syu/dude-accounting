@@ -8,8 +8,10 @@ import {
   exportReportSnapshotToFile,
   exportReportSnapshotsBatch,
   getDefaultReportExportRootDir,
+  getPreferredReportExportBatchDir,
   getPreferredReportExportDir,
   getReportExportFilters,
+  rememberReportExportBatchDir,
   rememberReportExportDir
 } from './reportExport'
 import type { ReportSnapshotDetail } from './reporting'
@@ -162,6 +164,17 @@ describe('reportExport service', () => {
     rememberReportExportDir(db as never, 'D:/exports/report.pdf')
 
     expect(getPreferredReportExportDir(db as never, documentsPath)).toBe('D:/exports')
+  })
+
+  it('uses a dedicated batch export preference and falls back to the single export path', () => {
+    const db = new FakePathPreferenceDb()
+    const documentsPath = 'D:/Users/Test/Documents'
+
+    rememberReportExportDir(db as never, 'D:/exports/single/report.pdf')
+    expect(getPreferredReportExportBatchDir(db as never, documentsPath)).toBe('D:/exports/single')
+
+    rememberReportExportBatchDir(db as never, 'D:/exports/batch')
+    expect(getPreferredReportExportBatchDir(db as never, documentsPath)).toBe('D:/exports/batch')
   })
 
   it('builds default path and filters for report export', () => {

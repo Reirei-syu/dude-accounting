@@ -13,8 +13,10 @@ const reportingMocks = vi.hoisted(() => {
     }),
     getDatabase: vi.fn(() => ({ tag: 'db' })),
     buildReportExportDefaultPath: vi.fn(),
+    getPreferredReportExportBatchDir: vi.fn(),
     getPreferredReportExportDir: vi.fn(),
     getReportExportFilters: vi.fn(),
+    rememberReportExportBatchDir: vi.fn(),
     rememberReportExportDir: vi.fn(),
     withIpcTelemetry: vi.fn(
       async (_options: unknown, operation: () => unknown) => await operation()
@@ -48,8 +50,10 @@ vi.mock('../database/init', () => ({
 
 vi.mock('../services/reportExport', () => ({
   buildReportExportDefaultPath: reportingMocks.buildReportExportDefaultPath,
+  getPreferredReportExportBatchDir: reportingMocks.getPreferredReportExportBatchDir,
   getPreferredReportExportDir: reportingMocks.getPreferredReportExportDir,
   getReportExportFilters: reportingMocks.getReportExportFilters,
+  rememberReportExportBatchDir: reportingMocks.rememberReportExportBatchDir,
   rememberReportExportDir: reportingMocks.rememberReportExportDir
 }))
 
@@ -109,6 +113,7 @@ describe('reporting IPC handlers', () => {
     reportingMocks.handlers.clear()
     vi.clearAllMocks()
     reportingMocks.getPreferredReportExportDir.mockReturnValue('D:/exports')
+    reportingMocks.getPreferredReportExportBatchDir.mockReturnValue('D:/batch-exports')
     reportingMocks.buildReportExportDefaultPath.mockReturnValue('D:/exports/default-report.pdf')
     reportingMocks.getReportExportFilters.mockReturnValue([
       { name: 'PDF 文档', extensions: ['pdf'] }
@@ -304,7 +309,7 @@ describe('reporting IPC handlers', () => {
 
     expect(reportingMocks.showOpenDialog).toHaveBeenCalledTimes(1)
     expect(reportingMocks.showOpenDialog.mock.calls[0]?.[1]).toMatchObject({
-      defaultPath: 'D:/exports',
+      defaultPath: 'D:/batch-exports',
       properties: ['openDirectory', 'createDirectory']
     })
     expect(result).toEqual({
@@ -345,5 +350,9 @@ describe('reporting IPC handlers', () => {
       directoryPath: 'D:/exports',
       filePaths: ['D:/exports/one.pdf', 'D:/exports/two.pdf']
     })
+    expect(reportingMocks.rememberReportExportBatchDir).toHaveBeenCalledWith(
+      expect.anything(),
+      'D:/exports'
+    )
   })
 })

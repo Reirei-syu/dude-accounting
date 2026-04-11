@@ -5,15 +5,38 @@ const backupHandlerMocks = vi.hoisted(() => {
   return {
     handlers,
     appGetPath: vi.fn((name: string) => (name === 'documents' ? 'D:/Documents' : 'D:/UserData')),
+    showOpenDialog: vi.fn(),
     ipcHandle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(channel, handler)
     }),
-    getDatabase: vi.fn(() => ({ tag: 'db' })),
+    getDatabase: vi.fn(() => ({
+      prepare: vi.fn((sql: string) => {
+        if (sql.includes('SELECT id, name FROM ledgers')) {
+          return {
+            get: () => ({ id: 1, name: '测试账套' })
+          }
+        }
+        if (sql.includes('SELECT id, ledger_id, package_type, backup_path, manifest_path')) {
+          return {
+            get: () => undefined
+          }
+        }
+        return {
+          get: () => undefined
+        }
+      })
+    })),
     withIpcTelemetry: vi.fn(
       async (_options: unknown, operation: () => unknown) => await operation()
     ),
+    createBackupCommand: vi.fn(),
     deleteBackupCommand: vi.fn(),
+    importBackupCommand: vi.fn(),
+    listBackupsCommand: vi.fn(),
+    validateBackupCommand: vi.fn(),
     getBackupPackageById: vi.fn(),
+    getPathPreferenceWithFallback: vi.fn(),
+    rememberPathPreference: vi.fn(),
     resolveBackupArtifactPaths: vi.fn(),
     validateBackupArtifact: vi.fn()
   }
@@ -23,7 +46,7 @@ vi.mock('electron', () => ({
   app: { getPath: backupHandlerMocks.appGetPath },
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
   dialog: {
-    showOpenDialog: vi.fn()
+    showOpenDialog: backupHandlerMocks.showOpenDialog
   },
   ipcMain: {
     handle: backupHandlerMocks.ipcHandle
@@ -52,8 +75,8 @@ vi.mock('../services/backupRecovery', () => ({
 }))
 
 vi.mock('../services/pathPreference', () => ({
-  getPathPreference: vi.fn(),
-  rememberPathPreference: vi.fn()
+  getPathPreferenceWithFallback: backupHandlerMocks.getPathPreferenceWithFallback,
+  rememberPathPreference: backupHandlerMocks.rememberPathPreference
 }))
 
 vi.mock('../services/pendingRestoreLog', () => ({
@@ -67,11 +90,15 @@ vi.mock('../services/runtimeLogger', () => ({
 }))
 
 vi.mock('../commands/backupCommands', () => ({
-  createBackupCommand: vi.fn(),
+  BACKUP_CREATE_LAST_DIR_KEY: 'backup_create_last_dir',
+  BACKUP_IMPORT_LAST_DIR_KEY: 'backup_import_last_dir',
+  BACKUP_LAST_DIR_LEGACY_KEY: 'backup_last_dir',
+  BACKUP_RESTORE_LAST_DIR_KEY: 'backup_restore_last_dir',
+  createBackupCommand: backupHandlerMocks.createBackupCommand,
   deleteBackupCommand: backupHandlerMocks.deleteBackupCommand,
-  importBackupCommand: vi.fn(),
-  listBackupsCommand: vi.fn(),
-  validateBackupCommand: vi.fn()
+  importBackupCommand: backupHandlerMocks.importBackupCommand,
+  listBackupsCommand: backupHandlerMocks.listBackupsCommand,
+  validateBackupCommand: backupHandlerMocks.validateBackupCommand
 }))
 
 vi.mock('./session', () => ({
@@ -99,6 +126,28 @@ describe('backup IPC handlers', () => {
   beforeEach(() => {
     backupHandlerMocks.handlers.clear()
     vi.clearAllMocks()
+    backupHandlerMocks.getPathPreferenceWithFallback.mockReturnValue(null)
+    backupHandlerMocks.createBackupCommand.mockResolvedValue({
+      status: 'success',
+      data: {
+        backupId: 21,
+        directoryPath: 'D:/exports',
+        period: null,
+        backupPath: 'D:/exports/backup.db',
+        manifestPath: 'D:/exports/manifest.json',
+        checksum: 'checksum-1',
+        fileSize: 128
+      },
+      error: null
+    })
+    backupHandlerMocks.importBackupCommand.mockResolvedValue({
+      status: 'success',
+      data: {
+        importedLedgerId: 12,
+        importedLedgerName: '导入账套'
+      },
+      error: null
+    })
     backupHandlerMocks.getBackupPackageById.mockReturnValue({
       id: 7,
       ledger_id: 1,
@@ -108,6 +157,61 @@ describe('backup IPC handlers', () => {
       checksum: 'checksum-1'
     })
     registerBackupHandlers()
+  })
+
+  it('uses dedicated remembered directories for create/import/restore backup dialogs', async () => {
+    backupHandlerMocks.getPathPreferenceWithFallback
+      .mockReturnValueOnce('D:/preferred-create')
+      .mockReturnValueOnce('D:/preferred-import')
+      .mockReturnValueOnce('D:/preferred-restore')
+    backupHandlerMocks.showOpenDialog
+      .mockResolvedValueOnce({
+        canceled: true,
+        filePaths: []
+      })
+      .mockResolvedValueOnce({
+        canceled: true,
+        filePaths: []
+      })
+      .mockResolvedValueOnce({
+        canceled: true,
+        filePaths: []
+      })
+
+    const createHandler = backupHandlerMocks.handlers.get('backup:create')
+    const importHandler = backupHandlerMocks.handlers.get('backup:import')
+    const restoreHandler = backupHandlerMocks.handlers.get('backup:restore')
+    const event = { sender: { id: 1 } }
+
+    await createHandler?.(event, { ledgerId: 1 })
+    await importHandler?.(event, {})
+    await restoreHandler?.(event, {})
+
+    expect(backupHandlerMocks.getPathPreferenceWithFallback).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      ['backup_create_last_dir', 'backup_last_dir']
+    )
+    expect(backupHandlerMocks.getPathPreferenceWithFallback).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      ['backup_import_last_dir', 'backup_last_dir']
+    )
+    expect(backupHandlerMocks.getPathPreferenceWithFallback).toHaveBeenNthCalledWith(
+      3,
+      expect.anything(),
+      ['backup_restore_last_dir', 'backup_last_dir']
+    )
+
+    expect(backupHandlerMocks.showOpenDialog.mock.calls[0]?.[0]).toMatchObject({
+      defaultPath: 'D:/preferred-create'
+    })
+    expect(backupHandlerMocks.showOpenDialog.mock.calls[1]?.[0]).toMatchObject({
+      defaultPath: 'D:/preferred-import'
+    })
+    expect(backupHandlerMocks.showOpenDialog.mock.calls[2]?.[0]).toMatchObject({
+      defaultPath: 'D:/preferred-restore'
+    })
   })
 
   it('surfaces record-only deletion guidance when the physical package is already missing', async () => {
@@ -156,7 +260,7 @@ describe('backup IPC handlers', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+      error: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
       errorCode: 'VALIDATION_ERROR',
       errorDetails: {
         backupId: 9,

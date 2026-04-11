@@ -39,6 +39,10 @@ import {
   setDiagnosticsLogDirectory
 } from '../services/diagnosticsLogPath'
 import {
+  getPathPreferenceWithFallback,
+  rememberPathPreference
+} from '../services/pathPreference'
+import {
   getRuntimeDefaultsSnapshot,
   getSystemParamSnapshot,
   isSystemParamKey,
@@ -48,14 +52,29 @@ import { requireAdmin, requireAuth, requirePermission } from './session'
 
 type StandardType = 'enterprise' | 'npo'
 
-function getTemplateDefaultPath(standardType: StandardType): string {
-  const fileName =
-    standardType === 'enterprise' ? '企业一级科目导入模板.xlsx' : '民非一级科目导入模板.xlsx'
-  return path.join(app.getPath('documents'), 'Dude Accounting', '导入模板', fileName)
+const DIAGNOSTICS_EXPORT_LAST_DIR_KEY = 'diagnostics_export_last_dir'
+const SUBJECT_TEMPLATE_DOWNLOAD_LAST_DIR_KEY = 'subject_template_download_last_dir'
+
+function getTemplateDefaultFileName(standardType: StandardType): string {
+  return standardType === 'enterprise' ? '企业一级科目导入模板.xlsx' : '民非一级科目导入模板.xlsx'
 }
 
-function getDiagnosticsExportDefaultPath(): string {
-  return path.join(app.getPath('documents'), 'Dude Accounting', '日志导出')
+function getDefaultTemplateDownloadDir(): string {
+  return path.join(app.getPath('documents'), 'Dude Accounting', '导入模板')
+}
+
+function getTemplateDefaultPath(db: ReturnType<typeof getDatabase>, standardType: StandardType): string {
+  const preferredDir =
+    getPathPreferenceWithFallback(db, [SUBJECT_TEMPLATE_DOWNLOAD_LAST_DIR_KEY]) ??
+    getDefaultTemplateDownloadDir()
+  return path.join(preferredDir, getTemplateDefaultFileName(standardType))
+}
+
+function getDefaultDiagnosticsExportDir(db: ReturnType<typeof getDatabase>): string {
+  return (
+    getPathPreferenceWithFallback(db, [DIAGNOSTICS_EXPORT_LAST_DIR_KEY]) ??
+    path.join(app.getPath('documents'), 'Dude Accounting', '日志导出')
+  )
 }
 
 export function registerSettingsHandlers(): void {
@@ -225,11 +244,11 @@ export function registerSettingsHandlers(): void {
           ? { canceled: false, filePaths: [payload.directoryPath] }
           : browserWindow
             ? await dialog.showOpenDialog(browserWindow, {
-                defaultPath: getDiagnosticsExportDefaultPath(),
+                defaultPath: getDefaultDiagnosticsExportDir(db),
                 properties: ['openDirectory', 'createDirectory']
               })
             : await dialog.showOpenDialog({
-                defaultPath: getDiagnosticsExportDefaultPath(),
+                defaultPath: getDefaultDiagnosticsExportDir(db),
                 properties: ['openDirectory', 'createDirectory']
               })
 
@@ -238,6 +257,7 @@ export function registerSettingsHandlers(): void {
         }
 
         const result = exportDiagnosticLogs(app.getPath('userData'), openResult.filePaths[0])
+        rememberPathPreference(db, DIAGNOSTICS_EXPORT_LAST_DIR_KEY, openResult.filePaths[0])
         return {
           success: true,
           exportDirectory: result.exportDirectory,
@@ -490,11 +510,11 @@ export function registerSettingsHandlers(): void {
       const browserWindow = BrowserWindow.fromWebContents(event.sender)
       const saveResult = browserWindow
         ? await dialog.showSaveDialog(browserWindow, {
-            defaultPath: getTemplateDefaultPath(standardType),
+            defaultPath: getTemplateDefaultPath(db, standardType),
             filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
           })
         : await dialog.showSaveDialog({
-            defaultPath: getTemplateDefaultPath(standardType),
+            defaultPath: getTemplateDefaultPath(db, standardType),
             filters: [{ name: 'Excel 工作簿', extensions: ['xlsx'] }]
           })
 
@@ -506,6 +526,7 @@ export function registerSettingsHandlers(): void {
         saveResult.filePath,
         standardType
       )
+      rememberPathPreference(db, SUBJECT_TEMPLATE_DOWNLOAD_LAST_DIR_KEY, filePath)
 
       return { success: true, filePath }
     } catch (error) {

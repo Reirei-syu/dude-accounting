@@ -1,11 +1,15 @@
 import path from 'node:path'
 import type Database from 'better-sqlite3'
-import { getPathPreference, rememberPathPreference } from './pathPreference'
+import {
+  getPathPreferenceWithFallback,
+  rememberPathPreference
+} from './pathPreference'
 import type { ReportExportFormat, ReportSnapshotDetail } from './reporting'
 import { buildDefaultReportExportFileName, buildReportSnapshotHtml } from './reportSnapshotOutput'
 import { writeReportSnapshotExcel } from './reportSnapshotOutput'
 
 export const REPORT_EXPORT_LAST_DIR_KEY = 'report_export_last_dir'
+export const REPORT_EXPORT_BATCH_LAST_DIR_KEY = 'report_export_batch_last_dir'
 
 export function getDefaultReportExportRootDir(documentsPath: string): string {
   return path.join(documentsPath, 'Dude Accounting', '报表导出')
@@ -13,13 +17,32 @@ export function getDefaultReportExportRootDir(documentsPath: string): string {
 
 export function getPreferredReportExportDir(db: Database.Database, documentsPath: string): string {
   return (
-    getPathPreference(db, REPORT_EXPORT_LAST_DIR_KEY) ??
+    getPathPreferenceWithFallback(db, [REPORT_EXPORT_LAST_DIR_KEY]) ??
     getDefaultReportExportRootDir(documentsPath)
   )
 }
 
 export function rememberReportExportDir(db: Database.Database, targetPath: string): void {
   rememberPathPreference(db, REPORT_EXPORT_LAST_DIR_KEY, targetPath)
+}
+
+export function getPreferredReportExportBatchDir(
+  db: Database.Database,
+  documentsPath: string
+): string {
+  return (
+    getPathPreferenceWithFallback(db, [
+      REPORT_EXPORT_BATCH_LAST_DIR_KEY,
+      REPORT_EXPORT_LAST_DIR_KEY
+    ]) ?? getDefaultReportExportRootDir(documentsPath)
+  )
+}
+
+export function rememberReportExportBatchDir(
+  db: Database.Database,
+  targetPath: string
+): void {
+  rememberPathPreference(db, REPORT_EXPORT_BATCH_LAST_DIR_KEY, targetPath)
 }
 
 export function buildReportExportDefaultPath(

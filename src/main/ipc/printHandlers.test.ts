@@ -9,6 +9,15 @@ const printHandlerMocks = vi.hoisted(() => {
   class BrowserWindowMock {
     static fromWebContents = vi.fn(() => null)
     static getAllWindows = vi.fn(() => [])
+    webContents = {
+      id: 999,
+      printToPDF: vi.fn(async () => Buffer.from('pdf-bytes'))
+    }
+    setBounds = vi.fn()
+    setSkipTaskbar = vi.fn()
+    on = vi.fn()
+    loadURL = vi.fn(async () => undefined)
+    close = vi.fn()
   }
 
   return {
@@ -21,6 +30,8 @@ const printHandlerMocks = vi.hoisted(() => {
     showSaveDialog: vi.fn(),
     browserWindowMock: BrowserWindowMock,
     getDatabase: vi.fn(() => ({ prepare: vi.fn() })),
+    getPathPreferenceWithFallback: vi.fn(),
+    rememberPathPreference: vi.fn(),
     requireAuth: vi.fn(() => ({ id: 7, isAdmin: false })),
     requireLedgerAccess: vi.fn()
   }
@@ -35,6 +46,11 @@ vi.mock('electron', () => ({
 
 vi.mock('../database/init', () => ({
   getDatabase: printHandlerMocks.getDatabase
+}))
+
+vi.mock('../services/pathPreference', () => ({
+  getPathPreferenceWithFallback: printHandlerMocks.getPathPreferenceWithFallback,
+  rememberPathPreference: printHandlerMocks.rememberPathPreference
 }))
 
 vi.mock('./session', () => ({
@@ -83,6 +99,7 @@ describe('print IPC handlers', () => {
     fs.rmSync(printHandlerMocks.userDataDir, { recursive: true, force: true })
     printHandlerMocks.handlers.clear()
     vi.clearAllMocks()
+    printHandlerMocks.getPathPreferenceWithFallback.mockReturnValue(null)
     registerPrintHandlers()
   })
 
@@ -221,5 +238,66 @@ describe('print IPC handlers', () => {
       errorCode: 'FORBIDDEN',
       errorDetails: { jobId: 'job-foreign-preview' }
     })
+  })
+
+  it('uses a dedicated remembered directory and persists it after exporting print pdf', async () => {
+    const exportPath = path.join(printHandlerMocks.userDataDir, 'exports', 'print.pdf')
+    printHandlerMocks.getPathPreferenceWithFallback.mockReturnValue('D:/RememberedPrints')
+    printHandlerMocks.showSaveDialog.mockResolvedValue({
+      canceled: false,
+      filePath: exportPath
+    })
+    writePrintJob('job-ready-export', {
+      status: 'ready',
+      sourceDocument: {
+        title: '测试打印任务',
+        orientation: 'portrait',
+        pageSize: 'A4',
+        segments: []
+      },
+      layoutResult: {
+        title: '测试打印任务',
+        orientation: 'portrait',
+        settings: {
+          orientation: 'portrait',
+          scalePercent: 100,
+          marginPreset: 'default',
+          densityPreset: 'default'
+        },
+        pageCount: 1,
+        pages: [],
+        diagnostics: {
+          engine: 'page-model',
+          overflowDetected: false,
+          oversizeRowKeys: [],
+          pageRowCounts: []
+        }
+      },
+      layoutVersion: 1
+    })
+
+    const handler = printHandlerMocks.handlers.get('print:exportPdf')
+    const event = { sender: { id: 1 } }
+
+    const result = await handler?.(event, { jobId: 'job-ready-export' })
+
+    expect(printHandlerMocks.getPathPreferenceWithFallback).toHaveBeenCalledWith(
+      expect.anything(),
+      ['print_export_pdf_last_dir']
+    )
+    expect(printHandlerMocks.showSaveDialog).toHaveBeenCalledTimes(1)
+    expect(printHandlerMocks.showSaveDialog.mock.calls[0]?.[0]).toMatchObject({
+      defaultPath: 'D:\\RememberedPrints\\测试打印任务.pdf'
+    })
+    expect(printHandlerMocks.rememberPathPreference).toHaveBeenCalledWith(
+      expect.anything(),
+      'print_export_pdf_last_dir',
+      exportPath
+    )
+    expect(result).toEqual({
+      success: true,
+      filePath: exportPath
+    })
+    expect(fs.existsSync(exportPath)).toBe(true)
   })
 })

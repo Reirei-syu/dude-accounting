@@ -3,6 +3,7 @@ import {
   exportReportSnapshotsBatch,
   getDefaultReportExportRootDir,
   getPreferredReportExportDir,
+  rememberReportExportBatchDir,
   rememberReportExportDir
 } from '../services/reportExport'
 import {
@@ -227,7 +228,7 @@ export async function exportReportsBatchCommand(
           ? writeReportSnapshotExcel(filePath, detail, payload.renderOptions)
           : writeReportSnapshotPdf(filePath, detail, payload.renderOptions)
     )
-    rememberReportExportDir(context.db, payload.directoryPath)
+    rememberReportExportBatchDir(context.db, payload.directoryPath)
 
     appendActorOperationLog(context, {
       ledgerId: details[0]?.ledger_id ?? null,

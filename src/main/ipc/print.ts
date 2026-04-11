@@ -38,6 +38,10 @@ import { appendCliE2eEvent } from '../runtime/cliE2eEvents'
 import { requireCommandActor, requireCommandLedgerAccess } from '../commands/authz'
 import { CommandError } from '../commands/types'
 import type { CommandActor } from '../commands/types'
+import {
+  getPathPreferenceWithFallback,
+  rememberPathPreference
+} from '../services/pathPreference'
 import { requireAuth, requireLedgerAccess } from './session'
 import {
   buildPresentedReportTables,
@@ -115,6 +119,7 @@ interface PrintJobRecord {
 
 const printJobs = new Map<string, PrintJobRecord>()
 const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
+const PRINT_EXPORT_PDF_LAST_DIR_KEY = 'print_export_pdf_last_dir'
 
 function buildPrintFailureResponse(
   error: string,
@@ -447,8 +452,15 @@ function buildPreviewModel(
   }
 }
 
-function getPrintExportDir(): string {
+function getDefaultPrintExportDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '打印导出')
+}
+
+function getPreferredPrintExportDir(db: ReturnType<typeof getDatabase>): string {
+  return (
+    getPathPreferenceWithFallback(db, [PRINT_EXPORT_PDF_LAST_DIR_KEY]) ??
+    getDefaultPrintExportDir()
+  )
 }
 
 async function createPreviewWindowForJob(input: {
@@ -1465,6 +1477,7 @@ export async function exportPreparedJobPdfForActor(
   }
 
   const filePath = await exportPrintJobPdfToPath(command.jobId, outputPath)
+  rememberPathPreference(db, PRINT_EXPORT_PDF_LAST_DIR_KEY, filePath)
   return { filePath }
 }
 
@@ -1849,7 +1862,10 @@ export function registerPrintHandlers(): void {
     }
 
     const browserWindow = BrowserWindow.fromWebContents(event.sender)
-    const defaultPath = path.join(getPrintExportDir(), `${sanitizeFileName(job.title)}.pdf`)
+    const defaultPath = path.join(
+      getPreferredPrintExportDir(db),
+      `${sanitizeFileName(job.title)}.pdf`
+    )
     const saveResult = command.outputPath
       ? { canceled: false, filePath: command.outputPath }
       : browserWindow
@@ -1867,6 +1883,7 @@ export function registerPrintHandlers(): void {
     }
 
     const filePath = await exportPrintJobPdfToPath(command.jobId, saveResult.filePath)
+    rememberPathPreference(db, PRINT_EXPORT_PDF_LAST_DIR_KEY, filePath)
     return { success: true, filePath }
 
     /*

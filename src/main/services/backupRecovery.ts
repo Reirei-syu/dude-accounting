@@ -3,12 +3,14 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { hashPassword } from '../security/password'
 import {
+  buildTimestampToken,
   buildUniqueDirectoryPath,
   computeFileSha256,
   ensureDirectory,
   sanitizePathSegment
 } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
+import { LAST_LOGIN_USER_ID_KEY, USER_WALLPAPER_KEY } from './wallpaperPreference'
 
 export interface BackupManifest {
   schemaVersion: '1.0'
@@ -40,8 +42,16 @@ export interface LedgerBackupAttachment {
   fileSize: number
 }
 
+export interface LedgerBackupSettingsAsset {
+  ownerUsername: string
+  kind: 'wallpaper'
+  relativePath: string
+  checksum: string
+  fileSize: number
+}
+
 export interface LedgerBackupManifest {
-  schemaVersion: '2.0'
+  schemaVersion: '2.0' | '2.1'
   packageType: 'ledger_backup'
   ledgerId: number
   ledgerName: string | null
@@ -52,6 +62,7 @@ export interface LedgerBackupManifest {
   checksum: string
   fileSize: number
   attachments: LedgerBackupAttachment[]
+  settingsAssets?: LedgerBackupSettingsAsset[]
 }
 
 export interface LedgerBackupArtifactResult {
@@ -62,6 +73,7 @@ export interface LedgerBackupArtifactResult {
   fileSize: number
   createdAt: string
   attachments: LedgerBackupAttachment[]
+  settingsAssets: LedgerBackupSettingsAsset[]
 }
 
 export interface BackupValidationResult {
@@ -96,10 +108,18 @@ export interface ResolvedBackupArtifactPaths {
 function buildBackupPackageName(
   ledgerName?: string | null,
   period?: string | null,
-  fiscalYear?: string | null
+  fiscalYear?: string | null,
+  now: Date = new Date()
 ): string {
   const ledgerLabel = sanitizePathSegment(ledgerName?.trim() || '未命名账套', '未命名账套')
-  const periodLabel = sanitizePathSegment(period?.trim() || fiscalYear?.trim() || '未设置期间', '未设置期间')
+  if (!period?.trim() && !fiscalYear?.trim()) {
+    return `${ledgerLabel}_备份_${buildTimestampToken(now)}`
+  }
+
+  const periodLabel = sanitizePathSegment(
+    period?.trim() || fiscalYear?.trim() || '未设置期间',
+    '未设置期间'
+  )
   return `${ledgerLabel}_${periodLabel}_备份包`
 }
 
@@ -122,32 +142,9 @@ function trimLedgerBackupDatabase(db: DatabaseSync, ledgerId: number): void {
   db.prepare(`DELETE FROM electronic_voucher_records WHERE ledger_id <> ?`).run(ledgerId)
   db.prepare(`DELETE FROM electronic_voucher_files WHERE ledger_id <> ?`).run(ledgerId)
   db.prepare(`DELETE FROM operation_logs WHERE ledger_id IS NULL OR ledger_id <> ?`).run(ledgerId)
-  for (const tableName of ['backup_packages', 'archive_exports', 'user_preferences', 'user_ledger_permissions', 'system_settings']) {
+  db.prepare(`DELETE FROM user_ledger_permissions WHERE ledger_id <> ?`).run(ledgerId)
+  for (const tableName of ['backup_packages', 'archive_exports']) {
     db.exec(`DELETE FROM ${tableName}`)
-  }
-
-  const referencedUserIds = new Set<number>()
-  const collectRows = (sql: string): void => {
-    const rows = db.prepare(sql).all() as Array<{ user_id: number | null }>
-    for (const row of rows) {
-      if (typeof row.user_id === 'number' && Number.isInteger(row.user_id)) {
-        referencedUserIds.add(row.user_id)
-      }
-    }
-  }
-
-  collectRows('SELECT creator_id AS user_id FROM vouchers WHERE creator_id IS NOT NULL')
-  collectRows('SELECT auditor_id AS user_id FROM vouchers WHERE auditor_id IS NOT NULL')
-  collectRows('SELECT bookkeeper_id AS user_id FROM vouchers WHERE bookkeeper_id IS NOT NULL')
-  collectRows('SELECT imported_by AS user_id FROM electronic_voucher_files WHERE imported_by IS NOT NULL')
-  collectRows('SELECT generated_by AS user_id FROM report_snapshots WHERE generated_by IS NOT NULL')
-  collectRows('SELECT user_id FROM operation_logs WHERE user_id IS NOT NULL')
-
-  if (referencedUserIds.size === 0) {
-    db.exec('DELETE FROM users')
-  } else {
-    const placeholders = Array.from(referencedUserIds, () => '?').join(', ')
-    db.prepare(`DELETE FROM users WHERE id NOT IN (${placeholders})`).run(...referencedUserIds)
   }
 }
 
@@ -202,6 +199,66 @@ function copyLedgerAttachments(
   return attachments
 }
 
+function deriveUserDataPathFromDatabasePath(databasePath: string): string {
+  const parentDir = path.dirname(databasePath)
+  if (path.basename(parentDir).toLowerCase() === 'data') {
+    return path.dirname(parentDir)
+  }
+  return parentDir
+}
+
+function copyLedgerSettingsAssets(
+  db: DatabaseSync,
+  sourceUserDataPath: string,
+  packageDir: string
+): LedgerBackupSettingsAsset[] {
+  const wallpaperRows = db
+    .prepare(
+      `SELECT u.username, up.value AS relative_path
+         FROM user_preferences up
+         INNER JOIN users u ON u.id = up.user_id
+        WHERE up.key = ?
+          AND TRIM(up.value) <> ''
+        ORDER BY u.username ASC`
+    )
+    .all(USER_WALLPAPER_KEY) as Array<{
+    username: string
+    relative_path: string
+  }>
+
+  if (wallpaperRows.length === 0) {
+    return []
+  }
+
+  const settingsAssetDir = path.join(packageDir, 'settings-assets')
+  ensureDirectory(settingsAssetDir)
+
+  const assets: LedgerBackupSettingsAsset[] = []
+  for (const row of wallpaperRows) {
+    const sourcePath = path.resolve(sourceUserDataPath, row.relative_path)
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      throw new Error(`备份缺少用户壁纸文件：${row.username}`)
+    }
+
+    const extension = path.extname(sourcePath).toLowerCase()
+    const assetFileName = `${sanitizePathSegment(row.username, 'user')}-wallpaper${extension}`
+    const relativePath = path.posix.join('settings-assets', assetFileName)
+    const targetPath = path.join(settingsAssetDir, assetFileName)
+
+    fs.copyFileSync(sourcePath, targetPath)
+
+    assets.push({
+      ownerUsername: row.username,
+      kind: 'wallpaper',
+      relativePath,
+      checksum: computeFileSha256(targetPath),
+      fileSize: fs.statSync(targetPath).size
+    })
+  }
+
+  return assets
+}
+
 export function resolveBackupArtifactPaths(packageDir: string): ResolvedBackupArtifactPaths {
   if (!fs.existsSync(packageDir) || !fs.statSync(packageDir).isDirectory()) {
     throw new Error('所选恢复路径不是有效的备份包目录')
@@ -238,7 +295,12 @@ export function createBackupArtifact(input: {
 }): BackupArtifactResult {
   ensureDirectory(input.backupDir)
 
-  const preferredPackageName = buildBackupPackageName(input.ledgerName, input.period, input.fiscalYear)
+  const preferredPackageName = buildBackupPackageName(
+    input.ledgerName,
+    input.period,
+    input.fiscalYear,
+    input.now
+  )
   const packageDir = buildUniqueDirectoryPath(input.backupDir, preferredPackageName)
   const packageName = path.basename(packageDir)
   const filename = `${packageName}.db`
@@ -284,20 +346,28 @@ export function createLedgerBackupArtifact(input: {
 }): LedgerBackupArtifactResult {
   ensureDirectory(input.backupDir)
 
-  const preferredPackageName = buildBackupPackageName(input.ledgerName, input.period, input.fiscalYear)
+  const preferredPackageName = buildBackupPackageName(
+    input.ledgerName,
+    input.period,
+    input.fiscalYear,
+    input.now
+  )
   const packageDir = buildUniqueDirectoryPath(input.backupDir, preferredPackageName)
   const packageName = path.basename(packageDir)
   const backupPath = path.join(packageDir, `${packageName}.db`)
   const createdAt = formatLocalDateTime(input.now ?? new Date())
+  const sourceUserDataPath = deriveUserDataPathFromDatabasePath(input.sourcePath)
 
   ensureDirectory(packageDir)
   fs.copyFileSync(input.sourcePath, backupPath)
 
   const packageDb = new DatabaseSync(backupPath)
   let attachments: LedgerBackupAttachment[] = []
+  let settingsAssets: LedgerBackupSettingsAsset[] = []
   try {
     trimLedgerBackupDatabase(packageDb, input.ledgerId)
     attachments = copyLedgerAttachments(packageDb, packageDir)
+    settingsAssets = copyLedgerSettingsAssets(packageDb, sourceUserDataPath, packageDir)
     packageDb.exec('VACUUM;')
   } finally {
     packageDb.close()
@@ -306,7 +376,7 @@ export function createLedgerBackupArtifact(input: {
   const checksum = computeFileSha256(backupPath)
   const fileSize = fs.statSync(backupPath).size
   const manifestPath = writeLedgerBackupManifest(packageDir, {
-    schemaVersion: '2.0',
+    schemaVersion: '2.1',
     packageType: 'ledger_backup',
     ledgerId: input.ledgerId,
     ledgerName: input.ledgerName?.trim() || null,
@@ -316,7 +386,8 @@ export function createLedgerBackupArtifact(input: {
     databaseFile: path.basename(backupPath),
     checksum,
     fileSize,
-    attachments
+    attachments,
+    settingsAssets
   })
 
   return {
@@ -326,7 +397,8 @@ export function createLedgerBackupArtifact(input: {
     checksum,
     fileSize,
     createdAt,
-    attachments
+    attachments,
+    settingsAssets
   }
 }
 
@@ -399,12 +471,13 @@ export function validateLedgerBackupArtifact(
 
   const fileSize = fs.statSync(filePath).size
   const isManifestValid =
-    manifest.schemaVersion === '2.0' &&
+    (manifest.schemaVersion === '2.0' || manifest.schemaVersion === '2.1') &&
     manifest.packageType === 'ledger_backup' &&
     manifest.databaseFile === path.basename(filePath) &&
     manifest.checksum === actualChecksum &&
     manifest.fileSize === fileSize &&
-    Array.isArray(manifest.attachments)
+    Array.isArray(manifest.attachments) &&
+    (manifest.schemaVersion !== '2.1' || Array.isArray(manifest.settingsAssets))
 
   if (!isManifestValid) {
     return {
@@ -443,6 +516,38 @@ export function validateLedgerBackupArtifact(
         valid: false,
         actualChecksum,
         error: `账套备份附件大小不一致：${attachment.relativePath}`,
+        manifest
+      }
+    }
+  }
+
+  for (const settingsAsset of manifest.settingsAssets ?? []) {
+    const assetPath = path.join(packageDir, ...settingsAsset.relativePath.split('/'))
+    if (!fs.existsSync(assetPath)) {
+      return {
+        valid: false,
+        actualChecksum,
+        error: `备份设置资产缺失：${settingsAsset.relativePath}`,
+        manifest
+      }
+    }
+
+    const assetChecksum = computeFileSha256(assetPath)
+    if (assetChecksum !== settingsAsset.checksum) {
+      return {
+        valid: false,
+        actualChecksum,
+        error: `备份设置资产校验失败：${settingsAsset.relativePath}`,
+        manifest
+      }
+    }
+
+    const assetSize = fs.statSync(assetPath).size
+    if (assetSize !== settingsAsset.fileSize) {
+      return {
+        valid: false,
+        actualChecksum,
+        error: `备份设置资产大小不一致：${settingsAsset.relativePath}`,
         manifest
       }
     }
@@ -507,6 +612,7 @@ export function importLedgerBackupArtifact(input: {
   const packageDb = new DatabaseSync(input.backupPath, { readOnly: true })
   const targetDb = new DatabaseSync(input.targetPath)
   const packageDir = path.dirname(input.manifestPath)
+  const targetUserDataPath = path.dirname(input.attachmentRootDir)
 
   try {
     packageDb.exec('PRAGMA foreign_keys = ON;')
@@ -552,6 +658,8 @@ export function importLedgerBackupArtifact(input: {
     }
 
     const userIdMap = new Map<number, number>()
+    const sourceUserById = new Map<number, { username: string }>()
+    const targetUserIdByUsername = new Map<string, number>()
     const sourceUsers = packageDb
       .prepare(
         `SELECT id, username, real_name, password_hash, permissions, is_admin, created_at
@@ -574,9 +682,11 @@ export function importLedgerBackupArtifact(input: {
     )
 
     for (const sourceUser of sourceUsers) {
+      sourceUserById.set(sourceUser.id, { username: sourceUser.username })
       const existingUser = selectUserByUsername.get(sourceUser.username) as { id: number } | undefined
       if (existingUser) {
         userIdMap.set(sourceUser.id, existingUser.id)
+        targetUserIdByUsername.set(sourceUser.username, existingUser.id)
         continue
       }
 
@@ -588,7 +698,9 @@ export function importLedgerBackupArtifact(input: {
         0,
         sourceUser.created_at
       )
-      userIdMap.set(sourceUser.id, Number(insertedUser.lastInsertRowid))
+      const targetUserId = Number(insertedUser.lastInsertRowid)
+      userIdMap.set(sourceUser.id, targetUserId)
+      targetUserIdByUsername.set(sourceUser.username, targetUserId)
     }
 
     const insertPeriod = targetDb.prepare(
@@ -1110,6 +1222,114 @@ export function importLedgerBackupArtifact(input: {
         row.details_json,
         row.created_at
       )
+    }
+
+    const sourcePermissions = packageDb
+      .prepare(
+        `SELECT user_id, ledger_id, created_at
+           FROM user_ledger_permissions
+          WHERE ledger_id = ?
+          ORDER BY user_id ASC`
+      )
+      .all(sourceLedger.id) as Array<{
+      user_id: number
+      ledger_id: number
+      created_at: string
+    }>
+    const insertPermission = targetDb.prepare(
+      `INSERT OR IGNORE INTO user_ledger_permissions (user_id, ledger_id, created_at)
+       VALUES (?, ?, ?)`
+    )
+    for (const row of sourcePermissions) {
+      insertPermission.run(
+        requireMappedId(userIdMap, row.user_id, '用户'),
+        importedLedgerId,
+        row.created_at
+      )
+    }
+
+    targetDb.exec('DELETE FROM system_settings')
+    const sourceSystemSettings = packageDb
+      .prepare('SELECT key, value FROM system_settings ORDER BY key ASC')
+      .all() as Array<{ key: string; value: string }>
+    const insertSystemSetting = targetDb.prepare(
+      `INSERT INTO system_settings (key, value)
+       VALUES (?, ?)`
+    )
+    for (const row of sourceSystemSettings) {
+      if (row.key === LAST_LOGIN_USER_ID_KEY) {
+        const sourceLastLoginId = Number(row.value)
+        const sourceUsername = sourceUserById.get(sourceLastLoginId)?.username
+        const targetUserId = sourceUsername
+          ? targetUserIdByUsername.get(sourceUsername) ?? null
+          : null
+        if (targetUserId !== null) {
+          insertSystemSetting.run(row.key, String(targetUserId))
+        }
+        continue
+      }
+      insertSystemSetting.run(row.key, row.value)
+    }
+
+    targetDb.exec('DELETE FROM user_preferences')
+    const sourceUserPreferences = packageDb
+      .prepare(
+        `SELECT user_id, key, value, updated_at
+           FROM user_preferences
+          ORDER BY user_id ASC, key ASC`
+      )
+      .all() as Array<{
+      user_id: number
+      key: string
+      value: string
+      updated_at: string
+    }>
+    const wallpaperPathByUsername = new Map<string, string>()
+    for (const asset of validation.manifest.settingsAssets ?? []) {
+      if (asset.kind !== 'wallpaper') {
+        continue
+      }
+      const targetUserId = targetUserIdByUsername.get(asset.ownerUsername)
+      if (!targetUserId) {
+        continue
+      }
+      const sourceAssetPath = path.join(packageDir, ...asset.relativePath.split('/'))
+      const extension = path.extname(asset.relativePath)
+      const targetRelativePath = path.posix.join(
+        'wallpapers',
+        `user-${targetUserId}`,
+        `current${extension}`
+      )
+      const targetAbsoluteDir = path.join(targetUserDataPath, 'wallpapers', `user-${targetUserId}`)
+      ensureDirectory(targetAbsoluteDir)
+      const targetAbsolutePath = path.join(targetAbsoluteDir, `current${extension}`)
+      fs.copyFileSync(sourceAssetPath, targetAbsolutePath)
+      wallpaperPathByUsername.set(asset.ownerUsername, targetRelativePath)
+    }
+
+    const insertUserPreference = targetDb.prepare(
+      `INSERT INTO user_preferences (user_id, key, value, updated_at)
+       VALUES (?, ?, ?, ?)`
+    )
+    for (const row of sourceUserPreferences) {
+      const targetUserId = userIdMap.get(row.user_id)
+      if (!targetUserId) {
+        continue
+      }
+
+      const sourceUsername = sourceUserById.get(row.user_id)?.username
+      if (row.key === USER_WALLPAPER_KEY) {
+        const targetRelativePath = sourceUsername
+          ? wallpaperPathByUsername.get(sourceUsername) ?? ''
+          : ''
+        if (!targetRelativePath) {
+          continue
+        }
+        insertUserPreference.run(targetUserId, row.key, targetRelativePath, row.updated_at)
+        continue
+      }
+
+      insertUserPreference.run(targetUserId, row.key, row.value, row.updated_at)
     }
 
     targetDb.exec('COMMIT;')

@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const backupMocks = vi.hoisted(() => ({
   getBackupPackageById: vi.fn(),
@@ -11,6 +14,7 @@ const backupMocks = vi.hoisted(() => ({
   clearPendingRestoreLog: vi.fn(),
   getPendingRestoreLogPath: vi.fn(() => 'D:/tmp/pending-restore-log.json'),
   requestEmbeddedCliRelaunch: vi.fn(),
+  rememberPathPreference: vi.fn(),
   requireCommandAdmin: vi.fn((actor) => actor),
   requireCommandLedgerAccess: vi.fn((...args) => args[1])
 }))
@@ -49,6 +53,10 @@ vi.mock('../runtime/embeddedCliState', () => ({
   requestEmbeddedCliRelaunch: backupMocks.requestEmbeddedCliRelaunch
 }))
 
+vi.mock('../services/pathPreference', () => ({
+  rememberPathPreference: backupMocks.rememberPathPreference
+}))
+
 vi.mock('./authz', async () => {
   const actual = await vi.importActual('./authz')
   return {
@@ -61,6 +69,7 @@ vi.mock('./authz', async () => {
 import { restoreBackupCommand } from './backupCommands'
 
 describe('restoreBackupCommand', () => {
+  let tempDir = ''
   const context = {
     db: {
       prepare: vi.fn(),
@@ -82,6 +91,7 @@ describe('restoreBackupCommand', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    backupMocks.restoreBackupArtifact.mockImplementation(() => undefined)
     backupMocks.getBackupPackageById.mockReturnValue({
       id: 11,
       ledger_id: 7,
@@ -94,6 +104,13 @@ describe('restoreBackupCommand', () => {
       valid: true,
       actualChecksum: 'checksum-1'
     })
+  })
+
+  afterEach(() => {
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+      tempDir = ''
+    }
   })
 
   it('writes pending log and requests relaunch on successful restore', async () => {
@@ -129,7 +146,7 @@ describe('restoreBackupCommand', () => {
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
       code: 'VALIDATION_ERROR',
-      message: '账套级备份包不支持整库恢复，请改用 backup import 导入为新账套',
+      message: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
       details: {
         backupId: 11,
         packageType: 'ledger_backup'
@@ -151,5 +168,40 @@ describe('restoreBackupCommand', () => {
     expect(result.error?.message).toBe('restore failed')
     expect(backupMocks.clearPendingRestoreLog).toHaveBeenCalledTimes(1)
     expect(backupMocks.initializeDatabase).toHaveBeenCalledTimes(1)
+  })
+
+  it('remembers restore directories when restoring from an explicit package path', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-restore-command-'))
+    const packageDir = path.join(tempDir, 'system-backup')
+    const manifestPath = path.join(packageDir, 'manifest.json')
+    fs.mkdirSync(packageDir, { recursive: true })
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        checksum: 'checksum-1',
+        ledgerId: 7,
+        packageType: 'system_backup'
+      }),
+      'utf8'
+    )
+    backupMocks.resolveBackupArtifactPaths.mockReturnValue({
+      backupPath: path.join(packageDir, 'data.db'),
+      manifestPath
+    })
+    backupMocks.validateBackupArtifact.mockReturnValue({
+      valid: true,
+      actualChecksum: 'checksum-1'
+    })
+
+    const result = await restoreBackupCommand(context as never, {
+      packagePath: packageDir
+    })
+
+    expect(result.status).toBe('success')
+    expect(backupMocks.rememberPathPreference).toHaveBeenCalledWith(
+      expect.anything(),
+      'backup_restore_last_dir',
+      tempDir
+    )
   })
 })

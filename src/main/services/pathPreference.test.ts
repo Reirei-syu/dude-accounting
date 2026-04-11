@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { getPathPreference, rememberPathPreference } from './pathPreference'
+import {
+  getPathPreference,
+  getPathPreferenceWithFallback,
+  rememberPathPreference
+} from './pathPreference'
 
 class FakePathPreferenceDb {
   settings = new Map<string, string>()
@@ -50,5 +54,21 @@ describe('pathPreference service', () => {
 
     rememberPathPreference(db as never, 'backup_last_dir', 'D:/exports/backup-root/package/manifest.json')
     expect(getPathPreference(db as never, 'backup_last_dir')).toBe('D:/exports/backup-root/package')
+  })
+
+  it('returns the first available remembered path from a fallback list', () => {
+    const db = new FakePathPreferenceDb()
+
+    rememberPathPreference(db as never, 'report_export_last_dir', 'D:/exports/report.pdf')
+
+    expect(
+      getPathPreferenceWithFallback(db as never, [
+        'report_export_batch_last_dir',
+        'report_export_last_dir'
+      ])
+    ).toBe('D:/exports')
+    expect(
+      getPathPreferenceWithFallback(db as never, ['missing_1', 'missing_2'])
+    ).toBeNull()
   })
 })

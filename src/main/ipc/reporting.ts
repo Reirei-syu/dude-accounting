@@ -10,8 +10,9 @@ import {
 } from '../commands/reportingCommands'
 import {
   buildReportExportDefaultPath,
-  getPreferredReportExportDir,
+  getPreferredReportExportBatchDir,
   getReportExportFilters,
+  rememberReportExportBatchDir,
   rememberReportExportDir
 } from '../services/reportExport'
 import {
@@ -131,7 +132,7 @@ export function registerReportingHandlers(): void {
               return toLegacyFailure(detailResult.error, '获取报表详情失败')
             }
             const detail: ReportSnapshotDetail = detailResult.data
-            const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
+            const preferredDir = getPreferredReportExportBatchDir(db, app.getPath('documents'))
             const defaultPath = buildReportExportDefaultPath(preferredDir, detail, payload.format)
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const saveResult = payload.filePath
@@ -228,7 +229,10 @@ export function registerReportingHandlers(): void {
             if (failedDetailResult && !isCommandSuccess(failedDetailResult)) {
               return toLegacyFailure(failedDetailResult.error, '获取报表详情失败')
             }
-            const preferredDir = getPreferredReportExportDir(db, app.getPath('documents'))
+            const preferredDir = getPreferredReportExportBatchDir(
+              db,
+              app.getPath('documents')
+            )
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const openResult = payload.directoryPath
               ? { canceled: false, filePaths: [payload.directoryPath] }
@@ -255,7 +259,7 @@ export function registerReportingHandlers(): void {
               return toLegacyFailure(result.error, '批量导出报表失败')
             }
             const filePaths = result.data.filePaths
-            rememberReportExportDir(db, directoryPath)
+            rememberReportExportBatchDir(db, directoryPath)
 
             return {
               success: true,
