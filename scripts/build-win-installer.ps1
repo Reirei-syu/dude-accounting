@@ -39,8 +39,22 @@ if (-not $installer) {
   throw 'Windows installer was not generated.'
 }
 
-$latestInstallerAlias = Join-Path $releaseOutput 'dude-app-latest-setup.exe'
-Copy-Item -Path $installer.FullName -Destination $latestInstallerAlias -Force
+$itemsToRemove = Get-ChildItem -Path $releaseOutput -Force -ErrorAction SilentlyContinue |
+  Where-Object {
+    if ($_.PSIsContainer) {
+      return $true
+    }
+
+    return $_.FullName -ne $installer.FullName
+  }
+
+foreach ($item in $itemsToRemove) {
+  if ($item.PSIsContainer) {
+    Remove-Item -Path $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+  } else {
+    Remove-Item -Path $item.FullName -Force -ErrorAction SilentlyContinue
+  }
+}
 
 Write-Host "Windows installer build completed: $($installer.FullName)"
-Write-Host "Latest installer alias updated: $latestInstallerAlias"
+Write-Host "Only installer retained in output directory."

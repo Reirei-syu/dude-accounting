@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import electronPath from 'electron'
+import { extractCommandResult as extractCliCommandResult } from './cliCommandResult.mjs'
 
 const cliArgs = process.argv.slice(2)
 
@@ -157,7 +158,7 @@ async function executeBatchCommand(invocation) {
     throw new Error(`CLI 子命令执行失败，退出码 ${result.code}`)
   }
 
-  return extractCommandResult(`${result.stdout}\n${result.stderr}`)
+  return extractCliCommandResult(`${result.stdout}\n${result.stderr}`)
 }
 
 async function runInteractiveShell() {

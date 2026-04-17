@@ -2141,7 +2141,7 @@ function buildNgoActivityStatementSnapshot(
     rowOf(
       `income-${group.prefixes[0]}`,
       group.label,
-      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'income'),
+      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'income', scope.endPeriod),
       sumEntriesByPrefixes(cumulativeEntries, group.prefixes, 'income')
     )
   )
@@ -2149,11 +2149,11 @@ function buildNgoActivityStatementSnapshot(
     rowOf(
       `expense-${group.prefixes[0]}`,
       group.label,
-      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'expense'),
+      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'expense', scope.endPeriod),
       sumEntriesByPrefixes(cumulativeEntries, group.prefixes, 'expense')
     )
   )
-  const currentTransfers = sumNgoNetAssetTransfers(selectedEntries)
+  const currentTransfers = sumNgoNetAssetTransfers(selectedEntries, scope.endPeriod)
   const cumulativeTransfers = sumNgoNetAssetTransfers(cumulativeEntries)
   const restrictedToUnrestrictedCurrent = {
     unrestricted: currentTransfers.restrictedToUnrestricted,

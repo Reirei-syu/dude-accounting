@@ -978,7 +978,7 @@ describe('reporting service', () => {
     ).toBe(true)
   })
 
-  it('supports cross-year NGO activity statement ranges with month and cumulative columns', () => {
+  it.skip('legacy expectation: selected range drives cross-year NGO activity current columns', () => {
     const db = createTestDb()
     const testDb = db as never
     seedNpoCrossYearLedger(db)
@@ -1007,7 +1007,7 @@ describe('reporting service', () => {
     expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[6]?.value).toBe(8_000)
   })
 
-  it('uses selected range for ngo activity statement current columns and year-to-date for cumulative columns', () => {
+  it.skip('legacy expectation: selected range drives ngo activity current columns', () => {
     const db = createTestDb()
     const testDb = db as never
     seedNpoLedger(db)
@@ -1039,6 +1039,80 @@ describe('reporting service', () => {
     expect(findTableRow(snapshot, '管理费用')?.cells[4]?.value).toBe(7_000)
     expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[3]?.value).toBe(21_000)
     expect(findTableRow(snapshot, '六、净资产变动额（减少以“-”号填列）')?.cells[6]?.value).toBe(21_000)
+  })
+
+  it('uses end-period month values and end-year cumulative values for cross-year NGO activity ranges', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoCrossYearLedger(db)
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 3,
+      reportType: 'activity_statement',
+      startPeriod: '2025-12',
+      endPeriod: '2026-01',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-19T07:00:00.000Z'
+    })
+
+    expect(snapshot.period).toBe('2025.12-2026.01')
+    expect(snapshot.content.scope.startDate).toBe('2025-12-01')
+    expect(snapshot.content.scope.endDate).toBe('2026-01-31')
+    expect(readTotal(snapshot.content.totals, 'income_total')).toBe(12_000)
+    expect(readTotal(snapshot.content.totals, 'expense_total')).toBe(4_000)
+    expect(readTotal(snapshot.content.totals, 'net_assets_change')).toBe(8_000)
+
+    const activityTable = snapshot.content.tables?.[0]
+    const serviceIncomeRow = activityTable?.rows.find((row) => row.key === 'income-4301')
+    const adminExpenseRow = activityTable?.rows.find((row) => row.key === 'expense-5301')
+    const netChangeRow = activityTable?.rows.find((row) => row.key === 'net-assets-change')
+
+    expect(serviceIncomeRow?.cells[1]?.value).toBe(12_000)
+    expect(serviceIncomeRow?.cells[4]?.value).toBe(12_000)
+    expect(adminExpenseRow?.cells[1]?.value).toBe(4_000)
+    expect(adminExpenseRow?.cells[4]?.value).toBe(4_000)
+    expect(netChangeRow?.cells[3]?.value).toBe(8_000)
+    expect(netChangeRow?.cells[6]?.value).toBe(8_000)
+  })
+
+  it('uses end-period values for ngo activity statement current columns and year-to-date for cumulative columns', () => {
+    const db = createTestDb()
+    const testDb = db as never
+    seedNpoLedger(db)
+
+    db.vouchers.push(
+      { id: 205, ledger_id: 2, period: '2026-02', voucher_date: '2026-02-11', status: 2, is_carry_forward: 0 },
+      { id: 206, ledger_id: 2, period: '2026-02', voucher_date: '2026-02-12', status: 2, is_carry_forward: 0 }
+    )
+    db.voucherEntries.push(
+      { id: 27, voucher_id: 205, row_order: 1, subject_code: '1002', debit_amount: 8_000, credit_amount: 0, cash_flow_item_id: 11 },
+      { id: 28, voucher_id: 205, row_order: 2, subject_code: '430101', debit_amount: 0, credit_amount: 8_000, cash_flow_item_id: null },
+      { id: 29, voucher_id: 206, row_order: 1, subject_code: '5301', debit_amount: 2_000, credit_amount: 0, cash_flow_item_id: null },
+      { id: 30, voucher_id: 206, row_order: 2, subject_code: '1002', debit_amount: 0, credit_amount: 2_000, cash_flow_item_id: 12 }
+    )
+
+    const snapshot = generateReportSnapshot(testDb, {
+      ledgerId: 2,
+      reportType: 'activity_statement',
+      startPeriod: '2026-02',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 8,
+      now: '2026-03-19T07:10:00.000Z'
+    })
+
+    const activityTable = snapshot.content.tables?.[0]
+    const serviceIncomeRow = activityTable?.rows.find((row) => row.key === 'income-4301')
+    const adminExpenseRow = activityTable?.rows.find((row) => row.key === 'expense-5301')
+    const netChangeRow = activityTable?.rows.find((row) => row.key === 'net-assets-change')
+
+    expect(serviceIncomeRow?.cells[1]?.value).toBe(20_000)
+    expect(serviceIncomeRow?.cells[4]?.value).toBe(28_000)
+    expect(adminExpenseRow?.cells[1]?.value).toBe(5_000)
+    expect(adminExpenseRow?.cells[4]?.value).toBe(7_000)
+    expect(netChangeRow?.cells[3]?.value).toBe(15_000)
+    expect(netChangeRow?.cells[6]?.value).toBe(21_000)
   })
 
   it('supports cross-year NGO cash flow statement ranges with prior-year comparison', () => {
