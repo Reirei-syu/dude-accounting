@@ -96,6 +96,15 @@ npm install
 6. 完成科目、辅助项、现金流量项目等基础设置
 7. 开始录入凭证、审核、记账、结账、查询账簿和导出报表
 
+安装版额外说明：
+
+- 安装完成后，安装目录会自动加入当前用户的 `PATH`
+- 重新打开一个新的 PowerShell / Windows Terminal / 命令提示符后，可直接使用：
+  - `dudeacc`
+  - `dude-accounting`
+- `dudeacc` 默认进入面向人工操作的交互式命令壳
+- `dude-accounting <domain> <action>` 适合脚本、自动化和 Agent 调用
+
 典型日常流程：
 
 1. 登录账号
@@ -263,6 +272,8 @@ dude-app.exe --cli <domain> <action> ...
 - 原因是仓库内 `better-sqlite3` 当前按 Electron ABI 构建，纯 Node 路径不是主支持方式
 - `backup restore` 目前仍保留为安装版 Electron 生命周期能力，不支持纯命令行热恢复
 - 推荐人工操作时优先使用 `dudeacc`；脚本和 Agent 继续优先使用 `dude-accounting <domain> <action>`
+- Windows 安装版安装完成后会自动把安装目录加入当前用户 `PATH`，新开的终端里可以直接输入 `dudeacc` 或 `dude-accounting`
+- 如果安装前已经打开了终端窗口，需要关闭后重新打开，新的 `PATH` 才会生效
 
 ## CLI 覆盖说明
 
