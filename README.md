@@ -2,6 +2,10 @@
 
 基于 Electron + React + TypeScript 的单机版代理记账财务软件。
 
+## 下载
+
+- [Windows安装包](https://github.com/Reirei-syu/dude-accounting/releases/download/v1.1.3/dude-app-1.1.3-setup.exe)
+
 本软件面向代理记账企业内部人员，服务对象为委托单位账套。当前支持两类账套：
 
 - `enterprise`
@@ -80,7 +84,29 @@ npm install
 
 ## 使用方法
 
-### 1. 开发运行
+### 1. 安装版快速开始
+
+适合日常记账、报表导出和备份归档使用。
+
+1. 下载上方的 `Windows安装包`
+2. 双击安装包并完成安装
+3. 启动 `dude-app`
+4. 登录账号
+5. 选择账套或新建账套
+6. 完成科目、辅助项、现金流量项目等基础设置
+7. 开始录入凭证、审核、记账、结账、查询账簿和导出报表
+
+典型日常流程：
+
+1. 登录账号
+2. 选择账套
+3. 维护科目 / 辅助项 / 现金流配置
+4. 录入或导入凭证
+5. 审核、记账、结账
+6. 查询账簿和报表
+7. 导出报表、执行备份或电子档案导出
+
+### 2. 开发运行
 
 ```bash
 npm run dev
@@ -92,23 +118,33 @@ npm run dev
 - 请优先使用 `npm run dev` / `npm run start`
 - 不建议直接手动执行 `electron-vite dev`，否则终端中的中文错误可能乱码
 
-### 2. 预览运行
+### 3. 预览运行
 
 ```bash
 npm run start
 ```
 
-### 3. 桌面端日常使用
+### 4. 开发者常用命令
 
-常见顺序通常是：
+```bash
+# 安装依赖
+npm install
 
-1. 登录账号
-2. 选择账套
-3. 维护科目 / 辅助项 / 现金流配置
-4. 录入或导入凭证
-5. 审核、记账、结账
-6. 查询账簿和报表
-7. 导出报表、执行备份或电子档案导出
+# 桌面开发模式
+npm run dev
+
+# 预览模式
+npm run start
+
+# CLI
+npm run cli -- --help
+
+# 类型检查
+npm run typecheck
+
+# 全量测试
+npm test
+```
 
 ## CLI 使用方法
 
@@ -306,18 +342,14 @@ npm run build:linux
 D:\coding\completed\dude-app\
 ```
 
+执行 `npm run build:win:installer` 后，脚本会自动清理额外中间产物，最终只保留一个最新的 Windows 安装包 EXE。
+
 ### Windows 安装包
 
 命名规则：
 
 ```text
 dude-app-<version>-setup.exe
-```
-
-同时会额外生成一个固定别名：
-
-```text
-dude-app-latest-setup.exe
 ```
 
 ### macOS 安装包
