@@ -5,6 +5,7 @@ import { executeCliCommand, listCommands, type CliCommandInvocation } from './ex
 import { renderCommandOutput } from './output'
 import { parseCliArgs } from './parse'
 import { resolveCliPayload } from './payload'
+import { loadCliSession } from './sessionStore'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
@@ -12,7 +13,9 @@ import { getCommandMetadata, listCommandHelpEntries, type CommandHelpEntry } fro
 
 export interface InteractiveShellState {
   outputMode: CommandOutputMode
+  accountName?: string
   ledgerId?: number
+  ledgerName?: string
   period?: string
 }
 
@@ -263,9 +266,32 @@ function toPeriodDateRange(period: string): { startDate: string; endDate: string
 
 function formatStateSummary(state: InteractiveShellState): string {
   const parts = [`outputMode=${state.outputMode}`]
-  parts.push(`ledgerId=${state.ledgerId ?? '未选择'}`)
+  parts.push(`account=${state.accountName ?? '未登录'}`)
+  parts.push(
+    `ledger=${state.ledgerName ?? (typeof state.ledgerId === 'number' ? `#${state.ledgerId}` : '未选择')}`
+  )
   parts.push(`period=${state.period ?? '未选择'}`)
   return parts.join(', ')
+}
+
+function formatStatusValue(value: string | undefined, fallback: string): string {
+  return value && value.trim() ? value.trim() : fallback
+}
+
+export function formatInteractiveStatusBar(state: InteractiveShellState): string {
+  return [
+    `账号：${formatStatusValue(state.accountName, '未登录')}`,
+    `账套：${formatStatusValue(state.ledgerName, '未选择')}`,
+    `会计期间：${formatStatusValue(state.period, '未选择')}`
+  ].join(' | ')
+}
+
+export function createInitialInteractiveShellState(runtime: RuntimeContext): InteractiveShellState {
+  const session = loadCliSession(runtime)
+  return {
+    outputMode: 'pretty',
+    accountName: session?.actor.username
+  }
 }
 
 function buildInteractiveHelpResult(showAll = false): CommandResult<{
@@ -340,19 +366,8 @@ export function listShellBuiltInCommands(): ShellBuiltInCommand[] {
 }
 
 export function formatInteractivePrompt(state: InteractiveShellState): string {
-  const contextParts: string[] = []
-  if (typeof state.ledgerId === 'number') {
-    contextParts.push(`ledger:${state.ledgerId}`)
-  }
-  if (state.period) {
-    contextParts.push(`period:${state.period}`)
-  }
-
-  if (contextParts.length === 0) {
-    return 'dudeacc>'
-  }
-
-  return `dudeacc[${contextParts.join('|')}]>`
+  void state
+  return 'dudeacc>'
 }
 
 export function shouldEnterInteractiveShell(
@@ -594,13 +609,16 @@ export function executeShellBuiltin(
         text: `当前上下文：${formatStateSummary(state)}`,
         result: createSuccessResult({
           outputMode: state.outputMode,
+          accountName: state.accountName ?? null,
           ledgerId: state.ledgerId ?? null,
+          ledgerName: state.ledgerName ?? null,
           period: state.period ?? null
         })
       }
     case 'context clear': {
       const nextState: InteractiveShellState = {
-        outputMode: state.outputMode
+        outputMode: state.outputMode,
+        accountName: state.accountName
       }
       return {
         handled: true,
@@ -608,7 +626,9 @@ export function executeShellBuiltin(
         text: '已清空当前账套和期间上下文',
         result: createSuccessResult({
           outputMode: nextState.outputMode,
+          accountName: nextState.accountName ?? null,
           ledgerId: null,
+          ledgerName: null,
           period: null
         })
       }
@@ -627,6 +647,7 @@ export function executeShellBuiltin(
 
       const nextState: InteractiveShellState = {
         outputMode: state.outputMode,
+        accountName: state.accountName,
         ledgerId
       }
       return {
@@ -635,7 +656,9 @@ export function executeShellBuiltin(
         text: `已选择当前账套：${ledgerId}`,
         result: createSuccessResult({
           outputMode: nextState.outputMode,
+          accountName: nextState.accountName ?? null,
           ledgerId,
+          ledgerName: null,
           period: null
         })
       }
@@ -661,14 +684,17 @@ export function executeShellBuiltin(
         text: `已选择当前期间：${period}`,
         result: createSuccessResult({
           outputMode: nextState.outputMode,
+          accountName: nextState.accountName ?? null,
           ledgerId: nextState.ledgerId ?? null,
+          ledgerName: nextState.ledgerName ?? null,
           period
         })
       }
     }
     case 'unset ledger': {
       const nextState: InteractiveShellState = {
-        outputMode: state.outputMode
+        outputMode: state.outputMode,
+        accountName: state.accountName
       }
       return {
         handled: true,
@@ -676,7 +702,9 @@ export function executeShellBuiltin(
         text: '已清除当前账套与期间上下文',
         result: createSuccessResult({
           outputMode: nextState.outputMode,
+          accountName: nextState.accountName ?? null,
           ledgerId: null,
+          ledgerName: null,
           period: null
         })
       }
@@ -692,7 +720,9 @@ export function executeShellBuiltin(
         text: '已清除当前期间上下文',
         result: createSuccessResult({
           outputMode: nextState.outputMode,
+          accountName: nextState.accountName ?? null,
           ledgerId: nextState.ledgerId ?? null,
+          ledgerName: nextState.ledgerName ?? null,
           period: null
         })
       }
@@ -743,13 +773,11 @@ function formatPeriodChoices(periods: Array<Record<string, unknown>>): string {
   return lines.join('\n')
 }
 
-async function promptForLedgerId(
+async function listInteractiveLedgers(
   runtime: RuntimeContext,
-  rl: readline.Interface,
-  output: Writable,
   outputMode: CommandOutputMode,
   executeCommand: InteractiveCommandExecutor
-): Promise<number> {
+): Promise<Array<Record<string, unknown>>> {
   const result = await executeCommand(runtime, {
     domain: 'ledger',
     action: 'list',
@@ -770,14 +798,63 @@ async function promptForLedgerId(
     throw new CommandError('VALIDATION_ERROR', '当前没有可选账套', null, 2)
   }
 
-  output.write(`${formatLedgerChoices(result.data as Array<Record<string, unknown>>)}\n`)
+  return result.data as Array<Record<string, unknown>>
+}
+
+async function promptForLedgerSelection(
+  runtime: RuntimeContext,
+  rl: readline.Interface,
+  output: Writable,
+  outputMode: CommandOutputMode,
+  executeCommand: InteractiveCommandExecutor
+): Promise<{ ledgerId: number; ledgerName: string }> {
+  const ledgers = await listInteractiveLedgers(runtime, outputMode, executeCommand)
+
+  output.write(`${formatLedgerChoices(ledgers)}\n`)
   const answer = (await rl.question('请输入账套ID: ')).trim()
   const ledgerId = Number(answer)
   if (!Number.isInteger(ledgerId) || ledgerId <= 0) {
     throw new CommandError('VALIDATION_ERROR', '账套ID 必须是正整数', null, 2)
   }
 
-  return ledgerId
+  const matchedLedger = ledgers.find((ledger) => Number(ledger.id) === ledgerId)
+  if (!matchedLedger) {
+    throw new CommandError('VALIDATION_ERROR', '账套不存在或无权访问', { ledgerId }, 2)
+  }
+
+  return {
+    ledgerId,
+    ledgerName: String(matchedLedger.name)
+  }
+}
+
+async function resolveLedgerSelection(
+  runtime: RuntimeContext,
+  rl: readline.Interface,
+  output: Writable,
+  state: InteractiveShellState,
+  executeCommand: InteractiveCommandExecutor,
+  rawLedgerId?: string
+): Promise<{ ledgerId: number; ledgerName: string }> {
+  if (!rawLedgerId) {
+    return await promptForLedgerSelection(runtime, rl, output, state.outputMode, executeCommand)
+  }
+
+  const ledgerId = Number(rawLedgerId)
+  if (!Number.isInteger(ledgerId) || ledgerId <= 0) {
+    throw new CommandError('VALIDATION_ERROR', '账套ID 必须是正整数', null, 2)
+  }
+
+  const ledgers = await listInteractiveLedgers(runtime, state.outputMode, executeCommand)
+  const matchedLedger = ledgers.find((ledger) => Number(ledger.id) === ledgerId)
+  if (!matchedLedger) {
+    throw new CommandError('VALIDATION_ERROR', '账套不存在或无权访问', { ledgerId }, 2)
+  }
+
+  return {
+    ledgerId,
+    ledgerName: String(matchedLedger.name)
+  }
 }
 
 async function promptForPeriod(
@@ -839,7 +916,9 @@ async function promptForItem(
     case 'password':
       return await rl.question('密码: ')
     case 'ledgerId':
-      return await promptForLedgerId(runtime, rl, output, state.outputMode, executeCommand)
+      return (
+        await promptForLedgerSelection(runtime, rl, output, state.outputMode, executeCommand)
+      ).ledgerId
     case 'period': {
       const ledgerId =
         typeof payload.ledgerId === 'number'
@@ -865,6 +944,64 @@ function renderShellCommandResult(
   output.write(`${renderCommandOutput(result, outputMode)}\n`)
 }
 
+function extractCommandAccountName(result: CommandResult<unknown>): string | undefined {
+  if (result.status !== 'success' || !result.data || typeof result.data !== 'object') {
+    return undefined
+  }
+
+  const payload = result.data as Record<string, unknown>
+  const user = payload.user as Record<string, unknown> | undefined
+  if (typeof user?.username === 'string') {
+    return user.username
+  }
+
+  const actor = payload.actor as Record<string, unknown> | undefined
+  if (typeof actor?.username === 'string') {
+    return actor.username
+  }
+
+  return undefined
+}
+
+function applyInteractiveCommandResultState(
+  state: InteractiveShellState,
+  command: { domain: string; action: string },
+  result: CommandResult<unknown>
+): InteractiveShellState {
+  if (result.status !== 'success') {
+    return state
+  }
+
+  const metadata = getCommandMetadata().find(
+    (item) => item.domain === command.domain && item.action === command.action
+  )
+
+  if (metadata?.sessionEffect === 'logout') {
+    return {
+      outputMode: state.outputMode
+    }
+  }
+
+  if (metadata?.sessionEffect === 'login') {
+    return {
+      outputMode: state.outputMode,
+      accountName: extractCommandAccountName(result)
+    }
+  }
+
+  if (command.domain === 'auth' && command.action === 'whoami') {
+    const accountName = extractCommandAccountName(result)
+    if (accountName) {
+      return {
+        ...state,
+        accountName
+      }
+    }
+  }
+
+  return state
+}
+
 export async function runInteractiveCli(
   runtime: RuntimeContext,
   options: {
@@ -885,12 +1022,11 @@ export async function runInteractiveCli(
     )
   })
 
-  let state: InteractiveShellState = {
-    outputMode: 'pretty'
-  }
+  let state: InteractiveShellState = createInitialInteractiveShellState(runtime)
 
   try {
     while (true) {
+      output.write(`${formatInteractiveStatusBar(state)}\n`)
       const line = await rl.question(formatInteractivePrompt(state))
       if (!line.trim()) {
         continue
@@ -900,22 +1036,41 @@ export async function runInteractiveCli(
         const resolved = resolveInteractiveCommand(line)
         if (resolved.kind === 'builtin') {
           let builtinTokens = resolved.tokens
+          let selectedLedger:
+            | {
+                ledgerId: number
+                ledgerName: string
+              }
+            | undefined
 
-          if (resolved.name === 'use ledger' && !builtinTokens[2]) {
-            builtinTokens = [
-              'use',
-              'ledger',
-              String(await promptForLedgerId(runtime, rl, output, state.outputMode, executeCommand))
-            ]
+          if (resolved.name === 'use ledger') {
+            selectedLedger = await resolveLedgerSelection(
+              runtime,
+              rl,
+              output,
+              state,
+              executeCommand,
+              builtinTokens[2]
+            )
+            builtinTokens = ['use', 'ledger', String(selectedLedger.ledgerId)]
           }
 
           if (resolved.name === 'use period' && !builtinTokens[2]) {
-            const ledgerId =
-              typeof state.ledgerId === 'number'
-                ? state.ledgerId
-                : await promptForLedgerId(runtime, rl, output, state.outputMode, executeCommand)
-            if (typeof state.ledgerId !== 'number') {
-              state = { ...state, ledgerId }
+            let ledgerId = state.ledgerId
+            if (typeof ledgerId !== 'number') {
+              const selected = await promptForLedgerSelection(
+                runtime,
+                rl,
+                output,
+                state.outputMode,
+                executeCommand
+              )
+              ledgerId = selected.ledgerId
+              state = {
+                ...state,
+                ledgerId: selected.ledgerId,
+                ledgerName: selected.ledgerName
+              }
             }
             builtinTokens = [
               'use',
@@ -925,8 +1080,15 @@ export async function runInteractiveCli(
           }
 
           const execution = executeShellBuiltin(builtinTokens, state)
+          const nextState =
+            selectedLedger && execution.nextState.ledgerId === selectedLedger.ledgerId
+              ? {
+                  ...execution.nextState,
+                  ledgerName: selectedLedger.ledgerName
+                }
+              : execution.nextState
           await writeShellExecution(output, state, execution)
-          state = execution.nextState
+          state = nextState
           if (execution.shouldExit) {
             return 0
           }
@@ -966,6 +1128,7 @@ export async function runInteractiveCli(
         })
 
         renderShellCommandResult(output, result, state.outputMode)
+        state = applyInteractiveCommandResultState(state, prepared, result)
       } catch (error) {
         const result =
           error instanceof CommandError

@@ -189,7 +189,9 @@ async function runBatchMode() {
 }
 
 async function main() {
-  await ensureBuildArtifacts()
+  if (process.env.DUDEACC_SKIP_BUILD !== '1') {
+    await ensureBuildArtifacts()
+  }
 
   if (shouldUseInteractiveShell()) {
     await runInteractiveShell()

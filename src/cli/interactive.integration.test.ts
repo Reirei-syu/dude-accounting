@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it } from 'vitest'
 import { createNodeRuntimeContext } from '../main/runtime/runtimeContext'
@@ -107,6 +110,7 @@ function createFakeExecutor(): InteractiveCommandExecutor {
 async function runSession(steps: Array<{ waitFor: string; input: string }>): Promise<string> {
   const input = new PassThrough()
   const output = new PassThrough()
+  const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-integration-'))
   let buffer = ''
   let stepIndex = 0
   let settled = false
@@ -134,27 +138,32 @@ async function runSession(steps: Array<{ waitFor: string; input: string }>): Pro
 
   const runtime = createNodeRuntimeContext({
     isDevelopment: false,
-    isPackaged: false
+    isPackaged: false,
+    userDataPath
   })
   const executor = createFakeExecutor()
   const sessionPromise = runInteractiveCli(runtime, { input, output, executeCommand: executor })
 
-  maybeAdvance()
+  try {
+    maybeAdvance()
 
-  const exitCode = await Promise.race([
-    sessionPromise,
-    new Promise<number>((_, reject) => {
-      setTimeout(() => {
-        if (!settled) {
-          reject(new Error(`交互式 CLI 会话超时\n当前输出:\n${buffer}`))
-        }
-      }, 10_000)
-    })
-  ])
+    const exitCode = await Promise.race([
+      sessionPromise,
+      new Promise<number>((_, reject) => {
+        setTimeout(() => {
+          if (!settled) {
+            reject(new Error(`交互式 CLI 会话超时\n当前输出:\n${buffer}`))
+          }
+        }, 10_000)
+      })
+    ])
 
-  settled = true
-  expect(exitCode).toBe(0)
-  return buffer
+    settled = true
+    expect(exitCode).toBe(0)
+    return buffer
+  } finally {
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+  }
 }
 
 describe('interactive shell integration', () => {
@@ -180,9 +189,13 @@ describe('interactive shell integration', () => {
       ])
 
       expect(output).toContain('dudeacc>')
+      expect(output).toContain('账号：未登录 | 账套：未选择 | 会计期间：未选择')
       expect(output).toContain('账套列表')
+      expect(output).toContain('账号：admin | 账套：未选择 | 会计期间：未选择')
       expect(output).toContain('"username": "admin"')
+      expect(output).toContain('账号：admin | 账套：交互测试账套 | 会计期间：未选择')
       expect(output).toContain('已选择当前账套：1')
+      expect(output).toContain('账号：admin | 账套：交互测试账套 | 会计期间：2026-04')
       expect(output).toContain('已选择当前期间：2026-04')
       expect(output).toContain('"period": "2026-04"')
     },

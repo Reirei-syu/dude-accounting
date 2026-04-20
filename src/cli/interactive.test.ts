@@ -1,9 +1,30 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { createNodeRuntimeContext } from '../main/runtime/runtimeContext'
+import { saveCliSession } from './sessionStore'
 
 interface InteractiveModule {
+  createInitialInteractiveShellState?: (runtime: unknown) => {
+    outputMode: 'json' | 'pretty'
+    accountName?: string
+    ledgerId?: number
+    ledgerName?: string
+    period?: string
+  }
+  formatInteractiveStatusBar?: (state: {
+    outputMode: 'json' | 'pretty'
+    accountName?: string
+    ledgerId?: number
+    ledgerName?: string
+    period?: string
+  }) => string
   formatInteractivePrompt?: (state: {
     outputMode: 'json' | 'pretty'
+    accountName?: string
     ledgerId?: number
+    ledgerName?: string
     period?: string
   }) => string
   shouldEnterInteractiveShell?: (
@@ -39,11 +60,23 @@ interface InteractiveModule {
   ) => Array<{ key: string }>
   executeShellBuiltin?: (
     tokens: string[],
-    state: { outputMode: 'json' | 'pretty'; ledgerId?: number; period?: string }
+    state: {
+      outputMode: 'json' | 'pretty'
+      accountName?: string
+      ledgerId?: number
+      ledgerName?: string
+      period?: string
+    }
   ) => {
     handled: boolean
     shouldExit?: boolean
-    nextState: { outputMode: 'json' | 'pretty'; ledgerId?: number; period?: string }
+    nextState: {
+      outputMode: 'json' | 'pretty'
+      accountName?: string
+      ledgerId?: number
+      ledgerName?: string
+      period?: string
+    }
     text?: string
     result?: {
       status: string
@@ -55,24 +88,67 @@ interface InteractiveModule {
 
 async function loadInteractiveModule(): Promise<InteractiveModule | null> {
   try {
-    return (await import('./interactive')) as InteractiveModule
+    return (await import('./interactive')) as unknown as InteractiveModule
   } catch {
     return null
   }
 }
 
 describe('interactive cli helpers', () => {
-  it('formats dudeacc prompt with optional ledger and period context', async () => {
+  it('formats fixed dudeacc prompt and status bar', async () => {
     const interactive = await loadInteractiveModule()
 
     expect(interactive?.formatInteractivePrompt?.({ outputMode: 'pretty' })).toBe('dudeacc>')
     expect(
-      interactive?.formatInteractivePrompt?.({
+      interactive?.formatInteractiveStatusBar?.({
+        outputMode: 'pretty'
+      })
+    ).toBe('账号：未登录 | 账套：未选择 | 会计期间：未选择')
+    expect(
+      interactive?.formatInteractiveStatusBar?.({
         outputMode: 'pretty',
+        accountName: 'admin',
         ledgerId: 3,
+        ledgerName: '测试账套',
         period: '2026-04'
       })
-    ).toBe('dudeacc[ledger:3|period:2026-04]>')
+    ).toBe('账号：admin | 账套：测试账套 | 会计期间：2026-04')
+    expect(
+      interactive?.formatInteractivePrompt?.({
+        outputMode: 'pretty',
+        accountName: 'admin',
+        ledgerId: 3,
+        ledgerName: '测试账套',
+        period: '2026-04'
+      })
+    ).toBe('dudeacc>')
+  })
+
+  it('hydrates initial shell state from persisted cli session', async () => {
+    const interactive = await loadInteractiveModule()
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-state-'))
+    const runtime = createNodeRuntimeContext({
+      isDevelopment: false,
+      isPackaged: false,
+      userDataPath: tempDir
+    })
+
+    try {
+      saveCliSession(runtime, {
+        id: 1,
+        username: 'admin',
+        permissions: {},
+        isAdmin: true,
+        source: 'cli'
+      })
+
+      expect(interactive?.createInitialInteractiveShellState?.(runtime)).toMatchObject({
+        outputMode: 'pretty',
+        accountName: 'admin'
+      })
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 
   it('enters interactive shell only when argv is empty and terminal is interactive', async () => {
