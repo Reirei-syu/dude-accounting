@@ -184,6 +184,8 @@ dude-accounting <domain> <action>
 - 复杂参数建议使用 `--payload-file` 或 `--payload-json`
 - CLI 与桌面 UI 共用同一份本机数据目录，不会分裂出第二套运行时
 - 无参数且当前终端为 TTY 时，`dudeacc` / `dude-accounting` 都会进入交互式命令壳
+- 交互式命令壳固定使用 `dudeacc>` prompt，并在每轮输入前显示一行状态栏：账号 / 账套 / 会计期间
+- CLI 登录态会持久化到本机；只要不执行 `auth logout`，后续重新打开 CLI 仍可直接复用登录态
 
 ### 源码仓调试
 
@@ -213,12 +215,16 @@ npm run cli --
 交互态常见示例：
 
 ```text
+账号：未登录 | 账套：未选择 | 会计期间：未选择
 dudeacc> help
+账号：未登录 | 账套：未选择 | 会计期间：未选择
 dudeacc> 登录
+账号：admin | 账套：未选择 | 会计期间：未选择
 dudeacc> 账套列表
-dudeacc> 选择账套 1
-dudeacc[ledger:1]> 选择期间 2026-04
-dudeacc[ledger:1|period:2026-04]> 科目余额表
+账号：admin | 账套：交互测试账套 | 会计期间：未选择
+dudeacc> 选择期间 2026-04
+账号：admin | 账套：交互测试账套 | 会计期间：2026-04
+dudeacc> 科目余额表
 ```
 
 使用 `payload file` 的示例：
@@ -268,6 +274,8 @@ dude-app.exe --cli <domain> <action> ...
 
 说明：
 
+- Windows 安装器会在安装完成后把安装目录加入当前用户 `PATH`；关闭并重新打开 PowerShell / Windows Terminal / CMD 后，即可在任意目录直接执行 `dudeacc` 与 `dude-accounting`
+- 卸载时会同步移除该 PATH 入口，避免遗留失效命令
 - 当前源码调试和安装版都优先走嵌入式 Electron CLI，而不是纯 Node 直接连库
 - 原因是仓库内 `better-sqlite3` 当前按 Electron ABI 构建，纯 Node 路径不是主支持方式
 - `backup restore` 目前仍保留为安装版 Electron 生命周期能力，不支持纯命令行热恢复

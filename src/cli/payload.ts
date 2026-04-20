@@ -1,6 +1,10 @@
 import fs from 'node:fs'
 import { CommandError } from '../main/commands/types'
 
+function stripUtf8Bom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
 function normalizeLooseValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeLooseValue(item))
@@ -33,7 +37,7 @@ export function resolveCliPayload(input: {
 }): unknown {
   if (input.payloadFile) {
     try {
-      return JSON.parse(fs.readFileSync(input.payloadFile, 'utf8')) as unknown
+      return JSON.parse(stripUtf8Bom(fs.readFileSync(input.payloadFile, 'utf8'))) as unknown
     } catch (error) {
       throw new CommandError(
         'VALIDATION_ERROR',

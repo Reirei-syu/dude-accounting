@@ -42,6 +42,8 @@ describe('dev cli entry script', () => {
       })
 
       await waitForText(() => output, 'dudeacc>', 120_000)
+      expect(output).toContain('账号：')
+      expect(output).toContain('账套：未选择 | 会计期间：未选择')
       child.stdin.write('help\n')
       await waitForText(() => output, 'DudeAcc 交互式 CLI', 30_000)
       child.stdin.write('exit\n')

@@ -3,9 +3,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
+const tscCliPath = path.join(process.cwd(), 'node_modules', 'typescript', 'bin', 'tsc')
+const electronViteCliPath = path.join(process.cwd(), 'node_modules', 'electron-vite', 'bin', 'electron-vite.js')
 const loginPayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-login-payload.json')
 const preferencesPayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-preferences.json')
 const wallpaperAnalyzePayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-wallpaper-analyze.json')
@@ -53,12 +55,40 @@ function extractCommandResult(output: string): { status: string; data: unknown; 
   return matches[matches.length - 1]
 }
 
+let buildArtifactsReady: Promise<void> | null = null
+
+async function ensureBuildArtifacts(): Promise<void> {
+  if (!buildArtifactsReady) {
+    buildArtifactsReady = (async () => {
+      await execFileAsync(process.execPath, [tscCliPath, '-p', 'tsconfig.cli.json'], {
+        cwd: process.cwd(),
+        windowsHide: true,
+        maxBuffer: 20 * 1024 * 1024
+      })
+
+      await execFileAsync(process.execPath, [electronViteCliPath, 'build'], {
+        cwd: process.cwd(),
+        windowsHide: true,
+        maxBuffer: 20 * 1024 * 1024
+      })
+    })()
+  }
+
+  await buildArtifactsReady
+}
+
 async function runCli(args: string[]): Promise<{ status: string; data: unknown; error: unknown }> {
+  await ensureBuildArtifacts()
+
   const { stdout, stderr } = await execFileAsync(
     'node',
-    ['scripts/run-with-utf8.mjs', 'npx', 'electron-vite', 'preview', '--', '--cli', ...args],
+    ['scripts/run-cli.mjs', ...args],
     {
       cwd: process.cwd(),
+      env: {
+        ...process.env,
+        DUDEACC_SKIP_BUILD: '1'
+      },
       windowsHide: true,
       maxBuffer: 20 * 1024 * 1024
     }
@@ -83,6 +113,10 @@ async function waitForPrintReady(jobId: string): Promise<{ status: string; data:
 }
 
 describe('cli parity integration', () => {
+  beforeAll(async () => {
+    await ensureBuildArtifacts()
+  }, 240_000)
+
   afterAll(() => {
     for (const filePath of [
       loginPayloadPath,
