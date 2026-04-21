@@ -23,18 +23,14 @@ Var PreviousInstallDir
 !macroend
 
 !macro customInstall
-  SetOutPath "$PLUGINSDIR"
-  File /oname=$PLUGINSDIR\update-user-path.ps1 "${BUILD_RESOURCES_DIR}\update-user-path.ps1"
-  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\update-user-path.ps1" -Action Add -InstallDir "$INSTDIR" -OldInstallDir "$PreviousInstallDir"' $0
+  ExecWait '"$INSTDIR\dudeacc-host.exe" path add --install-dir "$INSTDIR" --old-install-dir "$PreviousInstallDir"' $0
   ${If} $0 != 0
     MessageBox MB_OK|MB_ICONEXCLAMATION "安装已完成，但更新当前用户 PATH 失败。请手动把安装目录加入 PATH 后再直接使用 dudeacc / dude-accounting。"
   ${EndIf}
 !macroend
 
 !macro customUnInstall
-  SetOutPath "$PLUGINSDIR"
-  File /oname=$PLUGINSDIR\update-user-path.ps1 "${BUILD_RESOURCES_DIR}\update-user-path.ps1"
-  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\update-user-path.ps1" -Action Remove -InstallDir "$INSTDIR"' $0
+  ExecWait '"$INSTDIR\dudeacc-host.exe" path remove --install-dir "$INSTDIR"' $0
 !macroend
 
 !macro blockProtectedInstallDir protectedDir

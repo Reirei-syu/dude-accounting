@@ -29,6 +29,11 @@ if ($LASTEXITCODE -ne 0) {
   throw "Build step failed with exit code $LASTEXITCODE."
 }
 
+npm run build:cli-host:win
+if ($LASTEXITCODE -ne 0) {
+  throw "CLI host build failed with exit code $LASTEXITCODE."
+}
+
 npx electron-builder --win nsis --publish never
 if ($LASTEXITCODE -ne 0) {
   throw "Windows installer build failed with exit code $LASTEXITCODE."

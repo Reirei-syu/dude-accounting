@@ -1,0 +1,2 @@
+D:\coding\dude accounting\dude-app\build\cli\dudeacc-host.pdb
+D:\coding\dude accounting\dude-app\build\cli\dudeacc-host.exe

@@ -259,29 +259,32 @@ npm run cli -- voucher save --payload-file ./examples/voucher-save.json
 
 ### 安装版使用
 
-安装版通过包装脚本调用现有可执行文件的嵌入式 `--cli` 模式：
+安装版当前提供两条 Windows CLI 链路：
 
 - Windows：`dudeacc.cmd`
 - Windows：`dude-accounting.cmd`
 - macOS / Linux：`dudeacc`
 - macOS / Linux：`dude-accounting`
 
-等价底层形式为：
+Windows 底层形态区分为：
 
 ```bash
-dude-app.exe --cli <domain> <action> ...
+dudeacc.cmd -> dudeacc-host.exe -> dude-app.exe resources\app.asar\out\cli\cli\installedInteractiveShellEntry.js
+dude-accounting.cmd -> dude-app.exe --cli <domain> <action> ...
 ```
 
 说明：
 
-- Windows 安装器会在安装完成后把安装目录加入当前用户 `PATH`；关闭并重新打开 PowerShell / Windows Terminal / CMD 后，即可在任意目录直接执行 `dudeacc` 与 `dude-accounting`
+- `dudeacc.cmd` 在 Windows 安装版中不再直接拿 `dude-app.exe` 当终端宿主，而是交给原生 console host `dudeacc-host.exe` 持续占住终端
+- `dudeacc` 无参数时进入持续交互壳；带参数时由 host 转发到批处理 CLI 语义
+- `dude-accounting.cmd` 继续作为权威批处理/JSON 入口，保持 `dude-app.exe --cli ...` 行为
+- Windows 安装器会在安装完成后通过 `dudeacc-host.exe path add` 把安装目录加入当前用户 `PATH`；关闭并重新打开 PowerShell / Windows Terminal / CMD 后，即可在任意目录直接执行 `dudeacc` 与 `dude-accounting`
 - 卸载时会同步移除该 PATH 入口，避免遗留失效命令
 - 当前源码调试和安装版都优先走嵌入式 Electron CLI，而不是纯 Node 直接连库
 - 原因是仓库内 `better-sqlite3` 当前按 Electron ABI 构建，纯 Node 路径不是主支持方式
 - `backup restore` 目前仍保留为安装版 Electron 生命周期能力，不支持纯命令行热恢复
 - 推荐人工操作时优先使用 `dudeacc`；脚本和 Agent 继续优先使用 `dude-accounting <domain> <action>`
-- Windows 安装版安装完成后会自动把安装目录加入当前用户 `PATH`，新开的终端里可以直接输入 `dudeacc` 或 `dude-accounting`
-- 如果安装前已经打开了终端窗口，需要关闭后重新打开，新的 `PATH` 才会生效
+- macOS / Linux 仍保持原有 wrapper：`dudeacc` 与 `dude-accounting` 都直接走 `dude-app --cli ...`，不会引入 Windows console host
 
 ## CLI 覆盖说明
 
@@ -346,7 +349,10 @@ npm run build
 # 单独编译 CLI
 npm run build:cli
 
-# 生成 unpacked 目录
+# 单独编译 Windows console host（仅 Windows 安装/发布验证需要）
+npm run build:cli-host:win
+
+# 生成 unpacked 目录（通用 Electron 打包，不默认依赖 Windows host）
 npm run build:unpack
 
 # Linux

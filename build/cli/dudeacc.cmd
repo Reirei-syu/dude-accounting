@@ -1,4 +1,4 @@
 @echo off
 setlocal
-"%~dp0dude-app.exe" --cli %*
+"%~dp0dudeacc-host.exe" %*
 exit /b %ERRORLEVEL%

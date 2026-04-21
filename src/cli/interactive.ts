@@ -1,7 +1,6 @@
 import readline from 'node:readline/promises'
 import { stdin as processStdin, stdout as processStdout } from 'node:process'
 import type { Readable, Writable } from 'node:stream'
-import { executeCliCommand, listCommands, type CliCommandInvocation } from './executor'
 import { renderCommandOutput } from './output'
 import { parseCliArgs } from './parse'
 import { resolveCliPayload } from './payload'
@@ -10,6 +9,7 @@ import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
 import { getCommandMetadata, listCommandHelpEntries, type CommandHelpEntry } from '../main/commands/catalog'
+import type { CliCommandInvocation } from './executor'
 
 export interface InteractiveShellState {
   outputMode: CommandOutputMode
@@ -318,7 +318,7 @@ function buildInteractiveHelpResult(showAll = false): CommandResult<{
       command: `${item.domain} ${item.action}`,
       description: item.description
     })),
-    rawCommands: listCommands(),
+    rawCommands: getCommandMetadata().map((item) => `${item.domain} ${item.action}`),
     allCommands: showAll ? allCommandEntries : undefined,
     domains
   })
@@ -1012,7 +1012,12 @@ export async function runInteractiveCli(
 ): Promise<number> {
   const input = options.input ?? processStdin
   const output = options.output ?? processStdout
-  const executeCommand = options.executeCommand ?? executeCliCommand
+  const executeCommand =
+    options.executeCommand ??
+    (async (nextRuntime: RuntimeContext, invocation: CliCommandInvocation) => {
+      const { executeCliCommand } = await import('./executor')
+      return executeCliCommand(nextRuntime, invocation)
+    })
   const rl = readline.createInterface({
     input,
     output,

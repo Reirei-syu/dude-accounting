@@ -7,7 +7,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$InstallDir,
 
-  [string]$OldInstallDir = ''
+  [string]$OldInstallDir = '',
+
+  [string]$SuccessMarker = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,22 +77,25 @@ function Get-UserPathEntries {
 
 function Broadcast-EnvironmentChange {
   if (-not ('CliPathBroadcast.NativeMethods' -as [type])) {
-    Add-Type -Namespace 'CliPathBroadcast' -Name 'NativeMethods' -MemberDefinition @'
+    Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 
-public static class NativeMethods
+namespace CliPathBroadcast
 {
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern IntPtr SendMessageTimeout(
-        IntPtr hWnd,
-        uint Msg,
-        UIntPtr wParam,
-        string lParam,
-        uint fuFlags,
-        uint uTimeout,
-        out UIntPtr lpdwResult
-    );
+    public static class NativeMethods
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd,
+            uint Msg,
+            UIntPtr wParam,
+            string lParam,
+            uint fuFlags,
+            uint uTimeout,
+            out UIntPtr lpdwResult
+        );
+    }
 }
 '@
   }
@@ -109,7 +114,7 @@ public static class NativeMethods
 
 $normalizedInstallDir = Normalize-PathEntry $InstallDir
 if ([string]::IsNullOrWhiteSpace($normalizedInstallDir)) {
-  throw 'InstallDir 不能为空。'
+  throw 'InstallDir cannot be empty.'
 }
 
 $normalizedOldInstallDir = Normalize-PathEntry $OldInstallDir
@@ -141,3 +146,12 @@ if ($Action -eq 'Add' -and $seen.Add($normalizedInstallDir)) {
 
 [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
 Broadcast-EnvironmentChange
+
+if (-not [string]::IsNullOrWhiteSpace($SuccessMarker)) {
+  $markerDir = Split-Path -Parent $SuccessMarker
+  if (-not [string]::IsNullOrWhiteSpace($markerDir)) {
+    New-Item -ItemType Directory -Force -Path $markerDir | Out-Null
+  }
+
+  Set-Content -Encoding ascii -Path $SuccessMarker -Value 'ok'
+}

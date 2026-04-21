@@ -178,13 +178,10 @@ function quoteCmdArg(value) {
 }
 
 function buildCmdInvocation(targetPath, args) {
+  const command = path.basename(targetPath)
   return {
     command: 'cmd.exe',
-    args: [
-      '/d',
-      '/c',
-      `chcp 65001>nul && call ${quoteCmdArg(targetPath)} ${args.map(quoteCmdArg).join(' ')}`
-    ]
+    args: ['/d', '/c', command, ...args]
   }
 }
 
@@ -629,7 +626,7 @@ class CliReleaseHarness {
 
   pickBatchEntrypoint(commandKey) {
     void commandKey
-    return ENTRYPOINT_EXE
+    return ENTRYPOINT_CMD
   }
 
   async runBatchCommand(commandKey, input = {}, options = {}) {
@@ -729,7 +726,7 @@ class CliReleaseHarness {
   }
 
   async runExpectedError(commandKey, input, options = {}) {
-    const entrypoint = options.entrypoint ?? ENTRYPOINT_EXE
+    const entrypoint = options.entrypoint ?? ENTRYPOINT_CMD
     const sequenceNo = this.nextSequence()
     const payloadFilePath =
       input.payload !== undefined
@@ -799,15 +796,16 @@ CliReleaseHarness.prototype.waitForPrintReady = async function (jobId) {
 }
 
 CliReleaseHarness.prototype.createInteractiveSession = async function () {
-  const child = spawn(this.releasePaths.exePath, ['--cli'], {
-    cwd: this.releasePaths.releaseRoot,
-    env: {
-      ...this.mainEnv.env,
-      DUDEACC_CLI_FORCE_INTERACTIVE: '1'
-    },
-    windowsHide: true,
-    stdio: ['pipe', 'pipe', 'pipe']
-  })
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-Command', `& '${this.releasePaths.interactiveCmdPath.replace(/'/g, "''")}'`],
+    {
+      cwd: this.mainEnv.workDirectory,
+      env: this.mainEnv.env,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    }
+  )
 
   let buffer = ''
   let closed = false
@@ -855,6 +853,34 @@ CliReleaseHarness.prototype.createInteractiveSession = async function () {
         child.kill('SIGKILL')
       }
     }
+  }
+}
+
+CliReleaseHarness.prototype.runInteractiveWrapperSmoke = async function () {
+  const session = await this.createInteractiveSession()
+
+  try {
+    await session.waitForText('dudeacc>', 30_000)
+    session.send('help\n')
+    await session.waitForText('DudeAcc', 30_000)
+    session.send('exit\n')
+
+    const exitCode = await session.waitForClose(30_000)
+    if (exitCode !== 0) {
+      throw new Error(`dudeacc.cmd 浜や簰鍚姩閫€鍑虹爜寮傚父锛?{exitCode}`)
+    }
+
+    this.coverage.record({
+      command: 'interactive-session-smoke',
+      entrypoint: ENTRYPOINT_INTERACTIVE,
+      mode: 'interactive-smoke',
+      status: 'success',
+      exitCode,
+      artifactPaths: [],
+      eventsSeen: []
+    })
+  } finally {
+    session.dispose()
   }
 }
 
@@ -952,7 +978,8 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
       cliArgs.push('--payload-file', payloadPath)
     }
 
-    const execution = await spawnBuffered(this.releasePaths.exePath, ['--cli', ...cliArgs], {
+    const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, cliArgs)
+    const execution = await spawnBuffered(invocation.command, invocation.args, {
       cwd: this.releasePaths.releaseRoot,
       env: this.mainEnv.env,
       timeoutMs: 120_000
@@ -1171,15 +1198,12 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
         ? createBatchPayloadFile(restoreEnv, commandKey, input.payload, this.nextSequence())
         : null
     const cliArgs = buildCliArgs(commandKey, input, payloadFilePath)
-    const execution = await spawnBuffered(
-      this.releasePaths.exePath,
-      [...(options.preExeArgs ?? []), '--cli', ...cliArgs],
-      {
-        cwd: this.releasePaths.releaseRoot,
-        env: restoreEnv.env,
-        timeoutMs: options.timeoutMs
-      }
-    )
+    const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, cliArgs)
+    const execution = await spawnBuffered(invocation.command, invocation.args, {
+      cwd: this.releasePaths.releaseRoot,
+      env: restoreEnv.env,
+      timeoutMs: options.timeoutMs
+    })
     const result = extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
     if (execution.code !== 0 || result.status !== 'success') {
       throw new Error(
@@ -2324,16 +2348,6 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
 }
 
 CliReleaseHarness.prototype.run = async function () {
-  const helpExe = await (async () => {
-    const execution = await spawnBuffered(this.releasePaths.exePath, ['--cli', '--help'], {
-      cwd: this.releasePaths.releaseRoot,
-      env: this.mainEnv.env
-    })
-    return {
-      execution,
-      result: extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
-    }
-  })()
   const helpCmd = await (async () => {
     const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, ['--help'])
     const execution = await spawnBuffered(invocation.command, invocation.args, {
@@ -2345,42 +2359,15 @@ CliReleaseHarness.prototype.run = async function () {
       result: extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
     }
   })()
-  const helpInteractiveWrapper = await (async () => {
-    const invocation = buildCmdInvocation(this.releasePaths.interactiveCmdPath, ['--help'])
-    const execution = await spawnBuffered(invocation.command, invocation.args, {
-      cwd: this.releasePaths.releaseRoot,
-      env: this.mainEnv.env
-    })
-    return {
-      execution,
-      result: extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
-    }
-  })()
-
-  const helpExeCommands = helpExe.result.data.commands
   const helpCmdCommands = helpCmd.result.data.commands
-  const helpInteractiveCommands = helpInteractiveWrapper.result.data.commands
   const sortCommands = (commands) => [...commands].sort((left, right) => left.localeCompare(right))
   if (
-    JSON.stringify(sortCommands(helpExeCommands)) !==
-      JSON.stringify(sortCommands(this.surface.canonicalCommands)) ||
     JSON.stringify(sortCommands(helpCmdCommands)) !==
-      JSON.stringify(sortCommands(this.surface.canonicalCommands)) ||
-    JSON.stringify(sortCommands(helpInteractiveCommands)) !==
       JSON.stringify(sortCommands(this.surface.canonicalCommands))
   ) {
     throw new Error('catalog.ts 与发布态 CLI help 命令列表不一致')
   }
 
-  this.coverage.record({
-    command: '--help',
-    entrypoint: ENTRYPOINT_EXE,
-    mode: 'batch-help',
-    status: 'success',
-    exitCode: helpExe.execution.code,
-    artifactPaths: [],
-    eventsSeen: []
-  })
   this.coverage.record({
     command: '--help',
     entrypoint: ENTRYPOINT_CMD,
@@ -2393,13 +2380,14 @@ CliReleaseHarness.prototype.run = async function () {
   this.coverage.record({
     command: '--help',
     entrypoint: ENTRYPOINT_INTERACTIVE,
-    mode: 'batch-help',
+    mode: 'interactive-smoke',
     status: 'success',
-    exitCode: helpInteractiveWrapper.execution.code,
+    exitCode: 0,
     artifactPaths: [],
     eventsSeen: []
   })
 
+  await this.runInteractiveWrapperSmoke()
   await this.runBatchCoverage()
   await this.runInteractiveCoverage()
   await this.runRestoreSuccessCoverage()

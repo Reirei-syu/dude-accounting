@@ -1,0 +1,15 @@
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\DudeAcc.Host.GeneratedMSBuildEditorConfig.editorconfig
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\DudeAcc.Host.AssemblyInfoInputs.cache
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\DudeAcc.Host.AssemblyInfo.cs
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\DudeAcc.Host.csproj.CoreCompileInputs.cache
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\DudeAcc.Host.sourcelink.json
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\bin\Debug\net8.0-windows\dudeacc-host.exe
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\bin\Debug\net8.0-windows\dudeacc-host.deps.json
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\bin\Debug\net8.0-windows\dudeacc-host.runtimeconfig.json
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\bin\Debug\net8.0-windows\dudeacc-host.dll
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\bin\Debug\net8.0-windows\dudeacc-host.pdb
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\dudeacc-host.dll
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\refint\dudeacc-host.dll
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\dudeacc-host.pdb
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\DudeAcc.Host.genruntimeconfig.cache
+D:\coding\dude accounting\dude-app\tools\dudeacc-host\obj\Debug\net8.0-windows\ref\dudeacc-host.dll
