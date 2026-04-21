@@ -4,6 +4,10 @@ out
 .DS_Store
 .eslintcache
 *.log*
+build/cli/*.exe
+build/cli/*.pdb
+tools/**/bin/
+tools/**/obj/
 
 # Local-only planning / audit docs
 PROGRESS.md

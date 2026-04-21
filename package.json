@@ -13,7 +13,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "prepare:cli-launchers": "node scripts/prepare-cli-launchers.mjs",
     "build:cli": "tsc -p tsconfig.cli.json",
-    "build:cli-host:win": "dotnet publish tools/dudeacc-host/DudeAcc.Host.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o build/cli",
+    "build:cli-host:win": "dotnet publish tools/dudeacc-host/DudeAcc.Host.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:DebugType=None /p:DebugSymbols=false -o build/cli",
     "test": "vitest run --exclude out/**",
     "qa:electron-breakpoint": "py -3 scripts/electron_breakpoint_audit.py",
     "qa:cli-release-all": "powershell -ExecutionPolicy Bypass -File scripts/prepare-cli-release-e2e.ps1 && npm run build:cli-host:win && npm run build:unpack && node scripts/run-with-utf8.mjs node scripts/cli-release-e2e/run.mjs",
