@@ -293,7 +293,8 @@ describe('cli parity integration', () => {
 
       const jobId = (prepareResult.data as { jobId: string }).jobId
       const readyResult = await waitForPrintReady(jobId)
-      expect(readyResult.data.pageCount).toBeGreaterThan(0)
+      expect(readyResult.status).toBe('success')
+      expect((readyResult.data as { status: string }).status).toBe('ready')
 
       const modelResult = await runCli(['print', 'model', '--jobId', jobId])
       expect(modelResult.status).toBe('success')

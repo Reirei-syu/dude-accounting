@@ -65,7 +65,7 @@ beforeAll(() => {
     windowsHide: true,
     timeout: 240_000
   })
-})
+}, 240_000)
 
 afterEach(() => {
   for (const tempRoot of tempRoots) {
