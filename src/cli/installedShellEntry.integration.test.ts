@@ -17,6 +17,25 @@ const installedInteractiveEntryPath = path.join(
 
 const tempRoots = new Set<string>()
 
+function sleepSync(timeoutMs: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, timeoutMs)
+}
+
+function removeDirWithRetry(targetPath: string): void {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      fs.rmSync(targetPath, { recursive: true, force: true })
+      return
+    } catch (error) {
+      lastError = error
+      sleepSync(200)
+    }
+  }
+
+  throw lastError
+}
+
 function waitForText(getBuffer: () => string, text: string, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now()
@@ -50,7 +69,7 @@ beforeAll(() => {
 
 afterEach(() => {
   for (const tempRoot of tempRoots) {
-    fs.rmSync(tempRoot, { recursive: true, force: true })
+    removeDirWithRetry(tempRoot)
     tempRoots.delete(tempRoot)
   }
 })

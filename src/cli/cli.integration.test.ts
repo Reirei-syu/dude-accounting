@@ -6,7 +6,10 @@ import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
-const loginPayloadPath = path.join(os.tmpdir(), 'dude-cli-login-payload.json')
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-login-'))
+const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
+const loginPayloadPath = path.join(tempRoot, 'dude-cli-login-payload.json')
+fs.mkdirSync(appDataPath, { recursive: true })
 
 function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
   const matches: Array<{ status: string; data: unknown; error: unknown }> = []
@@ -59,6 +62,10 @@ async function runCli(args: string[]): Promise<{ status: string; data: unknown; 
     ['scripts/run-cli.mjs', ...args],
     {
       cwd: process.cwd(),
+      env: {
+        ...process.env,
+        APPDATA: appDataPath
+      },
       windowsHide: true,
       maxBuffer: 10 * 1024 * 1024
     }
@@ -69,8 +76,8 @@ async function runCli(args: string[]): Promise<{ status: string; data: unknown; 
 
 describe('embedded cli integration', () => {
   afterAll(() => {
-    if (fs.existsSync(loginPayloadPath)) {
-      fs.rmSync(loginPayloadPath, { force: true })
+    if (fs.existsSync(tempRoot)) {
+      fs.rmSync(tempRoot, { recursive: true, force: true })
     }
   })
 

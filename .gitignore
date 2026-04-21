@@ -11,6 +11,9 @@ tools/**/obj/
 
 # Local-only planning / audit docs
 PROGRESS.md
-docs/
-docs/wiki/
+docs/*
+!docs/wiki/
+docs/wiki/*
+!docs/wiki/AGENT_SOFTWARE_MANUAL.md
+!docs/wiki/CLI_命令大全.md
 prds/

@@ -14,6 +14,11 @@ files:
 extraFiles:
   - from: build/cli/
     to: .
+  - from: docs/wiki/
+    to: docs
+    filter:
+      - AGENT_SOFTWARE_MANUAL.md
+      - CLI_命令大全.md
 asarUnpack:
   - resources/**
 win:

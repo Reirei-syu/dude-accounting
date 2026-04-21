@@ -4,7 +4,7 @@
 
 ## 下载
 
-- [Windows安装包](https://github.com/Reirei-syu/dude-accounting/releases/download/v1.1.3/dude-app-1.1.3-setup.exe)
+- [Windows安装包](https://github.com/Reirei-syu/dude-accounting/releases/download/v2.0.0/dude-app-2.0.0-setup.exe)
 
 本软件面向代理记账企业内部人员，服务对象为委托单位账套。当前支持两类账套：
 
@@ -104,6 +104,7 @@ npm install
   - `dude-accounting`
 - `dudeacc` 默认进入面向人工操作的交互式命令壳
 - `dude-accounting <domain> <action>` 适合脚本、自动化和 Agent 调用
+- 安装目录的 `docs/` 子目录会随包附带 `AGENT_SOFTWARE_MANUAL.md` 与 `CLI_命令大全.md`，供 Agent / 运维 / 实施快速理解软件能力
 
 典型日常流程：
 

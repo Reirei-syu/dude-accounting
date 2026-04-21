@@ -31,5 +31,12 @@ describe('prepare-cli-launchers', () => {
       path.join(buildCliDir, 'dude-accounting'),
       POSIX_LAUNCHER_MODE
     )
+
+    expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc.cmd'), 'utf8')).toContain(
+      'dudeacc-host.exe'
+    )
+    expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting.cmd'), 'utf8')).toContain(
+      'dude-app.exe" --cli %*'
+    )
   })
 })

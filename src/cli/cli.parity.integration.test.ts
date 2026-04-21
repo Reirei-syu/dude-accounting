@@ -6,16 +6,20 @@ import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-parity-'))
+const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
 const tscCliPath = path.join(process.cwd(), 'node_modules', 'typescript', 'bin', 'tsc')
 const electronViteCliPath = path.join(process.cwd(), 'node_modules', 'electron-vite', 'bin', 'electron-vite.js')
-const loginPayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-login-payload.json')
-const preferencesPayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-preferences.json')
-const wallpaperAnalyzePayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-wallpaper-analyze.json')
-const wallpaperApplyPayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-wallpaper-apply.json')
-const initialBalanceSavePayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-initial-balance.json')
-const printPreparePayloadPath = path.join(os.tmpdir(), 'dude-cli-parity-print-prepare.json')
-const outputPdfPath = path.join(os.tmpdir(), 'dude-cli-parity-print.pdf')
+const loginPayloadPath = path.join(tempRoot, 'dude-cli-parity-login-payload.json')
+const preferencesPayloadPath = path.join(tempRoot, 'dude-cli-parity-preferences.json')
+const wallpaperAnalyzePayloadPath = path.join(tempRoot, 'dude-cli-parity-wallpaper-analyze.json')
+const wallpaperApplyPayloadPath = path.join(tempRoot, 'dude-cli-parity-wallpaper-apply.json')
+const initialBalanceSavePayloadPath = path.join(tempRoot, 'dude-cli-parity-initial-balance.json')
+const printPreparePayloadPath = path.join(tempRoot, 'dude-cli-parity-print-prepare.json')
+const outputPdfPath = path.join(tempRoot, 'dude-cli-parity-print.pdf')
 const wallpaperPath = path.resolve(process.cwd(), 'src/renderer/src/assets/wallpaper.png')
+
+fs.mkdirSync(appDataPath, { recursive: true })
 
 function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
   const matches: Array<{ status: string; data: unknown; error: unknown }> = []
@@ -87,6 +91,7 @@ async function runCli(args: string[]): Promise<{ status: string; data: unknown; 
       cwd: process.cwd(),
       env: {
         ...process.env,
+        APPDATA: appDataPath,
         DUDEACC_SKIP_BUILD: '1'
       },
       windowsHide: true,
@@ -130,6 +135,10 @@ describe('cli parity integration', () => {
       if (fs.existsSync(filePath)) {
         fs.rmSync(filePath, { force: true })
       }
+    }
+
+    if (fs.existsSync(tempRoot)) {
+      fs.rmSync(tempRoot, { recursive: true, force: true })
     }
   })
 

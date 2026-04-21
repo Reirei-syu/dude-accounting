@@ -12,9 +12,15 @@ SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 "$SCRIPT_DIR/dude-app" --cli "$@"
 `
 
-const WINDOWS_LAUNCHER_CONTENT = `@echo off
+const WINDOWS_BATCH_LAUNCHER_CONTENT = `@echo off
 setlocal
 "%~dp0dude-app.exe" --cli %*
+exit /b %ERRORLEVEL%
+`
+
+const WINDOWS_INTERACTIVE_LAUNCHER_CONTENT = `@echo off
+setlocal
+"%~dp0dudeacc-host.exe" %*
 exit /b %ERRORLEVEL%
 `
 
@@ -30,10 +36,16 @@ export function ensureCliLaunchers(options = {}) {
     fs.chmodSync(launcherPath, POSIX_LAUNCHER_MODE)
   }
 
-  for (const launcherName of ['dude-accounting.cmd', 'dudeacc.cmd']) {
-    const launcherPath = path.join(buildCliDir, launcherName)
-    fs.writeFileSync(launcherPath, WINDOWS_LAUNCHER_CONTENT, 'utf8')
-  }
+  fs.writeFileSync(
+    path.join(buildCliDir, 'dude-accounting.cmd'),
+    WINDOWS_BATCH_LAUNCHER_CONTENT,
+    'utf8'
+  )
+  fs.writeFileSync(
+    path.join(buildCliDir, 'dudeacc.cmd'),
+    WINDOWS_INTERACTIVE_LAUNCHER_CONTENT,
+    'utf8'
+  )
 }
 
 if (path.resolve(process.argv[1] ?? '') === __filename) {
