@@ -14,6 +14,7 @@ const loginPayloadPath = path.join(tempRoot, 'dude-cli-parity-login-payload.json
 const preferencesPayloadPath = path.join(tempRoot, 'dude-cli-parity-preferences.json')
 const wallpaperAnalyzePayloadPath = path.join(tempRoot, 'dude-cli-parity-wallpaper-analyze.json')
 const wallpaperApplyPayloadPath = path.join(tempRoot, 'dude-cli-parity-wallpaper-apply.json')
+const ledgerCreatePayloadPath = path.join(tempRoot, 'dude-cli-parity-ledger-create.json')
 const initialBalanceSavePayloadPath = path.join(tempRoot, 'dude-cli-parity-initial-balance.json')
 const printPreparePayloadPath = path.join(tempRoot, 'dude-cli-parity-print-prepare.json')
 const outputPdfPath = path.join(tempRoot, 'dude-cli-parity-print.pdf')
@@ -128,6 +129,7 @@ describe('cli parity integration', () => {
       preferencesPayloadPath,
       wallpaperAnalyzePayloadPath,
       wallpaperApplyPayloadPath,
+      ledgerCreatePayloadPath,
       initialBalanceSavePayloadPath,
       printPreparePayloadPath,
       outputPdfPath
@@ -226,10 +228,34 @@ describe('cli parity integration', () => {
         id: number
         start_period: string
       }>
-      expect(ledgers.length).toBeGreaterThan(0)
 
-      const ledgerId = ledgers[0].id
-      const startPeriod = ledgers[0].start_period
+      let ledgerId: number
+      let startPeriod: string
+
+      if (ledgers.length > 0) {
+        ledgerId = ledgers[0].id
+        startPeriod = ledgers[0].start_period
+      } else {
+        startPeriod = '2026-01'
+        fs.writeFileSync(
+          ledgerCreatePayloadPath,
+          JSON.stringify({
+            name: `CLI 并行测试账套 ${Date.now()}`,
+            standardType: 'enterprise',
+            startPeriod
+          }),
+          'utf8'
+        )
+
+        const createLedgerResult = await runCli([
+          'ledger',
+          'create',
+          '--payload-file',
+          ledgerCreatePayloadPath
+        ])
+        expect(createLedgerResult.status).toBe('success')
+        ledgerId = (createLedgerResult.data as { id: number }).id
+      }
 
       const initialBalanceListResult = await runCli([
         'initial-balance',
