@@ -9,15 +9,15 @@ import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
 const ExcelJS = require('exceljs')
+const electronBinaryPath = require('electron')
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const repoRoot = path.resolve(__dirname, '..', '..')
-const runId = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
 
-const ENTRYPOINT_EXE = 'dude-app.exe --cli'
-const ENTRYPOINT_CMD = 'dude-accounting.cmd'
-const ENTRYPOINT_INTERACTIVE = 'dudeacc.cmd'
+function createRunId() {
+  return new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+}
 
 function ensureDir(directoryPath) {
   fs.mkdirSync(directoryPath, { recursive: true })
@@ -41,12 +41,13 @@ function parseCatalogSurface() {
   for (const match of source.matchAll(blockRegex)) {
     const aliases = parseSingleQuotedList(match[4])
     const command = `${match[1]} ${match[2]}`
+    const aliasZh = aliases.find((alias) => alias.trim()) ?? match[3].trim()
     commands.push({
       command,
       domain: match[1],
       action: match[2],
       description: match[3],
-      aliases,
+      aliases: aliasZh ? [aliasZh] : [],
       batchSafe: match[5] === 'true',
       desktopAssisted: match[6] === 'true',
       requiresSession: match[7] === 'true',
@@ -112,23 +113,28 @@ function resolveReleaseRoot() {
   return path.join(outputDirectory, 'win-unpacked')
 }
 
-function buildIsolatedEnvironment(label, outputRoot) {
+function buildIsolatedEnvironment(label, outputRoot, options = {}) {
   const envRoot = path.join(outputRoot, 'envs', label)
   const homeDirectory = path.join(envRoot, 'home')
   const appDataPath = path.join(envRoot, 'appdata')
+  const localAppDataPath = path.join(envRoot, 'localappdata')
   const eventsFile = path.join(envRoot, 'events', 'cli-e2e.jsonl')
   const workDirectory = path.join(envRoot, 'work')
   const payloadDirectory = path.join(workDirectory, 'payloads')
   const exportDirectory = path.join(workDirectory, 'exports')
   const fixtureDirectory = path.join(workDirectory, 'fixtures')
   const logDirectory = path.join(workDirectory, 'logs')
-  const userDataPath = path.join(appDataPath, 'dude-app')
-  const databasePath = path.join(userDataPath, 'data', 'dude-accounting.db')
+  const userDataPath = path.join(appDataPath, options.userDataDirName ?? 'dude-app')
+  const databasePath = path.join(
+    userDataPath,
+    options.databaseRelativePath ?? path.join('data', 'dude-accounting.db')
+  )
   const documentsPath = path.join(homeDirectory, 'Documents')
 
   for (const directoryPath of [
     homeDirectory,
     appDataPath,
+    localAppDataPath,
     path.dirname(eventsFile),
     workDirectory,
     payloadDirectory,
@@ -157,6 +163,10 @@ function buildIsolatedEnvironment(label, outputRoot) {
     env: {
       ...process.env,
       APPDATA: appDataPath,
+      HOME: homeDirectory,
+      LOCALAPPDATA: localAppDataPath,
+      USERPROFILE: homeDirectory,
+      XDG_CONFIG_HOME: appDataPath,
       DUDEACC_E2E_APPDATA_PATH: appDataPath,
       DUDEACC_E2E_EVENTS_FILE: eventsFile,
       DUDEACC_E2E_DRY_RUN_DESKTOP_ACTIONS: '1',
@@ -370,6 +380,218 @@ async function spawnBuffered(command, args, options = {}) {
   })
 }
 
+let sourceBuildReady = null
+
+async function ensureSourceBuildArtifacts() {
+  if (!sourceBuildReady) {
+    sourceBuildReady = (async () => {
+      const tscCliPath = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc')
+      const electronViteCliPath = path.join(
+        repoRoot,
+        'node_modules',
+        'electron-vite',
+        'bin',
+        'electron-vite.js'
+      )
+
+      const cliBuild = await spawnBuffered(process.execPath, [tscCliPath, '-p', 'tsconfig.cli.json'], {
+        cwd: repoRoot,
+        env: process.env,
+        timeoutMs: 240_000
+      })
+      if (cliBuild.code !== 0) {
+        throw new Error(`源码态 CLI 构建失败：tsc exit=${cliBuild.code}`)
+      }
+
+      const electronBuild = await spawnBuffered(process.execPath, [electronViteCliPath, 'build'], {
+        cwd: repoRoot,
+        env: process.env,
+        timeoutMs: 240_000
+      })
+      if (electronBuild.code !== 0) {
+        throw new Error(`源码态 Electron 构建失败：electron-vite exit=${electronBuild.code}`)
+      }
+    })()
+  }
+
+  await sourceBuildReady
+}
+
+function createReleaseSurfaceAdapter() {
+  const releaseRoot = resolveReleaseRoot()
+  const releasePaths = {
+    releaseRoot,
+    exePath: path.join(releaseRoot, 'dude-app.exe'),
+    batchCmdPath: path.join(releaseRoot, 'dude-accounting.cmd'),
+    interactiveCmdPath: path.join(releaseRoot, 'dudeacc.cmd')
+  }
+
+  return {
+    id: 'release',
+    label: '发布态',
+    userDataDirName: 'dude-app',
+    databaseRelativePath: path.join('data', 'dude-accounting.db'),
+    entrypoints: {
+      batch: 'dude-accounting.cmd',
+      interactive: 'dudeacc.cmd',
+      desktop: 'dude-app.exe --cli'
+    },
+    async prepare() {},
+    async validate() {
+      for (const [label, filePath] of Object.entries(releasePaths)) {
+        if (label === 'releaseRoot') {
+          continue
+        }
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`发布态入口不存在：${filePath}`)
+        }
+      }
+    },
+    async spawnCli(kind, cliArgs, envContext, options = {}) {
+      if (kind === 'desktop') {
+        return spawnBuffered(
+          releasePaths.exePath,
+          [...(options.preArgs ?? []), '--cli', ...cliArgs],
+          {
+            cwd: releasePaths.releaseRoot,
+            env: envContext.env,
+            timeoutMs: options.timeoutMs
+          }
+        )
+      }
+
+      const invocation = buildCmdInvocation(releasePaths.batchCmdPath, cliArgs)
+      return spawnBuffered(invocation.command, invocation.args, {
+        cwd: releasePaths.releaseRoot,
+        env: envContext.env,
+        timeoutMs: options.timeoutMs
+      })
+    },
+    spawnInteractiveProcess(envContext) {
+      return spawn(
+        'powershell.exe',
+        ['-NoProfile', '-Command', `& '${releasePaths.interactiveCmdPath.replace(/'/g, "''")}'`],
+        {
+          cwd: envContext.workDirectory,
+          env: envContext.env,
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe']
+        }
+      )
+    },
+    spawnPreviewProcess(envContext, jobId, port) {
+      return spawn(
+        releasePaths.exePath,
+        [`--remote-debugging-port=${port}`, '--cli', 'print', 'open-preview', '--jobId', jobId],
+        {
+          cwd: releasePaths.releaseRoot,
+          env: envContext.env,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
+    },
+    describe() {
+      return {
+        releaseRoot: releasePaths.releaseRoot,
+        entrypoints: { ...this.entrypoints }
+      }
+    }
+  }
+}
+
+function createSourceSurfaceAdapter() {
+  const sourcePaths = {
+    repoRoot,
+    runCliPath: path.join(repoRoot, 'scripts', 'run-cli.mjs'),
+    electronPath: electronBinaryPath
+  }
+
+  return {
+    id: 'source',
+    label: '源码态',
+    userDataDirName: 'dude-app-dev',
+    databaseRelativePath: 'dude-accounting.db',
+    entrypoints: {
+      batch: 'node scripts/run-cli.mjs',
+      interactive: 'node scripts/run-cli.mjs (interactive)',
+      desktop: 'electron . --cli'
+    },
+    async prepare() {
+      await ensureSourceBuildArtifacts()
+    },
+    async validate() {
+      for (const filePath of Object.values(sourcePaths)) {
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`源码态入口不存在：${filePath}`)
+        }
+      }
+    },
+    async spawnCli(kind, cliArgs, envContext, options = {}) {
+      if (kind === 'desktop') {
+        return spawnBuffered(
+          sourcePaths.electronPath,
+          ['.', ...(options.preArgs ?? []), '--cli', ...cliArgs],
+          {
+            cwd: sourcePaths.repoRoot,
+            env: envContext.env,
+            timeoutMs: options.timeoutMs
+          }
+        )
+      }
+
+      return spawnBuffered(process.execPath, [sourcePaths.runCliPath, ...cliArgs], {
+        cwd: sourcePaths.repoRoot,
+        env: {
+          ...envContext.env,
+          DUDEACC_SKIP_BUILD: '1'
+        },
+        timeoutMs: options.timeoutMs
+      })
+    },
+    spawnInteractiveProcess(envContext) {
+      return spawn(process.execPath, [sourcePaths.runCliPath], {
+        cwd: sourcePaths.repoRoot,
+        env: {
+          ...envContext.env,
+          DUDEACC_CLI_FORCE_INTERACTIVE: '1',
+          DUDEACC_SKIP_BUILD: '1'
+        },
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    },
+    spawnPreviewProcess(envContext, jobId, port) {
+      return spawn(
+        sourcePaths.electronPath,
+        ['.', `--remote-debugging-port=${port}`, '--cli', 'print', 'open-preview', '--jobId', jobId],
+        {
+          cwd: sourcePaths.repoRoot,
+          env: envContext.env,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe']
+        }
+      )
+    },
+    describe() {
+      return {
+        repoRoot: sourcePaths.repoRoot,
+        entrypoints: { ...this.entrypoints }
+      }
+    }
+  }
+}
+
+function createSurfaceAdapter(surfaceMode) {
+  if (surfaceMode === 'source') {
+    return createSourceSurfaceAdapter()
+  }
+  if (surfaceMode === 'release') {
+    return createReleaseSurfaceAdapter()
+  }
+  throw new Error(`不支持的 CLI E2E surface：${surfaceMode}`)
+}
+
 function buildCliArgs(commandKey, input, payloadFilePath) {
   const [domain, action] = commandKey.split(' ')
   const args = [domain, action]
@@ -388,6 +610,38 @@ function buildCliArgs(commandKey, input, payloadFilePath) {
   }
 
   return args
+}
+
+function cloneCliInput(input = {}) {
+  return JSON.parse(
+    JSON.stringify({
+      flags: input.flags ?? null,
+      payload: input.payload ?? null
+    })
+  )
+}
+
+function buildAliasReplayLine(alias, example, payloadFilePath) {
+  const tokens = [alias]
+  if (payloadFilePath) {
+    tokens.push('--payload-file', payloadFilePath)
+  } else if (example.flags) {
+    for (const [key, value] of Object.entries(example.flags)) {
+      tokens.push(`--${key}`)
+      if (value !== true) {
+        tokens.push(String(value))
+      }
+    }
+  }
+  return tokens
+    .map((token) => {
+      const value = String(token)
+      if (!/[\s"']/.test(value)) {
+        return value
+      }
+      return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+    })
+    .join(' ')
 }
 
 function sanitizeForFileName(value) {
@@ -535,7 +789,7 @@ class CoverageTracker {
   }
 
   writeSummary(extra) {
-    const reportPath = path.join(this.outputDir, 'cli-release-e2e-report.json')
+    const reportPath = path.join(this.outputDir, 'report.json')
     fs.writeFileSync(
       reportPath,
       JSON.stringify(
@@ -558,7 +812,7 @@ class CoverageTracker {
       'utf8'
     )
 
-    const markdownPath = path.join(this.outputDir, 'cli-release-e2e-summary.md')
+    const markdownPath = path.join(this.outputDir, 'summary.md')
     const failedEntries = this.entries.filter((entry) => entry.status !== 'success')
     fs.writeFileSync(
       markdownPath,
@@ -594,14 +848,20 @@ class CoverageTracker {
 }
 
 class CliReleaseHarness {
-  constructor({ surface, releasePaths, outputDir }) {
+  constructor({ surface, adapter, outputDir, surfaceMode, runId }) {
     this.surface = surface
-    this.releasePaths = releasePaths
+    this.adapter = adapter
     this.outputDir = outputDir
+    this.surfaceMode = surfaceMode
+    this.runId = runId
     this.coverage = new CoverageTracker(surface, outputDir)
-    this.mainEnv = buildIsolatedEnvironment('main', outputDir)
+    this.mainEnv = buildIsolatedEnvironment('main', outputDir, {
+      userDataDirName: adapter.userDataDirName,
+      databaseRelativePath: adapter.databaseRelativePath
+    })
     this.sequenceNo = 0
     this.commandIndex = new Map(surface.canonicalCommands.map((command, index) => [command, index]))
+    this.commandExamples = new Map()
     this.state = {
       ledgers: {},
       users: {},
@@ -626,11 +886,20 @@ class CliReleaseHarness {
 
   pickBatchEntrypoint(commandKey) {
     void commandKey
-    return ENTRYPOINT_CMD
+    return 'batch'
+  }
+
+  rememberCommandExample(commandKey, input) {
+    this.commandExamples.set(commandKey, cloneCliInput(input))
+  }
+
+  async spawnCliExecution(entrypointKind, cliArgs, envContext, options = {}) {
+    return this.adapter.spawnCli(entrypointKind, cliArgs, envContext, options)
   }
 
   async runBatchCommand(commandKey, input = {}, options = {}) {
-    const entrypoint = options.entrypoint ?? this.pickBatchEntrypoint(commandKey)
+    const entrypointKind = options.entrypointKind ?? this.pickBatchEntrypoint(commandKey)
+    const entrypoint = this.adapter.entrypoints[entrypointKind]
     const sequenceNo = this.nextSequence()
     const payloadFilePath =
       input.payload !== undefined
@@ -642,27 +911,10 @@ class CliReleaseHarness {
       `${entrypoint}-${commandKey}`
     )}`
 
-    const execution =
-      entrypoint === ENTRYPOINT_EXE
-        ? await spawnBuffered(
-            this.releasePaths.exePath,
-            [...(options.preExeArgs ?? []), '--cli', ...cliArgs],
-            {
-              cwd: this.releasePaths.releaseRoot,
-              env: this.mainEnv.env,
-              timeoutMs: options.timeoutMs
-            }
-          )
-        : await spawnBuffered(
-            ...(() => {
-              const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, cliArgs)
-              return [invocation.command, invocation.args, {
-                cwd: this.releasePaths.releaseRoot,
-                env: this.mainEnv.env,
-                timeoutMs: options.timeoutMs
-              }]
-            })()
-          )
+    const execution = await this.spawnCliExecution(entrypointKind, cliArgs, this.mainEnv, {
+      preArgs: options.preArgs,
+      timeoutMs: options.timeoutMs
+    })
 
     const stdoutPath = path.join(this.mainEnv.logDirectory, `${logPrefix}.stdout.txt`)
     const stderrPath = path.join(this.mainEnv.logDirectory, `${logPrefix}.stderr.txt`)
@@ -706,6 +958,7 @@ class CliReleaseHarness {
       await options.assertResult(result.data, events)
     }
 
+    this.rememberCommandExample(commandKey, input)
     this.coverage.record({
       command: commandKey,
       entrypoint,
@@ -726,34 +979,17 @@ class CliReleaseHarness {
   }
 
   async runExpectedError(commandKey, input, options = {}) {
-    const entrypoint = options.entrypoint ?? ENTRYPOINT_CMD
+    const entrypointKind = options.entrypointKind ?? 'batch'
     const sequenceNo = this.nextSequence()
     const payloadFilePath =
       input.payload !== undefined
         ? createBatchPayloadFile(this.mainEnv, `${commandKey}-expected-error`, input.payload, sequenceNo)
         : null
     const cliArgs = buildCliArgs(commandKey, input, payloadFilePath)
-    const execution =
-      entrypoint === ENTRYPOINT_EXE
-        ? await spawnBuffered(
-            this.releasePaths.exePath,
-            [...(options.preExeArgs ?? []), '--cli', ...cliArgs],
-            {
-              cwd: this.releasePaths.releaseRoot,
-              env: this.mainEnv.env,
-              timeoutMs: options.timeoutMs
-            }
-          )
-        : await spawnBuffered(
-            ...(() => {
-              const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, cliArgs)
-              return [invocation.command, invocation.args, {
-                cwd: this.releasePaths.releaseRoot,
-                env: this.mainEnv.env,
-                timeoutMs: options.timeoutMs
-              }]
-            })()
-          )
+    const execution = await this.spawnCliExecution(entrypointKind, cliArgs, this.mainEnv, {
+      preArgs: options.preArgs,
+      timeoutMs: options.timeoutMs
+    })
 
     const output = `${execution.stdout}\n${execution.stderr}`
     const result = extractCommandResult(output)
@@ -765,6 +1001,7 @@ class CliReleaseHarness {
         `期望 ${commandKey} 返回错误码 ${options.errorCode}，实际为 ${result.error?.code ?? 'unknown'}`
       )
     }
+    this.rememberCommandExample(commandKey, input)
     return result
   }
 }
@@ -796,16 +1033,7 @@ CliReleaseHarness.prototype.waitForPrintReady = async function (jobId) {
 }
 
 CliReleaseHarness.prototype.createInteractiveSession = async function () {
-  const child = spawn(
-    'powershell.exe',
-    ['-NoProfile', '-Command', `& '${this.releasePaths.interactiveCmdPath.replace(/'/g, "''")}'`],
-    {
-      cwd: this.mainEnv.workDirectory,
-      env: this.mainEnv.env,
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    }
-  )
+  const child = this.adapter.spawnInteractiveProcess(this.mainEnv)
 
   let buffer = ''
   let closed = false
@@ -872,7 +1100,7 @@ CliReleaseHarness.prototype.runInteractiveWrapperSmoke = async function () {
 
     this.coverage.record({
       command: 'interactive-session-smoke',
-      entrypoint: ENTRYPOINT_INTERACTIVE,
+      entrypoint: this.adapter.entrypoints.interactive,
       mode: 'interactive-smoke',
       status: 'success',
       exitCode,
@@ -900,7 +1128,7 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
     }
     this.coverage.record({
       command: name,
-      entrypoint: ENTRYPOINT_INTERACTIVE,
+      entrypoint: this.adapter.entrypoints.interactive,
       mode: 'interactive-builtin',
       status: 'success',
       exitCode: 0,
@@ -917,7 +1145,7 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
     this.coverage.record({
       command,
       alias,
-      entrypoint: ENTRYPOINT_INTERACTIVE,
+      entrypoint: this.adapter.entrypoints.interactive,
       mode: 'interactive-alias',
       status: 'success',
       exitCode: 0,
@@ -978,10 +1206,7 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
       cliArgs.push('--payload-file', payloadPath)
     }
 
-    const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, cliArgs)
-    const execution = await spawnBuffered(invocation.command, invocation.args, {
-      cwd: this.releasePaths.releaseRoot,
-      env: this.mainEnv.env,
+    const execution = await this.spawnCliExecution('batch', cliArgs, this.mainEnv, {
       timeoutMs: 120_000
     })
     const result = extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
@@ -994,7 +1219,7 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
     } else {
       this.coverage.record({
         command: commandKey,
-        entrypoint: ENTRYPOINT_INTERACTIVE,
+        entrypoint: this.adapter.entrypoints.interactive,
         mode: 'interactive-canonical',
         status: 'success',
         exitCode: execution.code,
@@ -1004,6 +1229,56 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
     }
 
     return result
+  }
+
+  const validateAliasReplay = (alias) => {
+    if (this.coverage.aliasSuccess.has(alias)) {
+      return
+    }
+
+    const command = aliasMap.get(alias)
+    if (!command) {
+      throw new Error(`未知 alias：${alias}`)
+    }
+    const example = this.commandExamples.get(command)
+    if (!example) {
+      throw new Error(`alias ${alias} 缺少 canonical 示例：${command}`)
+    }
+
+    const replayPayload = example.payload ?? example.flags
+    const payloadFilePath =
+      replayPayload && typeof replayPayload === 'object'
+        ? createBatchPayloadFile(
+            this.mainEnv,
+            `interactive-alias-${command}`,
+            replayPayload,
+            this.nextSequence()
+          )
+        : null
+    const line = buildAliasReplayLine(alias, example, payloadFilePath)
+    const resolved = interactiveModule.resolveInteractiveCommand(line)
+    if (resolved.kind !== 'command') {
+      throw new Error(`alias ${alias} 未解析为命令`)
+    }
+
+    const applied = interactiveModule.applyInteractiveContext(resolved, shellState)
+    const promptPlan = interactiveModule.getInteractivePromptPlan(applied, shellState)
+    if (promptPlan.length > 0) {
+      throw new Error(`alias ${alias} 仍需补问：${promptPlan.map((item) => item.key).join(', ')}`)
+    }
+
+    const actualCommand = `${applied.domain} ${applied.action}`
+    if (actualCommand !== command) {
+      throw new Error(`alias ${alias} 解析错误：${actualCommand} !== ${command}`)
+    }
+
+    const actualPayload = applied.payload ?? {}
+    const expectedPayload = replayPayload ?? {}
+    if (JSON.stringify(actualPayload) !== JSON.stringify(expectedPayload)) {
+      throw new Error(`alias ${alias} payload 不一致`)
+    }
+
+    recordAlias(alias)
   }
 
   try {
@@ -1051,6 +1326,9 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
     applyBuiltin('unset period', 'unset period')
     applyBuiltin('unset ledger', 'unset ledger')
     applyBuiltin('clear', 'clear')
+    for (const entry of this.surface.aliasEntries) {
+      validateAliasReplay(entry.alias)
+    }
 
     await executeResolvedCommand('退出登录', {
       alias: '退出登录'
@@ -1067,16 +1345,7 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
 CliReleaseHarness.prototype.runOpenPreviewAudit = async function (jobId) {
   const port = 9340 + Math.floor(Math.random() * 200)
   const eventsCursor = getEventsCursor(this.mainEnv)
-  const child = spawn(
-    this.releasePaths.exePath,
-    [`--remote-debugging-port=${port}`, '--cli', 'print', 'open-preview', '--jobId', jobId],
-    {
-      cwd: this.releasePaths.releaseRoot,
-      env: this.mainEnv.env,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe']
-    }
-  )
+  const child = this.adapter.spawnPreviewProcess(this.mainEnv, jobId, port)
 
   let stdout = ''
   let stderr = ''
@@ -1126,9 +1395,14 @@ CliReleaseHarness.prototype.runOpenPreviewAudit = async function (jobId) {
     throw new Error(`print open-preview 缺少预期事件：${eventNames.join(', ')}`)
   }
 
+  this.rememberCommandExample('print open-preview', {
+    flags: {
+      jobId
+    }
+  })
   this.coverage.record({
     command: 'print open-preview',
-    entrypoint: ENTRYPOINT_EXE,
+    entrypoint: this.adapter.entrypoints.desktop,
     mode: 'desktop-assisted',
     status: 'success',
     exitCode: exitCode ?? 0,
@@ -1145,7 +1419,7 @@ CliReleaseHarness.prototype.runDesktopAssistedSuccess = async function (
   expectedEventNames
 ) {
   const result = await this.runBatchCommand(commandKey, input, {
-    entrypoint: ENTRYPOINT_EXE,
+    entrypointKind: 'desktop',
     mode: 'desktop-assisted',
     assertResult: async (_data, events) => {
       const eventNames = events.map((event) => event.action)
@@ -1190,18 +1464,266 @@ CliReleaseHarness.prototype.populateSubjectTemplateWorkbook = async function (fi
   await workbook.xlsx.writeFile(filePath)
 }
 
+CliReleaseHarness.prototype.createSimpleVoucher = async function ({
+  ledgerId,
+  voucherDate,
+  summary,
+  debitSubjectCode,
+  creditSubjectCode,
+  amount
+}) {
+  const created = await this.runBatchCommand('voucher save', {
+    payload: {
+      ledgerId,
+      voucherDate,
+      entries: [
+        {
+          summary,
+          subjectCode: debitSubjectCode,
+          debitAmount: amount,
+          creditAmount: '0.00',
+          cashFlowItemId: null
+        },
+        {
+          summary,
+          subjectCode: creditSubjectCode,
+          debitAmount: '0.00',
+          creditAmount: amount,
+          cashFlowItemId: null
+        }
+      ]
+    }
+  })
+  return created.data.voucherId
+}
+
+CliReleaseHarness.prototype.pickNpoLoopSubjects = async function (ledgerId) {
+  const subjectList = await this.runBatchCommand('subject list', {
+    payload: {
+      ledgerId
+    }
+  })
+  const subjects = subjectList.data
+  const parentCodes = new Set(
+    subjects.map((row) => row.parent_code).filter((value) => typeof value === 'string' && value.trim())
+  )
+  const findFirst = (predicate, message) => {
+    const matched = subjects.find(predicate)
+    if (!matched) {
+      throw new Error(message)
+    }
+    return matched.code
+  }
+
+  return {
+    assetCode: findFirst(
+      (row) =>
+        row.category === 'asset' &&
+        Number(row.is_cash_flow) !== 1 &&
+        !parentCodes.has(row.code),
+      '无法找到民非账套两个月闭环所需的资产类科目'
+    ),
+    liabilityCode: findFirst(
+      (row) => row.category === 'liability' && !parentCodes.has(row.code),
+      '无法找到民非账套两个月闭环所需的负债类科目'
+    ),
+    incomeCode: findFirst(
+      (row) =>
+        row.category === 'income' &&
+        Number(row.balance_direction) < 0 &&
+        !parentCodes.has(row.code),
+      '无法找到民非账套两个月闭环所需的收入类科目'
+    ),
+    expenseCode: findFirst(
+      (row) =>
+        row.category === 'expense' &&
+        Number(row.balance_direction) > 0 &&
+        !parentCodes.has(row.code),
+      '无法找到民非账套两个月闭环所需的费用类科目'
+    )
+  }
+}
+
+CliReleaseHarness.prototype.generateMonthReports = async function ({ ledgerId, ledgerType, period }) {
+  const generatedSnapshotIds = []
+  const balance = await this.runBatchCommand('report generate', {
+    payload: {
+      ledgerId,
+      reportType: 'balance_sheet',
+      month: period
+    }
+  })
+  generatedSnapshotIds.push(balance.data.snapshot.id)
+
+  if (ledgerType === 'enterprise') {
+    const income = await this.runBatchCommand('report generate', {
+      payload: {
+        ledgerId,
+        reportType: 'income_statement',
+        startPeriod: period,
+        endPeriod: period
+      }
+    })
+    const cashflow = await this.runBatchCommand('report generate', {
+      payload: {
+        ledgerId,
+        reportType: 'cashflow_statement',
+        startPeriod: period,
+        endPeriod: period
+      }
+    })
+    const equity = await this.runBatchCommand('report generate', {
+      payload: {
+        ledgerId,
+        reportType: 'equity_statement',
+        startPeriod: period,
+        endPeriod: period
+      }
+    })
+    generatedSnapshotIds.push(income.data.snapshot.id, cashflow.data.snapshot.id, equity.data.snapshot.id)
+  } else {
+    const activity = await this.runBatchCommand('report generate', {
+      payload: {
+        ledgerId,
+        reportType: 'activity_statement',
+        startPeriod: period,
+        endPeriod: period
+      }
+    })
+    const cashflow = await this.runBatchCommand('report generate', {
+      payload: {
+        ledgerId,
+        reportType: 'cashflow_statement',
+        startPeriod: period,
+        endPeriod: period
+      }
+    })
+    generatedSnapshotIds.push(activity.data.snapshot.id, cashflow.data.snapshot.id)
+  }
+
+  return generatedSnapshotIds
+}
+
+CliReleaseHarness.prototype.runTwoMonthLedgerFlow = async function ({
+  ledgerId,
+  ledgerType,
+  subjectCodes
+}) {
+  const monthPlans = [
+    {
+      period: '2026-01',
+      revenueDate: '2026-01-08',
+      expenseDate: '2026-01-18',
+      revenueAmount: '2800.00',
+      expenseAmount: '900.00'
+    },
+    {
+      period: '2026-02',
+      revenueDate: '2026-02-09',
+      expenseDate: '2026-02-19',
+      revenueAmount: '3600.00',
+      expenseAmount: '1200.00'
+    }
+  ]
+
+  for (const [index, monthPlan] of monthPlans.entries()) {
+    if (index > 0) {
+      await this.runBatchCommand('ledger update', {
+        payload: {
+          id: ledgerId,
+          currentPeriod: monthPlan.period
+        }
+      })
+    }
+
+    const revenueVoucherId = await this.createSimpleVoucher({
+      ledgerId,
+      voucherDate: monthPlan.revenueDate,
+      summary: `${ledgerType}-income-${monthPlan.period}`,
+      debitSubjectCode: subjectCodes.assetCode,
+      creditSubjectCode: subjectCodes.incomeCode,
+      amount: monthPlan.revenueAmount
+    })
+    const expenseVoucherId = await this.createSimpleVoucher({
+      ledgerId,
+      voucherDate: monthPlan.expenseDate,
+      summary: `${ledgerType}-expense-${monthPlan.period}`,
+      debitSubjectCode: subjectCodes.expenseCode,
+      creditSubjectCode: subjectCodes.liabilityCode,
+      amount: monthPlan.expenseAmount
+    })
+
+    await this.runBatchCommand('voucher batch', {
+      payload: {
+        action: 'audit',
+        voucherIds: [revenueVoucherId, expenseVoucherId]
+      }
+    })
+    await this.runBatchCommand('voucher batch', {
+      payload: {
+        action: 'bookkeep',
+        voucherIds: [revenueVoucherId, expenseVoucherId]
+      }
+    })
+
+    await this.generateMonthReports({
+      ledgerId,
+      ledgerType,
+      period: monthPlan.period
+    })
+    await this.runBatchCommand('carry-forward preview', {
+      payload: {
+        ledgerId,
+        period: monthPlan.period
+      }
+    })
+    const carryForwardResult = await this.runBatchCommand('carry-forward execute', {
+      payload: {
+        ledgerId,
+        period: monthPlan.period
+      }
+    })
+    if (carryForwardResult.data.status !== 2) {
+      await this.runBatchCommand('voucher batch', {
+        payload: {
+          action: 'audit',
+          voucherIds: [carryForwardResult.data.voucherId]
+        }
+      })
+      await this.runBatchCommand('voucher batch', {
+        payload: {
+          action: 'bookkeep',
+          voucherIds: [carryForwardResult.data.voucherId]
+        }
+      })
+    }
+    await this.runBatchCommand('period status', {
+      payload: {
+        ledgerId,
+        period: monthPlan.period
+      }
+    })
+    await this.runBatchCommand('period close', {
+      payload: {
+        ledgerId,
+        period: monthPlan.period
+      }
+    })
+  }
+}
+
 CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
-  const restoreEnv = buildIsolatedEnvironment('restore-success', this.outputDir)
+  const restoreEnv = buildIsolatedEnvironment('restore-success', this.outputDir, {
+    userDataDirName: this.adapter.userDataDirName,
+    databaseRelativePath: this.adapter.databaseRelativePath
+  })
   const restoreRun = async (commandKey, input = {}, options = {}) => {
     const payloadFilePath =
       input.payload !== undefined
         ? createBatchPayloadFile(restoreEnv, commandKey, input.payload, this.nextSequence())
         : null
     const cliArgs = buildCliArgs(commandKey, input, payloadFilePath)
-    const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, cliArgs)
-    const execution = await spawnBuffered(invocation.command, invocation.args, {
-      cwd: this.releasePaths.releaseRoot,
-      env: restoreEnv.env,
+    const execution = await this.spawnCliExecution(options.entrypointKind ?? 'batch', cliArgs, restoreEnv, {
       timeoutMs: options.timeoutMs
     })
     const result = extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
@@ -1221,7 +1743,7 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
   })
   const ledger = await restoreRun('ledger create', {
     payload: {
-      name: `restore-fixture-${runId}`,
+      name: `restore-fixture-${this.runId}`,
       standardType: 'enterprise',
       startPeriod: '2026-03'
     }
@@ -1230,7 +1752,7 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
     databasePath: restoreEnv.databasePath,
     backupDir: path.join(restoreEnv.fixtureDirectory, 'system-backup'),
     ledgerId: ledger.id,
-    ledgerName: `restore-fixture-${runId}`,
+    ledgerName: `restore-fixture-${this.runId}`,
     period: '2026-03',
     fiscalYear: '2026'
   })
@@ -1243,6 +1765,7 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
       }
     },
     {
+      entrypointKind: 'desktop',
       timeoutMs: 180_000
     }
   )
@@ -1259,7 +1782,7 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
   }
   this.coverage.record({
     command: 'backup restore',
-    entrypoint: ENTRYPOINT_EXE,
+    entrypoint: this.adapter.entrypoints.desktop,
     mode: 'desktop-assisted',
     status: 'success',
     exitCode: 0,
@@ -1292,27 +1815,27 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
 
   const enterpriseLedger = await this.runBatchCommand('ledger create', {
     payload: {
-      name: `enterprise-ledger-${runId}`,
+      name: `enterprise-ledger-${this.runId}`,
       standardType: 'enterprise',
       startPeriod: '2026-03'
     }
   })
   this.state.ledgers.enterpriseId = enterpriseLedger.data.id
-  this.state.ledgers.enterpriseName = `enterprise-ledger-${runId}`
+  this.state.ledgers.enterpriseName = `enterprise-ledger-${this.runId}`
 
   const npoLedger = await this.runBatchCommand('ledger create', {
     payload: {
-      name: `npo-ledger-${runId}`,
+      name: `npo-ledger-${this.runId}`,
       standardType: 'npo',
       startPeriod: '2026-03'
     }
   })
   this.state.ledgers.npoId = npoLedger.data.id
-  this.state.ledgers.npoName = `npo-ledger-${runId}`
+  this.state.ledgers.npoName = `npo-ledger-${this.runId}`
 
   const templateLedger = await this.runBatchCommand('ledger create', {
     payload: {
-      name: `template-ledger-${runId}`,
+      name: `template-ledger-${this.runId}`,
       standardType: 'enterprise',
       startPeriod: '2026-03'
     }
@@ -1321,7 +1844,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
 
   const deleteLedger = await this.runBatchCommand('ledger create', {
     payload: {
-      name: `delete-ledger-${runId}`,
+      name: `delete-ledger-${this.runId}`,
       standardType: 'enterprise',
       startPeriod: '2026-03'
     }
@@ -1330,18 +1853,36 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
 
   const periodLedger = await this.runBatchCommand('ledger create', {
     payload: {
-      name: `period-ledger-${runId}`,
+      name: `period-ledger-${this.runId}`,
       standardType: 'enterprise',
       startPeriod: '2026-03'
     }
   })
   this.state.ledgers.periodId = periodLedger.data.id
 
+  const enterpriseFlowLedger = await this.runBatchCommand('ledger create', {
+    payload: {
+      name: `enterprise-flow-ledger-${this.runId}`,
+      standardType: 'enterprise',
+      startPeriod: '2026-01'
+    }
+  })
+  this.state.ledgers.enterpriseFlowId = enterpriseFlowLedger.data.id
+
+  const npoFlowLedger = await this.runBatchCommand('ledger create', {
+    payload: {
+      name: `npo-flow-ledger-${this.runId}`,
+      standardType: 'npo',
+      startPeriod: '2026-01'
+    }
+  })
+  this.state.ledgers.npoFlowId = npoFlowLedger.data.id
+
   await this.runBatchCommand('ledger list')
   await this.runBatchCommand('ledger update', {
     payload: {
       id: this.state.ledgers.templateId,
-      name: `template-ledger-renamed-${runId}`
+      name: `template-ledger-renamed-${this.runId}`
     }
   })
   await this.runBatchCommand('ledger periods', {
@@ -1357,7 +1898,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
 
   const createdUser = await this.runBatchCommand('auth create-user', {
     payload: {
-      username: `cliuser_${runId}`,
+      username: `cliuser_${this.runId}`,
       realName: 'CLI User',
       password: '',
       permissions: {
@@ -1369,7 +1910,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   })
   this.state.users.tempUserId = createdUser.data.userId
-  this.state.users.tempUsername = `cliuser_${runId}`
+  this.state.users.tempUsername = `cliuser_${this.runId}`
 
   await this.runBatchCommand('auth list-users')
   await this.runBatchCommand('auth update-user', {
@@ -1414,7 +1955,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   await this.runBatchCommand('settings preferences-set', {
     payload: {
       preferences: {
-        cli_release_tag: runId
+        cli_release_tag: this.runId
       }
     }
   })
@@ -1472,7 +2013,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   await this.runBatchCommand('settings subject-template-save', {
     payload: {
       standardType: 'enterprise',
-      templateName: `subject-template-save-${runId}`,
+      templateName: `subject-template-save-${this.runId}`,
       entries: this.state.templates.parsedEnterpriseEntries
     }
   })
@@ -1501,7 +2042,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   const savedCustomTemplate = await this.runBatchCommand('settings custom-template-save', {
     payload: {
       baseStandardType: 'enterprise',
-      templateName: `custom-template-save-${runId}`,
+      templateName: `custom-template-save-${this.runId}`,
       templateDescription: 'cli release save',
       entries: this.state.templates.parsedEnterpriseEntries
     }
@@ -1516,7 +2057,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   const importedCustomTemplate = await this.runBatchCommand('settings custom-template-import', {
     payload: {
       baseStandardType: 'enterprise',
-      templateName: `custom-template-import-${runId}`,
+      templateName: `custom-template-import-${this.runId}`,
       templateDescription: 'cli release import',
       sourcePath: this.state.files.subjectTemplatePath
     }
@@ -1597,7 +2138,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId,
       category: 'custom',
-      code: `AUX-${runId}`,
+      code: `AUX-${this.runId}`,
       name: 'CLI Auxiliary'
     }
   })
@@ -2028,6 +2569,22 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   })
 
+  await this.runTwoMonthLedgerFlow({
+    ledgerId: this.state.ledgers.enterpriseFlowId,
+    ledgerType: 'enterprise',
+    subjectCodes: {
+      assetCode: this.state.subjects.nonCashflowAssetCode,
+      liabilityCode: this.state.subjects.liabilityCode,
+      incomeCode: this.state.subjects.revenueCode,
+      expenseCode: this.state.subjects.expenseCode
+    }
+  })
+  await this.runTwoMonthLedgerFlow({
+    ledgerId: this.state.ledgers.npoFlowId,
+    ledgerType: 'npo',
+    subjectCodes: await this.pickNpoLoopSubjects(this.state.ledgers.npoFlowId)
+  })
+
   await this.runBatchCommand('ledger apply-template', {
     payload: {
       ledgerId: this.state.ledgers.templateId,
@@ -2120,7 +2677,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId,
       sourcePath: this.state.files.evoucherSource,
-      sourceNumber: `EV-${runId}`,
+      sourceNumber: `EV-${this.runId}`,
       sourceDate: '2026-03-06',
       amountCents: 123400
     }
@@ -2134,7 +2691,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   await this.runBatchCommand('evoucher parse', {
     payload: {
       recordId: this.state.evouchers.recordId,
-      sourceNumber: `EV-${runId}`,
+      sourceNumber: `EV-${this.runId}`,
       sourceDate: '2026-03-06',
       amountCents: 123400,
       counterpartName: 'CLI Counterparty'
@@ -2209,17 +2766,18 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId,
       fiscalYear: '2026',
-      directoryPath: path.join(this.mainEnv.exportDirectory, 'archive')
+      directoryPath: path.join(this.mainEnv.exportDirectory, 'archive-risk')
     }
   })
   const archive2 = await this.runBatchCommand('archive export', {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId,
       fiscalYear: '2026',
-      directoryPath: path.join(this.mainEnv.exportDirectory, 'archive')
+      directoryPath: path.join(this.mainEnv.exportDirectory, 'archive-main')
     }
   })
   this.state.archives.firstExportId = archive1.data.exportId
+  this.state.archives.firstExportPackageDir = archive1.data.exportPath
   this.state.archives.secondExportId = archive2.data.exportId
   await this.runBatchCommand('archive list', {
     payload: {
@@ -2334,6 +2892,17 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   )
 
+  await this.runExpectedError(
+    'ledger delete',
+    {
+      payload: {
+        ledgerId: this.state.ledgers.deleteId
+      }
+    },
+    {
+      errorCode: 'RISK_CONFIRMATION_REQUIRED'
+    }
+  )
   await this.runBatchCommand('ledger delete', {
     payload: {
       ledgerId: this.state.ledgers.deleteId,
@@ -2349,11 +2918,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
 
 CliReleaseHarness.prototype.run = async function () {
   const helpCmd = await (async () => {
-    const invocation = buildCmdInvocation(this.releasePaths.batchCmdPath, ['--help'])
-    const execution = await spawnBuffered(invocation.command, invocation.args, {
-      cwd: this.releasePaths.releaseRoot,
-      env: this.mainEnv.env
-    })
+    const execution = await this.spawnCliExecution('batch', ['--help'], this.mainEnv)
     return {
       execution,
       result: extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
@@ -2370,7 +2935,7 @@ CliReleaseHarness.prototype.run = async function () {
 
   this.coverage.record({
     command: '--help',
-    entrypoint: ENTRYPOINT_CMD,
+    entrypoint: this.adapter.entrypoints.batch,
     mode: 'batch-help',
     status: 'success',
     exitCode: helpCmd.execution.code,
@@ -2379,7 +2944,7 @@ CliReleaseHarness.prototype.run = async function () {
   })
   this.coverage.record({
     command: '--help',
-    entrypoint: ENTRYPOINT_INTERACTIVE,
+    entrypoint: this.adapter.entrypoints.interactive,
     mode: 'interactive-smoke',
     status: 'success',
     exitCode: 0,
@@ -2394,25 +2959,60 @@ CliReleaseHarness.prototype.run = async function () {
   this.coverage.assertCoverage()
 }
 
-async function main() {
-  const outputDir = path.join(repoRoot, 'out', 'cli-release-e2e', runId)
+function getDefaultCliE2EOutputDir(surfaceMode, runId) {
+  return path.join(repoRoot, 'out', 'cli-e2e', `${surfaceMode}-${runId}`)
+}
+
+export async function runCliE2E(options = {}) {
+  const runId = options.runId ?? createRunId()
+  const surfaceMode = options.surfaceMode ?? 'release'
+  const outputDir = options.outputDir ?? getDefaultCliE2EOutputDir(surfaceMode, runId)
   ensureDir(outputDir)
 
   const surface = {
     ...parseCatalogSurface(),
     builtins: parseInteractiveBuiltins()
   }
-  const releaseRoot = resolveReleaseRoot()
-  const releasePaths = {
-    releaseRoot,
-    exePath: path.join(releaseRoot, 'dude-app.exe'),
-    batchCmdPath: path.join(releaseRoot, 'dude-accounting.cmd'),
-    interactiveCmdPath: path.join(releaseRoot, 'dudeacc.cmd')
-  }
+  const adapter = createSurfaceAdapter(surfaceMode)
+  await adapter.prepare()
+  await adapter.validate()
 
-  for (const [label, filePath] of Object.entries(releasePaths)) {
-    if (label === 'releaseRoot') continue
-    if (!fs.existsSync(filePath)) {
+  const harness = new CliReleaseHarness({
+    surface,
+    adapter,
+    outputDir,
+    surfaceMode,
+    runId
+  })
+  await harness.run()
+
+  const summaryPaths = harness.coverage.writeSummary({
+    runId,
+    outputDir,
+    surfaceMode,
+    surfaceLabel: adapter.label,
+    ...adapter.describe()
+  })
+
+  return {
+    status: 'success',
+    runId,
+    surfaceMode,
+    outputDir,
+    reportPath: summaryPaths.reportPath,
+    summaryPath: summaryPaths.markdownPath
+  }
+}
+
+async function main() {
+  const result = await runCliE2E({
+    surfaceMode: process.env.DUDEACC_CLI_E2E_SURFACE?.trim() || 'release'
+  })
+  console.log(JSON.stringify(result, null, 2))
+  return
+  /*
+
+
       throw new Error(`发布态入口不存在：${filePath}`)
     }
   }
@@ -2445,7 +3045,16 @@ async function main() {
   )
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack ?? error.message : error)
-  process.exit(1)
-})
+  */
+}
+
+function isDirectRun() {
+  return Boolean(process.argv[1] && path.resolve(process.argv[1]) === __filename)
+}
+
+if (isDirectRun()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack ?? error.message : error)
+    process.exit(1)
+  })
+}
