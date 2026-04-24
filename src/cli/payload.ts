@@ -1,8 +1,52 @@
 import fs from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { CommandError } from '../main/commands/types'
+
+const WSL_DRIVE_PATH_PATTERN = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/
 
 function stripUtf8Bom(text: string): string {
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+}
+
+function toWindowsSeparators(value: string): string {
+  return value.replace(/\//g, '\\')
+}
+
+function convertPosixPathWithWslPath(payloadFile: string): string | null {
+  try {
+    const output = execFileSync('wsl.exe', ['wslpath', '-w', payloadFile], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 3000
+    }).trim()
+    return output || null
+  } catch {
+    return null
+  }
+}
+
+export function normalizeCliPayloadFilePath(payloadFile: string): string {
+  if (process.platform !== 'win32') {
+    return payloadFile
+  }
+
+  const driveMatch = payloadFile.match(WSL_DRIVE_PATH_PATTERN)
+  if (driveMatch) {
+    const drive = driveMatch[1].toUpperCase()
+    const rest = driveMatch[2] ? toWindowsSeparators(driveMatch[2]) : ''
+    return rest ? `${drive}:\\${rest}` : `${drive}:\\`
+  }
+
+  const distroName = process.env.DUDEACC_WSL_DISTRO_NAME?.trim()
+  if (distroName && payloadFile.startsWith('/') && !payloadFile.startsWith('//')) {
+    return `\\\\wsl.localhost\\${distroName}${toWindowsSeparators(payloadFile)}`
+  }
+
+  if (payloadFile.startsWith('/') && !payloadFile.startsWith('//')) {
+    return convertPosixPathWithWslPath(payloadFile) ?? payloadFile
+  }
+
+  return payloadFile
 }
 
 function normalizeLooseValue(value: unknown): unknown {
@@ -35,14 +79,16 @@ export function resolveCliPayload(input: {
   flags: Record<string, string | boolean>
 }): unknown {
   if (input.payloadFile) {
+    const payloadFilePath = normalizeCliPayloadFilePath(input.payloadFile)
     try {
-      return JSON.parse(stripUtf8Bom(fs.readFileSync(input.payloadFile, 'utf8'))) as unknown
+      return JSON.parse(stripUtf8Bom(fs.readFileSync(payloadFilePath, 'utf8'))) as unknown
     } catch (error) {
       throw new CommandError(
         'VALIDATION_ERROR',
         error instanceof Error ? `读取 payload 文件失败：${error.message}` : '读取 payload 文件失败',
         {
-          payloadFile: input.payloadFile
+          payloadFile: input.payloadFile,
+          resolvedPayloadFile: payloadFilePath
         },
         2
       )

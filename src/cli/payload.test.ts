@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { resolveCliPayload } from './payload'
+import { normalizeCliPayloadFilePath, resolveCliPayload } from './payload'
 
 const tempFiles: string[] = []
 
@@ -49,6 +49,31 @@ describe('resolveCliPayload', () => {
       enabled: true,
       disabled: false
     })
+  })
+
+  it('converts WSL mount payload paths before Windows reads the file', () => {
+    expect(normalizeCliPayloadFilePath('/mnt/d/tmp/voucher.json')).toBe(
+      process.platform === 'win32' ? 'D:\\tmp\\voucher.json' : '/mnt/d/tmp/voucher.json'
+    )
+  })
+
+  it('converts WSL native payload paths through the exported distro name on Windows', () => {
+    const originalDistroName = process.env.DUDEACC_WSL_DISTRO_NAME
+    process.env.DUDEACC_WSL_DISTRO_NAME = 'Ubuntu'
+
+    try {
+      expect(normalizeCliPayloadFilePath('/tmp/voucher.json')).toBe(
+        process.platform === 'win32'
+          ? '\\\\wsl.localhost\\Ubuntu\\tmp\\voucher.json'
+          : '/tmp/voucher.json'
+      )
+    } finally {
+      if (originalDistroName === undefined) {
+        delete process.env.DUDEACC_WSL_DISTRO_NAME
+      } else {
+        process.env.DUDEACC_WSL_DISTRO_NAME = originalDistroName
+      }
+    }
   })
 
   it('only normalizes booleans inside nested flag-shaped payload values', () => {

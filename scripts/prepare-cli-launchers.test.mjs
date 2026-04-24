@@ -21,10 +21,16 @@ describe('prepare-cli-launchers', () => {
 
     const buildCliDir = path.join(rootDir, 'build', 'cli')
     expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc'), 'utf8')).toContain(
-      '"$SCRIPT_DIR/dude-app" --cli "$@"'
+      'APP_EXE="$SCRIPT_DIR/dude-app.exe"'
+    )
+    expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc'), 'utf8')).toContain(
+      'wslpath -w "$ARG"'
+    )
+    expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc'), 'utf8')).toContain(
+      '"$APP_EXE" --cli "${ARGS[@]}"'
     )
     expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting'), 'utf8')).toContain(
-      '"$SCRIPT_DIR/dude-app" --cli "$@"'
+      '"$APP_EXE" --cli "${ARGS[@]}"'
     )
     expect(chmodSpy).toHaveBeenCalledWith(path.join(buildCliDir, 'dudeacc'), POSIX_LAUNCHER_MODE)
     expect(chmodSpy).toHaveBeenCalledWith(

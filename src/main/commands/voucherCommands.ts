@@ -34,6 +34,7 @@ import {
   requireCommandLedgerAccess,
   requireCommandPermission
 } from './authz'
+import { writeContextDiagnostic } from './contextDiagnostics'
 import { appendActorOperationLog } from './operationLog'
 import {
   asCommandPayloadRecord,
@@ -412,6 +413,19 @@ export async function createVoucherCommand(
       entries: normalizedPayload.entries,
       creatorId: actor.id,
       allowSameMakerAuditor: allowSameRow?.value === '1'
+    })
+    writeContextDiagnostic(context.runtime, {
+      event: 'voucher.save.context',
+      db: context.db,
+      context: {
+        ledgerId: normalizedPayload.ledgerId,
+        period,
+        voucherDate: normalizedPayload.voucherDate,
+        voucherId: result.voucherId,
+        voucherNumber: result.voucherNumber,
+        entryCount: normalizedPayload.entries.length,
+        status: 'success'
+      }
     })
     return result
   })

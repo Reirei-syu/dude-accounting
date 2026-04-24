@@ -13,6 +13,7 @@ import {
   requireCommandPermission,
   assertRiskConfirmed
 } from './authz'
+import { writeContextDiagnostic } from './contextDiagnostics'
 import { appendActorOperationLog } from './operationLog'
 import {
   asCommandPayloadRecord,
@@ -118,6 +119,17 @@ export async function createLedgerCommand(
         standardType: normalizedPayload.standardType,
         startPeriod: normalizedPayload.startPeriod,
         customSubjectCount: result.customSubjectCount
+      }
+    })
+    writeContextDiagnostic(context.runtime, {
+      event: 'ledger.create.context',
+      db: context.db,
+      context: {
+        ledgerId: result.ledgerId,
+        ledgerName: normalizedPayload.name,
+        standardType: normalizedPayload.standardType,
+        startPeriod: normalizedPayload.startPeriod,
+        status: 'success'
       }
     })
 
