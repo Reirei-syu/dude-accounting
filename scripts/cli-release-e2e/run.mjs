@@ -35,7 +35,7 @@ function parseCatalogSurface() {
   const catalogPath = path.join(repoRoot, 'src', 'main', 'commands', 'catalog.ts')
   const source = readText(catalogPath)
   const blockRegex =
-    /\{\s*domain:\s*'([^']+)'\s*,\s*action:\s*'([^']+)'\s*,\s*description:\s*'([^']*)'\s*,\s*aliases:\s*\[([^\]]*)\]\s*,\s*batchSafe:\s*(true|false)\s*,\s*desktopAssisted:\s*(true|false)\s*,\s*requiresSession:\s*(true|false)\s*,\s*sessionEffect:\s*'([^']+)'\s*,\s*uiMethods:\s*\[([^\]]*)\]\s*,\s*uiAssistedMethods:\s*\[([^\]]*)\]\s*,\s*promptHints:\s*\[([^\]]*)\]\s*\}/g
+    /\{\s*domain:\s*'([^']+)'\s*,\s*action:\s*'([^']+)'\s*,\s*description:\s*'([^']*)'\s*,\s*aliases:\s*\[([^\]]*)\]\s*,\s*batchSafe:\s*(true|false)\s*,\s*desktopAssisted:\s*(true|false)\s*,\s*(?:headlessAlternatives:\s*\[([^\]]*)\]\s*,\s*)?requiresSession:\s*(true|false)\s*,\s*sessionEffect:\s*'([^']+)'\s*,\s*uiMethods:\s*\[([^\]]*)\]\s*,\s*uiAssistedMethods:\s*\[([^\]]*)\]\s*,\s*promptHints:\s*\[([^\]]*)\]\s*\}/g
 
   const commands = []
   for (const match of source.matchAll(blockRegex)) {
@@ -50,11 +50,12 @@ function parseCatalogSurface() {
       aliases: aliasZh ? [aliasZh] : [],
       batchSafe: match[5] === 'true',
       desktopAssisted: match[6] === 'true',
-      requiresSession: match[7] === 'true',
-      sessionEffect: match[8],
-      uiMethods: parseSingleQuotedList(match[9]),
-      uiAssistedMethods: parseSingleQuotedList(match[10]),
-      promptHints: parseSingleQuotedList(match[11])
+      headlessAlternatives: parseSingleQuotedList(match[7] ?? ''),
+      requiresSession: match[8] === 'true',
+      sessionEffect: match[9],
+      uiMethods: parseSingleQuotedList(match[10]),
+      uiAssistedMethods: parseSingleQuotedList(match[11]),
+      promptHints: parseSingleQuotedList(match[12])
     })
   }
 
@@ -1765,7 +1766,6 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
       }
     },
     {
-      entrypointKind: 'desktop',
       timeoutMs: 180_000
     }
   )
@@ -1782,12 +1782,120 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
   }
   this.coverage.record({
     command: 'backup restore',
-    entrypoint: this.adapter.entrypoints.desktop,
-    mode: 'desktop-assisted',
+    entrypoint: this.adapter.entrypoints.batch,
+    mode: 'batch-canonical',
     status: 'success',
     exitCode: 0,
     artifactPaths: [fixture.packageDir, fixture.backupPath, fixture.manifestPath],
     eventsSeen: eventNames
+  })
+}
+
+CliReleaseHarness.prototype.runHermesCompatibilityCoverage = async function () {
+  const hermesLedger = await this.runBatchCommand('ledger create', {
+    payload: {
+      name: `Hermes Compatibility ${this.runId}`,
+      standardType: 'enterprise',
+      startPeriod: '2026-03'
+    }
+  })
+  const hermesLedgerId = hermesLedger.data.id
+
+  await this.runBatchCommand(
+    'subject search',
+    {
+      flags: {
+        ledgerId: String(hermesLedgerId),
+        keyword: '1002'
+      }
+    },
+    {
+      assertResult: async (data) => {
+        if (!Array.isArray(data) || !data.some((row) => row && row.code === '1002')) {
+          throw new Error('Hermes subject search 未返回 1002 科目')
+        }
+      }
+    }
+  )
+
+  const hermesVoucher = await this.runBatchCommand('voucher save', {
+    payload: {
+      ledgerId: hermesLedgerId,
+      date: '2026-03-12',
+      description: 'Hermes CLI Save',
+      entries: [
+        {
+          subjectCode: 1002,
+          debit: '1234.56',
+          credit: '0.00',
+          cashflowItemCode: this.state.cashflow.itemCode,
+          auxiliaries: []
+        },
+        {
+          subjectCode: this.state.subjects.revenueCode,
+          debit: '0.00',
+          credit: '1234.56',
+          auxiliaries: []
+        }
+      ]
+    }
+  })
+
+  await this.runBatchCommand('voucher update', {
+    payload: {
+      voucherId: hermesVoucher.data.voucherId,
+      ledgerId: hermesLedgerId,
+      date: '2026-03-13',
+      description: 'Hermes CLI Update',
+      entries: [
+        {
+          subjectCode: 1002,
+          debit: '1500.00',
+          credit: '0.00',
+          cashflowItemCode: this.state.cashflow.itemCode,
+          auxiliaries: []
+        },
+        {
+          subjectCode: this.state.subjects.revenueCode,
+          debit: '0.00',
+          credit: '1500.00',
+          auxiliaries: []
+        }
+      ]
+    }
+  })
+
+  await this.runBatchCommand(
+    'voucher entries',
+    {
+      flags: {
+        voucherId: String(hermesVoucher.data.voucherId)
+      }
+    },
+    {
+      assertResult: async (data) => {
+        if (!Array.isArray(data)) {
+          throw new Error('Hermes voucher entries 返回结构不是数组')
+        }
+        const cashflowEntry = data.find((row) => row && row.subject_code === '1002')
+        if (!cashflowEntry || cashflowEntry.cash_flow_code !== this.state.cashflow.itemCode) {
+          throw new Error('Hermes voucher entries 未保留现金流量项目编码')
+        }
+      }
+    }
+  )
+
+  await this.runBatchCommand('voucher batch', {
+    payload: {
+      action: 'audit',
+      voucherIds: [hermesVoucher.data.voucherId]
+    }
+  })
+  await this.runBatchCommand('voucher batch', {
+    payload: {
+      action: 'bookkeep',
+      voucherIds: [hermesVoucher.data.voucherId]
+    }
   })
 }
 
@@ -2203,6 +2311,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   })
   this.state.cashflow.itemId = cashflowItems.data[0].id
+  this.state.cashflow.itemCode = cashflowItems.data[0].code
   const existingCashflowMappings = await this.runBatchCommand('cashflow list', {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId
@@ -2838,6 +2947,31 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       }
     }
   })
+  const printHtmlPath = path.join(this.mainEnv.exportDirectory, 'print-preview.html')
+  await this.runBatchCommand(
+    'print export-html',
+    {
+      payload: {
+        jobId: this.state.print.jobId,
+        outputPath: printHtmlPath
+      }
+    },
+    {
+      artifactPaths: [printHtmlPath],
+      assertResult: async () => {
+        if (!fs.existsSync(printHtmlPath)) {
+          throw new Error('print export-html 文件未生成')
+        }
+        const html = readText(printHtmlPath)
+        if (
+          !html.includes('离线 HTML 快照仅保留当前版式') ||
+          !html.includes('const staticExportMode = true;')
+        ) {
+          throw new Error('print export-html 产物缺少静态预览标记')
+        }
+      }
+    }
+  )
   const printPdfPath = path.join(this.mainEnv.exportDirectory, 'print-job.pdf')
   await this.runBatchCommand(
     'print export-pdf',
@@ -2954,6 +3088,7 @@ CliReleaseHarness.prototype.run = async function () {
 
   await this.runInteractiveWrapperSmoke()
   await this.runBatchCoverage()
+  await this.runHermesCompatibilityCoverage()
   await this.runInteractiveCoverage()
   await this.runRestoreSuccessCoverage()
   this.coverage.assertCoverage()

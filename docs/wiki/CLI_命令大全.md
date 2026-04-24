@@ -153,7 +153,11 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `backup validate` | 校验备份包 | 校验备份包 | 是 | 否 |
 | `backup import` | 导入账套备份包为新账套 | 导入账套备份包为新账套 | 是 | 否 |
 | `backup delete` | 删除备份包记录或实体 | 删除备份包记录或实体 | 是 | 否 |
-| `backup restore` | 恢复整库备份 | 恢复整库备份 | 是 | 是 |
+| `backup restore` | 恢复整库备份 | 恢复整库备份 | 是 | 否 |
+
+说明：
+
+- `backup restore` 现为正式纯 CLI 恢复链路；成功时会返回结构化字段 `restartRequired: true`。
 
 ## archive
 
@@ -208,6 +212,10 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `settings custom-template-clear-entries` | 清空独立自定义模板条目 | 清空独立自定义模板条目 | 是 | 否 |
 | `settings custom-template-delete` | 删除独立自定义模板 | 删除独立自定义模板 | 是 | 否 |
 
+纯 CLI 替代：
+
+- `settings diagnostics-open-dir` -> `settings diagnostics-status`
+
 ## print
 
 | 英文命令 | 中文命令 | 功能说明 | 需登录 | 桌面辅助 |
@@ -216,7 +224,13 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `print status` | 查询打印任务状态 | 查询打印任务状态 | 是 | 否 |
 | `print model` | 读取打印预览模型 | 读取打印预览模型 | 是 | 否 |
 | `print update-settings` | 更新打印预览设置 | 更新打印预览设置 | 是 | 否 |
+| `print export-html` | 导出预览HTML | 导出完整打印预览 HTML | 是 | 否 |
 | `print open-preview` | 打开打印预览窗口 | 打开打印预览窗口 | 是 | 是 |
 | `print print` | 执行系统打印 | 执行系统打印 | 是 | 是 |
 | `print export-pdf` | 导出打印版 PDF | 导出打印版 PDF | 是 | 否 |
 | `print dispose` | 释放打印任务 | 释放打印任务 | 是 | 否 |
+
+纯 CLI 替代：
+
+- `print open-preview` -> `print export-html`
+- `print print` -> `print export-pdf`

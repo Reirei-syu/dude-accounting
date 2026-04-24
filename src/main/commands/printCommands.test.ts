@@ -7,6 +7,7 @@ const printCommandMocks = vi.hoisted(() => ({
   updatePrintPreviewSettingsForActor: vi.fn(),
   openPrintPreviewForActor: vi.fn(),
   printPreparedJobForActor: vi.fn(),
+  exportPreparedJobHtmlForActor: vi.fn(),
   exportPreparedJobPdfForActor: vi.fn(),
   preparePrintJobForActor: vi.fn(),
   disposePrintJobForActor: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock('../ipc/print', async () => {
     updatePrintPreviewSettingsForActor: printCommandMocks.updatePrintPreviewSettingsForActor,
     openPrintPreviewForActor: printCommandMocks.openPrintPreviewForActor,
     printPreparedJobForActor: printCommandMocks.printPreparedJobForActor,
+    exportPreparedJobHtmlForActor: printCommandMocks.exportPreparedJobHtmlForActor,
     exportPreparedJobPdfForActor: printCommandMocks.exportPreparedJobPdfForActor,
     preparePrintJobForActor: printCommandMocks.preparePrintJobForActor,
     disposePrintJobForActor: printCommandMocks.disposePrintJobForActor
@@ -37,6 +39,7 @@ vi.mock('./authz', async () => {
 })
 
 import {
+  exportPreparedJobHtmlCommand,
   exportPreparedJobPdfCommand,
   getPrintJobStatusCommand,
   getPrintPreviewModelCommand,
@@ -78,6 +81,9 @@ describe('printCommands', () => {
       layoutVersion: 1
     })
     printCommandMocks.printPreparedJobForActor.mockResolvedValue({ success: true })
+    printCommandMocks.exportPreparedJobHtmlForActor.mockResolvedValue({
+      filePath: 'D:/tmp/output.html'
+    })
     printCommandMocks.exportPreparedJobPdfForActor.mockResolvedValue({
       filePath: 'D:/tmp/output.pdf'
     })
@@ -151,6 +157,53 @@ describe('printCommands', () => {
       details: { jobId: 'missing-job' }
     })
     expect(printCommandMocks.exportPreparedJobPdfForActor).not.toHaveBeenCalled()
+  })
+
+  it('exports static preview html for a ready print job', async () => {
+    const result = await exportPreparedJobHtmlCommand(context as never, {
+      jobId: 'job-html',
+      outputPath: 'D:/tmp/output.html'
+    })
+
+    expect(result.status).toBe('success')
+    expect(result.data).toEqual({
+      filePath: 'D:/tmp/output.html'
+    })
+    expect(printCommandMocks.exportPreparedJobHtmlForActor).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ username: 'admin' }),
+      {
+        jobId: 'job-html',
+        outputPath: 'D:/tmp/output.html'
+      },
+      'D:/tmp/output.html'
+    )
+  })
+
+  it('returns CONFLICT when exporting html before the print job is ready', async () => {
+    printCommandMocks.getPrintJobStatusForActor.mockReturnValue({
+      status: 'preparing',
+      title: '打印任务',
+      error: null,
+      pageCount: 0,
+      layoutVersion: 0,
+      layoutError: null
+    })
+
+    const result = await exportPreparedJobHtmlCommand(context as never, {
+      jobId: 'job-pending'
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'CONFLICT',
+      message: '打印任务尚未完成',
+      details: {
+        jobId: 'job-pending',
+        status: 'preparing'
+      }
+    })
+    expect(printCommandMocks.exportPreparedJobHtmlForActor).not.toHaveBeenCalled()
   })
 
   it('returns FORBIDDEN when lower print job lookup rejects access', async () => {

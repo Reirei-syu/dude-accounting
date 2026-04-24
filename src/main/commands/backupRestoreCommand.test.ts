@@ -198,6 +198,10 @@ describe('restoreBackupCommand', () => {
     })
 
     expect(result.status).toBe('success')
+    expect(result.data).toMatchObject({
+      restartRequired: true,
+      backupPath: path.join(packageDir, 'data.db')
+    })
     expect(backupMocks.rememberPathPreference).toHaveBeenCalledWith(
       expect.anything(),
       'backup_restore_last_dir',

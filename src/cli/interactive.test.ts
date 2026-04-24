@@ -223,6 +223,12 @@ describe('interactive cli helpers', () => {
             }),
             expect.objectContaining({
               command: 'print open-preview'
+            ,
+              headlessAlternatives: ['print export-html']
+            }),
+            expect.objectContaining({
+              command: 'backup restore',
+              desktopAssisted: false
             })
           ])
         }

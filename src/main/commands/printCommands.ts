@@ -1,5 +1,6 @@
 import {
   disposePrintJobForActor,
+  exportPreparedJobHtmlForActor,
   exportPreparedJobPdfForActor,
   getPrintJobStatusForActor,
   getPrintPreviewModelForActor,
@@ -163,6 +164,29 @@ export async function exportPreparedJobPdfCommand(
 
     const outputPath = typeof payload === 'string' ? undefined : payload.outputPath
     const result = await exportPreparedJobPdfForActor(
+      context.db,
+      context.actor,
+      payload,
+      outputPath
+    )
+    if (!result) {
+      throw new CommandError('NOT_FOUND', '打印任务不存在', { jobId }, 5)
+    }
+    return result
+  })
+}
+
+export async function exportPreparedJobHtmlCommand(
+  context: CommandContext,
+  payload: PrintCommandPayload
+): Promise<CommandResult<{ filePath: string }>> {
+  return withCommandResult(context, async () => {
+    const jobId = getPrintJobId(payload)
+    const status = requirePrintJobStatus(context, jobId)
+    requirePrintJobReady(jobId, status)
+
+    const outputPath = typeof payload === 'string' ? undefined : payload.outputPath
+    const result = await exportPreparedJobHtmlForActor(
       context.db,
       context.actor,
       payload,

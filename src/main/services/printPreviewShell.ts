@@ -15,10 +15,16 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
+export interface PrintPreviewShellOptions {
+  staticExport?: boolean
+}
+
 export function buildPagedPrintPreviewHtml(
   jobId: string,
-  initialModel: PrintPreviewModel
+  initialModel: PrintPreviewModel,
+  options: PrintPreviewShellOptions = {}
 ): string {
+  const staticExport = options.staticExport === true
   const defaultSettings = normalizePrintPreviewSettings(
     initialModel.settings,
     initialModel.settings.orientation
@@ -26,15 +32,21 @@ export function buildPagedPrintPreviewHtml(
   const scaleOptions = Array.from({ length: 15 }, (_, index) => 100 - index * 5).filter(
     (value) => value >= 30
   )
-  const orientationDisabledAttr = initialModel.controlLocks?.orientation ? ' disabled' : ''
-  const scaleDisabledAttr = initialModel.controlLocks?.scalePercent ? ' disabled' : ''
+  const orientationDisabledAttr =
+    staticExport || initialModel.controlLocks?.orientation ? ' disabled' : ''
+  const scaleDisabledAttr = staticExport || initialModel.controlLocks?.scalePercent ? ' disabled' : ''
+  const settingsDisabledAttr = staticExport ? ' disabled' : ''
+  const actionDisabledAttr = staticExport ? ' disabled aria-disabled="true"' : ''
   const scaleOptionsHtml = scaleOptions
     .map(
       (value) =>
         `<option value="${value}"${defaultSettings.scalePercent === value ? ' selected' : ''}>${value}%</option>`
     )
-    .join('')
+      .join('')
   const serializedModel = JSON.stringify(initialModel).replace(/</g, '\\u003c')
+  const staticExportNote = staticExport
+    ? '<span class="preview-static-note">离线 HTML 快照仅保留当前版式；如需 PDF，请改用 CLI `print export-pdf`。</span>'
+    : ''
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -116,6 +128,10 @@ export function buildPagedPrintPreviewHtml(
       .preview-status {
         font-size: 12px;
         color: #475569;
+      }
+      .preview-static-note {
+        font-size: 12px;
+        color: #92400e;
       }
       .preview-canvas {
         padding: 18px;
@@ -378,7 +394,7 @@ export function buildPagedPrintPreviewHtml(
       </label>
       <label class="preview-control preview-control--margin" for="preview-margin-select">
         页边距
-        <select id="preview-margin-select" onchange="handleSettingChange({ marginPreset: this.value })">
+        <select id="preview-margin-select"${settingsDisabledAttr} onchange="handleSettingChange({ marginPreset: this.value })">
           <option value="default"${defaultSettings.marginPreset === 'default' ? ' selected' : ''}>标准</option>
           <option value="narrow"${defaultSettings.marginPreset === 'narrow' ? ' selected' : ''}>窄</option>
           <option value="extra-narrow"${defaultSettings.marginPreset === 'extra-narrow' ? ' selected' : ''}>极窄</option>
@@ -386,16 +402,17 @@ export function buildPagedPrintPreviewHtml(
       </label>
       <label class="preview-control preview-control--density" for="preview-density-select">
         内容密度
-        <select id="preview-density-select" onchange="handleSettingChange({ densityPreset: this.value })">
+        <select id="preview-density-select"${settingsDisabledAttr} onchange="handleSettingChange({ densityPreset: this.value })">
           <option value="default"${defaultSettings.densityPreset === 'default' ? ' selected' : ''}>标准</option>
           <option value="compact"${defaultSettings.densityPreset === 'compact' ? ' selected' : ''}>紧凑</option>
           <option value="ultra-compact"${defaultSettings.densityPreset === 'ultra-compact' ? ' selected' : ''}>超紧凑</option>
         </select>
       </label>
-      <button type="button" id="preview-reset-button" onclick="resetPreviewSettings()">恢复默认</button>
-      <button type="button" onclick="triggerPrint('${jobId}')">打印</button>
-      <button type="button" onclick="triggerExportPdf('${jobId}')">导出 PDF</button>
+      <button type="button" id="preview-reset-button"${actionDisabledAttr} onclick="resetPreviewSettings()">恢复默认</button>
+      <button type="button"${actionDisabledAttr} onclick="triggerPrint('${jobId}')">打印</button>
+      <button type="button"${actionDisabledAttr} onclick="triggerExportPdf('${jobId}')">导出 PDF</button>
       <button type="button" onclick="window.close()">关闭</button>
+      ${staticExportNote}
     </div>
     <main class="preview-canvas">
       <div id="preview-page-list" class="preview-page-list"></div>
@@ -412,6 +429,7 @@ export function buildPagedPrintPreviewHtml(
       const initialPreviewModel = ${serializedModel};
       const defaultPreviewSettings = ${JSON.stringify(defaultSettings)};
       const lockedPreviewControls = ${JSON.stringify(initialModel.controlLocks ?? {})};
+      const staticExportMode = ${staticExport ? 'true' : 'false'};
       const marginPresetMap = {
         default: { paddingY: '16mm', paddingX: '14mm' },
         narrow: { paddingY: '10mm', paddingX: '8mm' },
@@ -549,6 +567,16 @@ export function buildPagedPrintPreviewHtml(
       }
 
       async function refreshPreviewModel(nextSettings) {
+        if (staticExportMode) {
+          activePreviewSettings = { ...nextSettings };
+          applyPreviewVariables(activePreviewSettings);
+          syncControls(activePreviewSettings);
+          if (statusNode instanceof HTMLElement) {
+            statusNode.textContent = '离线 HTML 快照不支持重新分页；请重新运行 CLI 打印命令生成新文件。';
+          }
+          void settleLayout();
+          return;
+        }
         if (isUpdating) return;
         isUpdating = true;
         if (statusNode instanceof HTMLElement) {
@@ -609,9 +637,28 @@ export function buildPagedPrintPreviewHtml(
       }
 
       window.triggerPrint = (targetJobId) =>
-        run(() => window.api.print.print(targetJobId), '已提交系统打印。', '打印失败。');
+        staticExportMode
+          ? run(
+              async () => {
+                await settleLayout();
+                window.print();
+                return { success: true };
+              },
+              '已触发浏览器打印。',
+              '打印失败。'
+            )
+          : run(() => window.api.print.print(targetJobId), '已提交系统打印。', '打印失败。');
       window.triggerExportPdf = (targetJobId) =>
-        run(() => window.api.print.exportPdf(targetJobId), '打印版 PDF 已导出。', '导出 PDF 失败。');
+        staticExportMode
+          ? run(
+              async () => ({
+                success: false,
+                error: '离线 HTML 不支持直接导出 PDF，请使用浏览器打印为 PDF 或 CLI print export-pdf。'
+              }),
+              '打印版 PDF 已导出。',
+              '导出 PDF 失败。'
+            )
+          : run(() => window.api.print.exportPdf(targetJobId), '打印版 PDF 已导出。', '导出 PDF 失败。');
 
       window.addEventListener('load', () => {
         renderPreviewModel(initialPreviewModel);

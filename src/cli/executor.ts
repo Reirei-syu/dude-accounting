@@ -125,6 +125,7 @@ import {
 } from '../main/commands/voucherCommands'
 import {
   disposePrintJobCommand,
+  exportPreparedJobHtmlCommand,
   exportPreparedJobPdfCommand,
   getPrintJobStatusCommand,
   getPrintPreviewModelCommand,
@@ -454,6 +455,11 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       openPrintPreviewCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     print: async (runtime, payload, outputMode, token) =>
       printPreparedJobCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'export-html': async (runtime, payload, outputMode, token) =>
+      exportPreparedJobHtmlCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     'export-pdf': async (runtime, payload, outputMode, token) =>
       exportPreparedJobPdfCommand(
         createAuthedContext(runtime, outputMode, token),

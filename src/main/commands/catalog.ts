@@ -8,6 +8,7 @@ export interface CommandMetadata {
   aliases: string[]
   batchSafe: boolean
   desktopAssisted: boolean
+  headlessAlternatives?: string[]
   requiresSession: boolean
   sessionEffect: CommandSessionEffect
   uiMethods: string[]
@@ -23,6 +24,7 @@ export interface CommandHelpEntry {
   description: string
   requiresSession: boolean
   desktopAssisted: boolean
+  headlessAlternatives: string[]
 }
 
 const commandMetadata: CommandMetadata[] = [
@@ -864,7 +866,7 @@ const commandMetadata: CommandMetadata[] = [
     description: '恢复整库备份',
     aliases: [],
     batchSafe: true,
-    desktopAssisted: true,
+    desktopAssisted: false,
     requiresSession: true,
     sessionEffect: 'none',
     uiMethods: [],
@@ -1125,6 +1127,7 @@ const commandMetadata: CommandMetadata[] = [
     aliases: [],
     batchSafe: true,
     desktopAssisted: true,
+    headlessAlternatives: ['settings diagnostics-status'],
     requiresSession: true,
     sessionEffect: 'none',
     uiMethods: ['window.api.settings.openErrorLogDirectory'],
@@ -1424,6 +1427,7 @@ const commandMetadata: CommandMetadata[] = [
     aliases: [],
     batchSafe: true,
     desktopAssisted: true,
+    headlessAlternatives: ['print export-html'],
     requiresSession: true,
     sessionEffect: 'none',
     uiMethods: ['window.api.print.openPreview'],
@@ -1437,9 +1441,23 @@ const commandMetadata: CommandMetadata[] = [
     aliases: [],
     batchSafe: true,
     desktopAssisted: true,
+    headlessAlternatives: ['print export-pdf'],
     requiresSession: true,
     sessionEffect: 'none',
     uiMethods: ['window.api.print.print'],
+    uiAssistedMethods: [],
+    promptHints: []
+  },
+  {
+    domain: 'print',
+    action: 'export-html',
+    description: '导出完整打印预览 HTML',
+    aliases: ['导出预览HTML'],
+    batchSafe: true,
+    desktopAssisted: false,
+    requiresSession: true,
+    sessionEffect: 'none',
+    uiMethods: [],
     uiAssistedMethods: [],
     promptHints: []
   },
@@ -1475,6 +1493,7 @@ function cloneCommandMetadata(item: CommandMetadata): CommandMetadata {
   return {
     ...item,
     aliases: [...item.aliases],
+    headlessAlternatives: item.headlessAlternatives ? [...item.headlessAlternatives] : undefined,
     uiMethods: [...item.uiMethods],
     uiAssistedMethods: [...item.uiAssistedMethods],
     promptHints: [...item.promptHints]
@@ -1541,6 +1560,7 @@ export function searchCommandMetadata(keyword: string): CommandMetadata[] {
       item.action,
       item.description,
       ...item.aliases,
+      ...(item.headlessAlternatives ?? []),
       ...item.uiMethods,
       ...item.uiAssistedMethods
     ]
@@ -1558,6 +1578,7 @@ export function listCommandHelpEntries(): CommandHelpEntry[] {
     aliasZh: item.aliases[0],
     description: item.description,
     requiresSession: item.requiresSession,
-    desktopAssisted: item.desktopAssisted
+    desktopAssisted: item.desktopAssisted,
+    headlessAlternatives: item.headlessAlternatives ? [...item.headlessAlternatives] : []
   }))
 }

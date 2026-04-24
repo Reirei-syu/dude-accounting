@@ -7,7 +7,9 @@ import { listShellBuiltInCommands } from './interactive'
 describe('cli command wiki', () => {
   it('documents all builtin and business commands', () => {
     const wikiPath = path.join(process.cwd(), 'docs', 'wiki', 'CLI_命令大全.md')
+    const manualPath = path.join(process.cwd(), 'docs', 'wiki', 'AGENT_SOFTWARE_MANUAL.md')
     const wikiContent = fs.readFileSync(wikiPath, 'utf8')
+    const manualContent = fs.readFileSync(manualPath, 'utf8')
 
     for (const builtin of listShellBuiltInCommands()) {
       expect(wikiContent).toContain(`\`${builtin.name}\``)
@@ -21,5 +23,18 @@ describe('cli command wiki', () => {
       expect(wikiContent).toContain(entry.aliasZh)
       expect(wikiContent).toContain(entry.description)
     }
+
+    const desktopEntries = listCommandHelpEntries().filter((entry) => entry.desktopAssisted)
+    for (const entry of desktopEntries) {
+      for (const alternative of entry.headlessAlternatives) {
+        expect(wikiContent).toContain(alternative)
+        expect(manualContent).toContain(alternative)
+      }
+    }
+
+    expect(wikiContent).toContain('| `backup restore` | 恢复整库备份 | 恢复整库备份 | 是 | 否 |')
+    expect(manualContent).toContain('`print open-preview` -> `print export-html`')
+    expect(manualContent).toContain('`print print` -> `print export-pdf`')
+    expect(manualContent).toContain('`settings diagnostics-open-dir` -> `settings diagnostics-status`')
   })
 })

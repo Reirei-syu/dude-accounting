@@ -37,4 +37,16 @@ describe('command catalog metadata', () => {
       expect(entry.description.trim().length).toBeGreaterThan(0)
     }
   })
+
+  it('requires pure CLI alternatives for every desktop-assisted command', () => {
+    const helpEntries = listCommandHelpEntries().filter((entry) => entry.desktopAssisted)
+
+    expect(helpEntries.length).toBeGreaterThan(0)
+    for (const entry of helpEntries) {
+      expect(entry.headlessAlternatives.length).toBeGreaterThan(0)
+      for (const alternative of entry.headlessAlternatives) {
+        expect(alternative.trim().length).toBeGreaterThan(0)
+      }
+    }
+  })
 })

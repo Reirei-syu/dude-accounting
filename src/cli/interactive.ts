@@ -329,7 +329,11 @@ function formatInteractiveCommandEntry(entry: CommandHelpEntry): string {
     entry.requiresSession ? '需登录' : '免登录',
     entry.desktopAssisted ? '桌面辅助' : '批处理安全'
   ]
-  return `  ${entry.aliasZh}  ->  ${entry.command}  - ${entry.description}（${markers.join(' / ')}）`
+  const alternativeText =
+    entry.desktopAssisted && entry.headlessAlternatives.length > 0
+      ? ` / 纯 CLI 替代: ${entry.headlessAlternatives.join(' 或 ')}`
+      : ''
+  return `  ${entry.aliasZh}  ->  ${entry.command}  - ${entry.description}（${markers.join(' / ')}${alternativeText}）`
 }
 
 function buildInteractiveHelpText(showAll = false): string {

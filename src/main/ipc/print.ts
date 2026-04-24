@@ -119,6 +119,7 @@ interface PrintJobRecord {
 
 const printJobs = new Map<string, PrintJobRecord>()
 const PRINT_JOB_TTL_MS = 1000 * 60 * 60 * 12
+const PRINT_EXPORT_HTML_LAST_DIR_KEY = 'print_export_html_last_dir'
 const PRINT_EXPORT_PDF_LAST_DIR_KEY = 'print_export_pdf_last_dir'
 
 function buildPrintFailureResponse(
@@ -456,9 +457,12 @@ function getDefaultPrintExportDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '打印导出')
 }
 
-function getPreferredPrintExportDir(db: ReturnType<typeof getDatabase>): string {
+function getPreferredPrintExportDir(
+  db: ReturnType<typeof getDatabase>,
+  preferenceKeys = [PRINT_EXPORT_PDF_LAST_DIR_KEY]
+): string {
   return (
-    getPathPreferenceWithFallback(db, [PRINT_EXPORT_PDF_LAST_DIR_KEY]) ??
+    getPathPreferenceWithFallback(db, preferenceKeys) ??
     getDefaultPrintExportDir()
   )
 }
@@ -1481,6 +1485,39 @@ export async function exportPreparedJobPdfForActor(
   return { filePath }
 }
 
+export async function exportPreparedJobHtmlForActor(
+  db: ReturnType<typeof getDatabase>,
+  actor: CommandActor | null,
+  payload: PrintCommandPayload,
+  defaultOutputPath?: string
+): Promise<{ filePath: string } | null> {
+  const command = resolvePrintCommandPayload(payload)
+  const job = getAccessiblePrintJobForActor(db, actor, command.jobId)
+  if (!job) {
+    return null
+  }
+
+  const previewModel = buildPreviewModel(job)
+  if (!previewModel) {
+    throw new Error(job.error ?? '打印任务尚未完成')
+  }
+
+  const outputPath =
+    command.outputPath ??
+    defaultOutputPath ??
+    path.join(
+      getPreferredPrintExportDir(db, [
+        PRINT_EXPORT_HTML_LAST_DIR_KEY,
+        PRINT_EXPORT_PDF_LAST_DIR_KEY
+      ]),
+      `${sanitizeFileName(job.title)}.html`
+    )
+
+  const filePath = await exportPrintJobHtmlToPath(command.jobId, outputPath, previewModel)
+  rememberPathPreference(db, PRINT_EXPORT_HTML_LAST_DIR_KEY, filePath)
+  return { filePath }
+}
+
 export function disposePrintJobForActor(
   db: ReturnType<typeof getDatabase>,
   actor: CommandActor | null,
@@ -1565,6 +1602,31 @@ async function exportPrintJobPdfToPath(jobId: string, outputPath: string): Promi
       acquired.window.close()
     }
   }
+}
+
+async function exportPrintJobHtmlToPath(
+  jobId: string,
+  outputPath: string,
+  previewModel?: PrintPreviewModel
+): Promise<string> {
+  const resolvedPreviewModel = previewModel ?? (() => {
+    const job = loadPrintJob(jobId)
+    if (!job) {
+      throw new Error('打印任务不存在')
+    }
+    const nextPreviewModel = buildPreviewModel(job)
+    if (!nextPreviewModel) {
+      throw new Error(job.error ?? '打印任务尚未完成')
+    }
+    return nextPreviewModel
+  })()
+
+  const html = buildPagedPrintPreviewHtml(jobId, resolvedPreviewModel, {
+    staticExport: true
+  })
+  await fsPromises.mkdir(path.dirname(outputPath), { recursive: true })
+  await fsPromises.writeFile(outputPath, html, 'utf8')
+  return outputPath
 }
 
 async function printJobToSystem(

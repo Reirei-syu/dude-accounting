@@ -52,6 +52,7 @@ function buildHelpResult(showAll = false): CommandResult<{
     description: string
     requiresSession: boolean
     desktopAssisted: boolean
+    headlessAlternatives: string[]
   }>
   domains?: string[]
 }> {

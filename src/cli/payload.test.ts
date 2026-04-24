@@ -32,4 +32,46 @@ describe('resolveCliPayload', () => {
       password: ''
     })
   })
+
+  it('keeps numeric-looking CLI flag values as strings by default', () => {
+    expect(
+      resolveCliPayload({
+        flags: {
+          ledgerId: '12',
+          keyword: '1002',
+          enabled: 'true',
+          disabled: 'false'
+        }
+      })
+    ).toEqual({
+      ledgerId: '12',
+      keyword: '1002',
+      enabled: true,
+      disabled: false
+    })
+  })
+
+  it('only normalizes booleans inside nested flag-shaped payload values', () => {
+    expect(
+      resolveCliPayload({
+        flags: {
+          entries: [
+            {
+              subjectCode: '1002',
+              debitAmount: '3000',
+              isCashFlow: 'false'
+            }
+          ] as unknown as string
+        }
+      })
+    ).toEqual({
+      entries: [
+        {
+          subjectCode: '1002',
+          debitAmount: '3000',
+          isCashFlow: false
+        }
+      ]
+    })
+  })
 })

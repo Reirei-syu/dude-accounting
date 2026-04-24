@@ -219,7 +219,7 @@ CLI 登录态会持久化到：
 | `archive` | `export` / `validate` / `manifest` | 电子会计档案 |
 | `evoucher` | `import` / `verify` / `parse` / `convert` | 电子凭证链路 |
 | `settings` | `system-get` / `preferences-set` / `wallpaper-*` | 系统参数与用户偏好 |
-| `print` | `prepare` / `model` / `export-pdf` / `print` | 打印与 PDF 输出 |
+| `print` | `prepare` / `model` / `export-html` / `export-pdf` / `print` | 打印与 PDF 输出 |
 
 ## 11. AGENT 需要特别注意的高风险动作
 
@@ -246,17 +246,21 @@ CLI 登录态会持久化到：
 
 并非所有 CLI 命令都适合无界面环境。
 
-以下类型的命令通常需要本机桌面环境协助：
+以下命令当前仍依赖本机桌面环境：
 
-- 打开目录
-- 打开打印预览
-- 调用系统打印
-- 触发整库恢复后的应用生命周期切换
+- `settings diagnostics-open-dir`
+- `print open-preview`
+- `print print`
 
-如果 AGENT 运行环境没有桌面会话，优先使用纯数据型命令替代，例如：
+对应的纯 CLI 替代关系固定为：
 
-- 用 `print export-pdf` 替代 `print open-preview`
-- 用查询命令确认状态，而不是依赖 GUI 打开目录
+- `settings diagnostics-open-dir` -> `settings diagnostics-status`
+- `print open-preview` -> `print export-html`
+- `print print` -> `print export-pdf`
+
+补充说明：
+
+- `backup restore` 已改为正式纯 CLI 恢复链路，但成功后仍会返回 `restartRequired: true`，调用方需要按返回值处理应用重启。
 
 ## 13. 对 AGENT 的推荐调用策略
 

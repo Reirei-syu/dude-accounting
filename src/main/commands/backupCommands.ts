@@ -492,15 +492,5 @@ export async function restoreBackupCommand(
       }
       throw error
     }
-
-    throw new CommandError(
-      'NOT_IMPLEMENTED',
-      'CLI 恢复整库备份需要在嵌入 Electron 模式下执行重启流程，当前先保留为安装版能力。',
-      {
-        backupPath,
-        manifestPath
-      },
-      2
-    )
   })
 }

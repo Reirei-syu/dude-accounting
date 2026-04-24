@@ -3,6 +3,13 @@ import { listUserLedgerIds, replaceUserLedgerIds } from '../services/userLedgerA
 import { setLastLoginUserId } from '../services/wallpaperPreference'
 import { requireCommandAdmin } from './authz'
 import { appendActorOperationLog } from './operationLog'
+import {
+  asCommandPayloadRecord,
+  normalizeOptionalStringField,
+  normalizePositiveInteger,
+  normalizePositiveIntegerArray,
+  normalizeStringField
+} from './payloadNormalizers'
 import { withCommandResult } from './result'
 import type { CommandActor, CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
@@ -66,28 +73,95 @@ function mapUserOutput(context: CommandContext, user: CommandUserRow) {
   }
 }
 
+function normalizePassword(value: unknown, fieldName = 'password'): string {
+  if (typeof value !== 'string') {
+    throw new CommandError('VALIDATION_ERROR', `${fieldName} 必须为字符串`, { field: fieldName }, 2)
+  }
+  return value
+}
+
+function normalizePermissionsPayload(value: unknown): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new CommandError('VALIDATION_ERROR', 'permissions 必须为对象', { field: 'permissions' }, 2)
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, Boolean(item)])
+  )
+}
+
+function normalizeOptionalPermissionsPayload(
+  value: unknown
+): Record<string, boolean> | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  return normalizePermissionsPayload(value)
+}
+
+function normalizeLoginPayload(payload: { username: string; password: string } | unknown) {
+  const rawPayload = asCommandPayloadRecord(payload, '登录 payload 格式不正确')
+  return {
+    username: normalizeStringField(rawPayload.username, 'username', '账号不能为空'),
+    password: normalizePassword(rawPayload.password)
+  }
+}
+
+function normalizeCreateUserPayload(payload: unknown) {
+  const rawPayload = asCommandPayloadRecord(payload, '创建用户 payload 格式不正确')
+  return {
+    username: normalizeStringField(rawPayload.username, 'username', '用户名不能为空'),
+    realName: normalizeStringField(rawPayload.realName, 'realName', '姓名不能为空'),
+    password: normalizePassword(rawPayload.password),
+    permissions: normalizePermissionsPayload(rawPayload.permissions ?? {}),
+    ledgerIds:
+      rawPayload.ledgerIds === undefined
+        ? undefined
+        : normalizePositiveIntegerArray(rawPayload.ledgerIds, 'ledgerIds')
+  }
+}
+
+function normalizeUpdateUserPayload(payload: unknown) {
+  const rawPayload = asCommandPayloadRecord(payload, '更新用户 payload 格式不正确')
+  return {
+    id: normalizePositiveInteger(rawPayload.id ?? rawPayload.userId, 'id', '缺少用户 id'),
+    realName: normalizeOptionalStringField(rawPayload.realName, 'realName', 'realName 必须为字符串'),
+    password:
+      rawPayload.password === undefined ? undefined : normalizePassword(rawPayload.password),
+    permissions: normalizeOptionalPermissionsPayload(rawPayload.permissions),
+    ledgerIds:
+      rawPayload.ledgerIds === undefined
+        ? undefined
+        : normalizePositiveIntegerArray(rawPayload.ledgerIds, 'ledgerIds')
+  }
+}
+
+function normalizeDeleteUserPayload(payload: unknown) {
+  const rawPayload = asCommandPayloadRecord(payload, '删除用户 payload 格式不正确')
+  return {
+    userId: normalizePositiveInteger(rawPayload.userId ?? rawPayload.id, 'userId', '缺少用户 userId')
+  }
+}
+
 export async function loginCommand(
   context: CommandContext,
   payload: { username: string; password: string }
 ): Promise<CommandResult<{ actor: CommandActor; user: ReturnType<typeof mapUserOutput> }>> {
   return withCommandResult(context, () => {
-    const username = payload.username.trim()
-    if (!username) {
-      throw new CommandError('VALIDATION_ERROR', '账号不能为空', null, 2)
-    }
+    const normalizedPayload = normalizeLoginPayload(payload)
+    const username = normalizedPayload.username
 
     const user = requireUserByUsername(context, username)
     const storedHash = context.db
       .prepare('SELECT password_hash FROM users WHERE id = ?')
       .get(user.id) as { password_hash: string }
-    const verify = verifyPassword(payload.password, storedHash.password_hash)
+    const verify = verifyPassword(normalizedPayload.password, storedHash.password_hash)
     if (!verify.valid) {
       throw new CommandError('AUTH_FAILED', '密码错误', null, 3)
     }
 
     if (verify.needsUpgrade) {
       context.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
-        hashPassword(payload.password),
+        hashPassword(normalizedPayload.password),
         user.id
       )
     }
@@ -180,8 +254,9 @@ export async function createUserCommand(
 ): Promise<CommandResult<{ userId: number }>> {
   return withCommandResult(context, () => {
     requireCommandAdmin(context.actor)
-    const username = payload.username.trim()
-    const realName = payload.realName.trim()
+    const normalizedPayload = normalizeCreateUserPayload(payload)
+    const username = normalizedPayload.username
+    const realName = normalizedPayload.realName
     if (!username) {
       throw new CommandError('VALIDATION_ERROR', '用户名不能为空', null, 2)
     }
@@ -195,10 +270,15 @@ export async function createUserCommand(
           `INSERT INTO users (username, real_name, password_hash, permissions, is_admin)
            VALUES (?, ?, ?, ?, 0)`
         )
-        .run(username, realName, hashPassword(payload.password), JSON.stringify(payload.permissions))
+        .run(
+          username,
+          realName,
+          hashPassword(normalizedPayload.password),
+          JSON.stringify(normalizedPayload.permissions)
+        )
 
       const userId = Number(result.lastInsertRowid)
-      const ledgerIds = replaceUserLedgerIds(context.db, userId, payload.ledgerIds || [])
+      const ledgerIds = replaceUserLedgerIds(context.db, userId, normalizedPayload.ledgerIds || [])
       return { userId, ledgerIds }
     })()
 
@@ -230,62 +310,63 @@ export async function updateUserCommand(
 ): Promise<CommandResult<{ userId: number }>> {
   return withCommandResult(context, () => {
     requireCommandAdmin(context.actor)
+    const normalizedPayload = normalizeUpdateUserPayload(payload)
 
     const target = context.db
       .prepare('SELECT id, is_admin FROM users WHERE id = ?')
-      .get(payload.id) as { id: number; is_admin: number } | undefined
+      .get(normalizedPayload.id) as { id: number; is_admin: number } | undefined
     if (!target) {
-      throw new CommandError('NOT_FOUND', '用户不存在', { id: payload.id }, 5)
+      throw new CommandError('NOT_FOUND', '用户不存在', { id: normalizedPayload.id }, 5)
     }
 
-    if (target.is_admin === 1 && payload.permissions !== undefined) {
+    if (target.is_admin === 1 && normalizedPayload.permissions !== undefined) {
       throw new CommandError('VALIDATION_ERROR', '管理员账号权限不可修改', null, 2)
     }
-    if (target.is_admin === 1 && payload.ledgerIds !== undefined) {
+    if (target.is_admin === 1 && normalizedPayload.ledgerIds !== undefined) {
       throw new CommandError('VALIDATION_ERROR', '管理员账号账套权限不可修改', null, 2)
     }
 
     const ledgerIds = context.db.transaction(() => {
-      if (payload.realName !== undefined) {
+      if (normalizedPayload.realName !== undefined) {
         context.db.prepare('UPDATE users SET real_name = ? WHERE id = ?').run(
-          payload.realName,
-          payload.id
+          normalizedPayload.realName,
+          normalizedPayload.id
         )
       }
-      if (payload.password !== undefined) {
+      if (normalizedPayload.password !== undefined) {
         context.db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
-          hashPassword(payload.password),
-          payload.id
+          hashPassword(normalizedPayload.password),
+          normalizedPayload.id
         )
       }
-      if (payload.permissions !== undefined) {
+      if (normalizedPayload.permissions !== undefined) {
         context.db.prepare('UPDATE users SET permissions = ? WHERE id = ?').run(
-          JSON.stringify(payload.permissions),
-          payload.id
+          JSON.stringify(normalizedPayload.permissions),
+          normalizedPayload.id
         )
       }
-      return payload.ledgerIds !== undefined
-        ? replaceUserLedgerIds(context.db, payload.id, payload.ledgerIds)
+      return normalizedPayload.ledgerIds !== undefined
+        ? replaceUserLedgerIds(context.db, normalizedPayload.id, normalizedPayload.ledgerIds)
         : undefined
     })()
 
     appendActorOperationLog(context, {
       module: 'auth',
       action:
-        payload.permissions !== undefined || payload.ledgerIds !== undefined
+        normalizedPayload.permissions !== undefined || normalizedPayload.ledgerIds !== undefined
           ? 'update_permissions'
           : 'update_user',
       targetType: 'user',
-      targetId: payload.id,
+      targetId: normalizedPayload.id,
       details: {
-        realName: payload.realName,
-        passwordUpdated: payload.password !== undefined,
-        permissionKeys: payload.permissions ? Object.keys(payload.permissions) : [],
+        realName: normalizedPayload.realName,
+        passwordUpdated: normalizedPayload.password !== undefined,
+        permissionKeys: normalizedPayload.permissions ? Object.keys(normalizedPayload.permissions) : [],
         ledgerIds
       }
     })
 
-    return { userId: payload.id }
+    return { userId: normalizedPayload.id }
   })
 }
 
@@ -295,26 +376,27 @@ export async function deleteUserCommand(
 ): Promise<CommandResult<{ userId: number }>> {
   return withCommandResult(context, () => {
     requireCommandAdmin(context.actor)
+    const normalizedPayload = normalizeDeleteUserPayload(payload)
 
     const user = context.db
       .prepare('SELECT is_admin FROM users WHERE id = ?')
-      .get(payload.userId) as { is_admin: number } | undefined
+      .get(normalizedPayload.userId) as { is_admin: number } | undefined
 
     if (!user) {
-      throw new CommandError('NOT_FOUND', '用户不存在', { userId: payload.userId }, 5)
+      throw new CommandError('NOT_FOUND', '用户不存在', { userId: normalizedPayload.userId }, 5)
     }
     if (user.is_admin === 1) {
       throw new CommandError('VALIDATION_ERROR', '管理员账号不可删除', null, 2)
     }
 
-    context.db.prepare('DELETE FROM users WHERE id = ?').run(payload.userId)
+    context.db.prepare('DELETE FROM users WHERE id = ?').run(normalizedPayload.userId)
     appendActorOperationLog(context, {
       module: 'auth',
       action: 'delete_user',
       targetType: 'user',
-      targetId: payload.userId
+      targetId: normalizedPayload.userId
     })
 
-    return { userId: payload.userId }
+    return { userId: normalizedPayload.userId }
   })
 }

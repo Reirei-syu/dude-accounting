@@ -9,6 +9,8 @@ const execFileAsync = promisify(execFile)
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-login-'))
 const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
 const loginPayloadPath = path.join(tempRoot, 'dude-cli-login-payload.json')
+const ledgerCreatePayloadPath = path.join(tempRoot, 'dude-cli-ledger-create.json')
+const voucherAliasPayloadPath = path.join(tempRoot, 'dude-cli-voucher-alias.json')
 fs.mkdirSync(appDataPath, { recursive: true })
 
 function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
@@ -112,7 +114,12 @@ describe('embedded cli integration', () => {
             aliasZh: '创建用户'
           }),
           expect.objectContaining({
-            command: 'print open-preview'
+            command: 'print open-preview',
+            headlessAlternatives: ['print export-html']
+          }),
+          expect.objectContaining({
+            command: 'backup restore',
+            desktopAssisted: false
           })
         ])
       })
@@ -142,6 +149,113 @@ describe('embedded cli integration', () => {
           isAdmin: true
         }
       })
+    },
+    120_000
+  )
+
+  it(
+    'accepts agent-style voucher payload aliases through the batch cli',
+    async () => {
+      fs.writeFileSync(loginPayloadPath, JSON.stringify({ username: 'admin', password: '' }), 'utf8')
+      const loginResult = await runCli(['auth', 'login', '--payload-file', loginPayloadPath])
+      expect(loginResult.status).toBe('success')
+
+      fs.writeFileSync(
+        ledgerCreatePayloadPath,
+        JSON.stringify({
+          name: `CLI 凭证别名测试 ${Date.now()}`,
+          standardType: 'npo',
+          startPeriod: '2026-01'
+        }),
+        'utf8'
+      )
+
+      const createLedgerResult = await runCli([
+        'ledger',
+        'create',
+        '--payload-file',
+        ledgerCreatePayloadPath
+      ])
+      expect(createLedgerResult.status).toBe('success')
+      const ledgerId = (createLedgerResult.data as { id: number }).id
+
+      const subjectSearchResult = await runCli([
+        'subject',
+        'search',
+        '--ledgerId',
+        String(ledgerId),
+        '--keyword',
+        '1002'
+      ])
+      expect(subjectSearchResult.status).toBe('success')
+      expect(subjectSearchResult.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: '1002'
+          })
+        ])
+      )
+
+      fs.writeFileSync(
+        voucherAliasPayloadPath,
+        JSON.stringify({
+          ledgerId,
+          period: '2026-01',
+          date: '2026-01-03',
+          number: 1,
+          description: '收到客户付款活动款（张三）',
+          entries: [
+            {
+              subjectCode: 1002,
+              debit: 3000,
+              credit: 0,
+              cashflowItemCode: 'CF01',
+              auxiliaries: []
+            },
+            {
+              subjectCode: '2206',
+              debit: 0,
+              credit: 20,
+              auxiliaries: []
+            },
+            {
+              subjectCode: '430101',
+              debit: 0,
+              credit: 2980,
+              auxiliaries: []
+            }
+          ]
+        }),
+        'utf8'
+      )
+
+      const saveResult = await runCli([
+        'voucher',
+        'save',
+        '--payload-file',
+        voucherAliasPayloadPath
+      ])
+      expect(saveResult.status).toBe('success')
+
+      const voucherId = (saveResult.data as { voucherId: number }).voucherId
+      const entriesResult = await runCli(['voucher', 'entries', '--voucherId', String(voucherId)])
+      expect(entriesResult.status).toBe('success')
+      expect(entriesResult.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            subject_code: '1002',
+            cash_flow_code: 'CF01'
+          }),
+          expect.objectContaining({
+            subject_code: '2206',
+            credit_amount: 2000
+          }),
+          expect.objectContaining({
+            subject_code: '430101',
+            credit_amount: 298000
+          })
+        ])
+      )
     },
     120_000
   )
