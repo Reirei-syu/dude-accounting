@@ -11,6 +11,7 @@ import {
   getNextVoucherNumberCommand,
   getVoucherEntriesCommand,
   listVouchersCommand,
+  renumberVoucherNumbersCommand,
   swapVoucherPositionsCommand,
   updateVoucherCommand,
   voucherBatchActionCommand
@@ -34,6 +35,11 @@ interface UpdateVoucherInput {
 
 interface SwapVoucherPositionsInput {
   voucherIds: number[]
+}
+
+interface RenumberVoucherNumbersInput {
+  ledgerId: number
+  period: string
 }
 
 export { resolveVoucherCashFlowEntries }
@@ -146,6 +152,24 @@ export function registerVoucherHandlers(): void {
         toLegacySuccess(
           await swapVoucherPositionsCommand(createCommandContextFromEvent(event), payload),
           (data) => ({ voucherIds: data.voucherIds })
+        )
+    )
+  )
+
+  ipcMain.handle('voucher:renumber', (event, payload: RenumberVoucherNumbersInput) =>
+    withIpcTelemetry(
+      {
+        channel: 'voucher:renumber',
+        baseDir: app.getPath('userData'),
+        context: {
+          ledgerId: payload.ledgerId,
+          period: payload.period
+        }
+      },
+      async () =>
+        toLegacySuccess(
+          await renumberVoucherNumbersCommand(createCommandContextFromEvent(event), payload),
+          (data) => ({ ...data })
         )
     )
   )

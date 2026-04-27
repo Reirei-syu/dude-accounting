@@ -33,6 +33,11 @@ import {
   type VoucherSwapVoucher
 } from '../services/voucherSwapLifecycle'
 import {
+  renumberVoucherNumbers,
+  VoucherNumberRenumberValidationError,
+  type VoucherNumberRenumberResult
+} from '../services/voucherNumberLifecycle'
+import {
   requireCommandActor,
   requireCommandLedgerAccess,
   requireCommandPermission
@@ -439,6 +444,24 @@ function normalizeVoucherBatchPayload(payload: unknown): {
   }
 }
 
+function ensureWritableVoucherPeriodForCommand(
+  context: CommandContext,
+  ledgerId: number,
+  period: string
+): { period: string } {
+  try {
+    return ensureVoucherPeriod(context, ledgerId, period, 'period')
+  } catch (error) {
+    if (error instanceof CommandError) {
+      throw error
+    }
+    if (error instanceof Error) {
+      throw new CommandError('VALIDATION_ERROR', error.message, null, 2)
+    }
+    throw error
+  }
+}
+
 function ensureVoucherPeriod(
   context: CommandContext,
   ledgerId: number,
@@ -750,6 +773,56 @@ export async function swapVoucherPositionsCommand(
       }
     )
     return { voucherIds }
+  })
+}
+
+export async function renumberVoucherNumbersCommand(
+  context: CommandContext,
+  payload: { ledgerId: number; period: string }
+): Promise<CommandResult<VoucherNumberRenumberResult>> {
+  return withCommandResult(context, () => {
+    const actor = requireCommandPermission(context.actor, 'voucher_entry')
+    const normalizedPayload = normalizeVoucherPeriodPayload(payload)
+    requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
+    const { period } = ensureWritableVoucherPeriodForCommand(
+      context,
+      normalizedPayload.ledgerId,
+      normalizedPayload.period
+    )
+
+    let result: VoucherNumberRenumberResult
+    try {
+      result = renumberVoucherNumbers(context.db, normalizedPayload.ledgerId, period)
+    } catch (error) {
+      if (error instanceof VoucherNumberRenumberValidationError) {
+        throw new CommandError('VALIDATION_ERROR', error.message, error.details, 2)
+      }
+      throw error
+    }
+
+    appendActorOperationLog(
+      {
+        ...context,
+        actor
+      },
+      {
+        ledgerId: normalizedPayload.ledgerId,
+        module: 'voucher',
+        action: 'renumber_voucher_numbers',
+        targetType: 'voucher_period',
+        targetId: `${normalizedPayload.ledgerId}:${period}`,
+        details: {
+          period,
+          totalCount: result.totalCount,
+          updatedCount: result.updatedCount,
+          groups: result.groups,
+          changeCount: result.changes.length,
+          changes: result.changes.slice(0, 50)
+        }
+      }
+    )
+
+    return result
   })
 }
 

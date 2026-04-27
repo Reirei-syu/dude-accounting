@@ -835,6 +835,31 @@ interface VoucherAPI {
     error?: string
     voucherIds?: number[]
   }>
+  renumber: (payload: { ledgerId: number; period: string }) => Promise<{
+    success: boolean
+    error?: string
+    ledgerId?: number
+    period?: string
+    totalCount?: number
+    updatedCount?: number
+    groups?: Array<{
+      voucherWord: string
+      totalCount: number
+      activeCount: number
+      deletedCount: number
+      updatedCount: number
+      firstNumber: number | null
+      lastNumber: number | null
+    }>
+    changes?: Array<{
+      voucherId: number
+      voucherWord: string
+      status: number
+      deletedFromStatus: number | null
+      oldNumber: number
+      newNumber: number
+    }>
+  }>
   save: (data: {
     ledgerId: number
     voucherDate: string

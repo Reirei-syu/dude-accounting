@@ -120,6 +120,7 @@ import {
   getNextVoucherNumberCommand,
   getVoucherEntriesCommand,
   listVouchersCommand,
+  renumberVoucherNumbersCommand,
   swapVoucherPositionsCommand,
   updateVoucherCommand,
   voucherBatchActionCommand
@@ -321,6 +322,11 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       getVoucherEntriesCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     swap: async (runtime, payload, outputMode, token) =>
       swapVoucherPositionsCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
+    renumber: async (runtime, payload, outputMode, token) =>
+      renumberVoucherNumbersCommand(
         createAuthedContext(runtime, outputMode, token),
         payload as never
       ),

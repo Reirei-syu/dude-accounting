@@ -18,6 +18,7 @@ const voucherHandlerMocks = vi.hoisted(() => {
     listVouchersCommand: vi.fn(),
     getVoucherEntriesCommand: vi.fn(),
     swapVoucherPositionsCommand: vi.fn(),
+    renumberVoucherNumbersCommand: vi.fn(),
     voucherBatchActionCommand: vi.fn(),
     resolveVoucherCashFlowEntries: vi.fn()
   }
@@ -45,6 +46,7 @@ vi.mock('../commands/voucherCommands', () => ({
   listVouchersCommand: voucherHandlerMocks.listVouchersCommand,
   getVoucherEntriesCommand: voucherHandlerMocks.getVoucherEntriesCommand,
   swapVoucherPositionsCommand: voucherHandlerMocks.swapVoucherPositionsCommand,
+  renumberVoucherNumbersCommand: voucherHandlerMocks.renumberVoucherNumbersCommand,
   voucherBatchActionCommand: voucherHandlerMocks.voucherBatchActionCommand
 }))
 
@@ -105,6 +107,34 @@ describe('voucher IPC handlers', () => {
       error: '请选择凭证',
       errorCode: 'VALIDATION_ERROR',
       errorDetails: null
+    })
+  })
+
+  it('returns renumber result through the legacy success shape', async () => {
+    voucherHandlerMocks.renumberVoucherNumbersCommand.mockResolvedValue({
+      status: 'success',
+      data: {
+        ledgerId: 8,
+        period: '2026-01',
+        totalCount: 2,
+        updatedCount: 1,
+        groups: [],
+        changes: []
+      },
+      error: null
+    })
+    const handler = voucherHandlerMocks.handlers.get('voucher:renumber')
+
+    const result = await handler?.({ sender: { id: 1 } }, { ledgerId: 8, period: '2026-01' })
+
+    expect(result).toEqual({
+      success: true,
+      ledgerId: 8,
+      period: '2026-01',
+      totalCount: 2,
+      updatedCount: 1,
+      groups: [],
+      changes: []
     })
   })
 })

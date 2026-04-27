@@ -97,9 +97,12 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `voucher list` | 凭证列表 | 查询凭证列表 | 是 | 否 |
 | `voucher entries` | 查询凭证明细 | 查询凭证明细 | 是 | 否 |
 | `voucher swap` | 交换凭证位置 | 交换凭证位置 | 是 | 否 |
+| `voucher renumber` | 整理凭证号 | 整理凭证号 | 是 | 否 |
 | `voucher batch` | 批量处理凭证 | 批量处理凭证 | 是 | 否 |
 
 凭证修改建议流程：先执行 `voucher export-edit-payload --voucherId <id> --filePath <json路径>` 导出可编辑 JSON，修改文件后执行 `voucher update --payload-file <json路径>` 提交。`voucher update` 只允许更新未审核且当前期间可写的凭证。
+
+凭证号整理流程：执行 `voucher renumber --ledgerId <账套ID> --period <YYYY-MM>`，系统会按当前期间的凭证字号分组从 1 开始重排未删除且未记账凭证号；如期间内存在已记账凭证或历史已记账删除态凭证，将拒绝整理。
 
 ## initial-balance
 

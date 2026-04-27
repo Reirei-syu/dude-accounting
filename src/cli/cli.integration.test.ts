@@ -12,6 +12,8 @@ const loginPayloadPath = path.join(tempRoot, 'dude-cli-login-payload.json')
 const ledgerCreatePayloadPath = path.join(tempRoot, 'dude-cli-ledger-create.json')
 const voucherAliasPayloadPath = path.join(tempRoot, 'dude-cli-voucher-alias.json')
 const voucherEditPayloadPath = path.join(tempRoot, 'dude-cli-voucher-edit.json')
+const voucherRenumberPayloadPath = path.join(tempRoot, 'dude-cli-voucher-renumber.json')
+const voucherBatchPayloadPath = path.join(tempRoot, 'dude-cli-voucher-batch.json')
 fs.mkdirSync(appDataPath, { recursive: true })
 
 function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
@@ -125,6 +127,10 @@ describe('embedded cli integration', () => {
           expect.objectContaining({
             command: 'voucher export-edit-payload',
             aliasZh: '导出凭证编辑载荷'
+          }),
+          expect.objectContaining({
+            command: 'voucher renumber',
+            aliasZh: '整理凭证号'
           })
         ])
       })
@@ -350,6 +356,127 @@ describe('embedded cli integration', () => {
           })
         ])
       )
+    },
+    120_000
+  )
+
+  it(
+    'renumbers voucher numbers after a middle voucher is deleted',
+    async () => {
+      fs.writeFileSync(loginPayloadPath, JSON.stringify({ username: 'admin', password: '' }), 'utf8')
+      const loginResult = await runCli(['auth', 'login', '--payload-file', loginPayloadPath])
+      expect(loginResult.status).toBe('success')
+
+      fs.writeFileSync(
+        ledgerCreatePayloadPath,
+        JSON.stringify({
+          name: `CLI 凭证号整理测试 ${Date.now()}`,
+          standardType: 'npo',
+          startPeriod: '2026-01'
+        }),
+        'utf8'
+      )
+
+      const createLedgerResult = await runCli([
+        'ledger',
+        'create',
+        '--payload-file',
+        ledgerCreatePayloadPath
+      ])
+      expect(createLedgerResult.status).toBe('success')
+      const ledgerId = (createLedgerResult.data as { id: number }).id
+
+      const voucherIds: number[] = []
+      for (const day of ['03', '04', '05']) {
+        fs.writeFileSync(
+          voucherRenumberPayloadPath,
+          JSON.stringify({
+            ledgerId,
+            date: `2026-01-${day}`,
+            description: `CLI 凭证号整理测试 ${day}`,
+            entries: [
+              {
+                subjectCode: '1002',
+                debit: 100,
+                credit: 0,
+                cashflowItemCode: 'CF01'
+              },
+              {
+                subjectCode: '430101',
+                debit: 0,
+                credit: 100
+              }
+            ]
+          }),
+          'utf8'
+        )
+
+        const saveResult = await runCli([
+          'voucher',
+          'save',
+          '--payload-file',
+          voucherRenumberPayloadPath
+        ])
+        expect(saveResult.status).toBe('success')
+        voucherIds.push((saveResult.data as { voucherId: number }).voucherId)
+      }
+
+      fs.writeFileSync(
+        voucherBatchPayloadPath,
+        JSON.stringify({
+          action: 'delete',
+          voucherIds: [voucherIds[1]]
+        }),
+        'utf8'
+      )
+      const deleteResult = await runCli([
+        'voucher',
+        'batch',
+        '--payload-file',
+        voucherBatchPayloadPath
+      ])
+      expect(deleteResult.status).toBe('success')
+
+      const renumberResult = await runCli([
+        'voucher',
+        'renumber',
+        '--ledgerId',
+        String(ledgerId),
+        '--period',
+        '2026-01'
+      ])
+      expect(renumberResult.status).toBe('success')
+      expect(renumberResult.data).toMatchObject({
+        ledgerId,
+        period: '2026-01',
+        totalCount: 2,
+        updatedCount: 2
+      })
+
+      const listResult = await runCli([
+        'voucher',
+        'list',
+        '--ledgerId',
+        String(ledgerId),
+        '--period',
+        '2026-01',
+        '--status',
+        'all'
+      ])
+      expect(listResult.status).toBe('success')
+      const rows = listResult.data as Array<{ id: number; status: number; voucher_number: number }>
+      expect(rows.find((row) => row.id === voucherIds[0])).toMatchObject({
+        status: 0,
+        voucher_number: 1
+      })
+      expect(rows.find((row) => row.id === voucherIds[2])).toMatchObject({
+        status: 0,
+        voucher_number: 2
+      })
+      expect(rows.find((row) => row.id === voucherIds[1])).toMatchObject({
+        status: 3,
+        voucher_number: 3
+      })
     },
     120_000
   )

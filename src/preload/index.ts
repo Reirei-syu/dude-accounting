@@ -130,6 +130,8 @@ const api = {
     }) => ipcRenderer.invoke('voucher:batchAction', payload),
     swapPositions: (payload: { voucherIds: [number, number] | number[] }) =>
       ipcRenderer.invoke('voucher:swapPositions', payload),
+    renumber: (payload: { ledgerId: number; period: string }) =>
+      ipcRenderer.invoke('voucher:renumber', payload),
     save: (data: {
       ledgerId: number
       voucherDate: string

@@ -7,6 +7,8 @@ const voucherCommandMocks = vi.hoisted(() => ({
   assertPeriodWritable: vi.fn(),
   createVoucherWithEntries: vi.fn(),
   updateVoucherWithEntries: vi.fn(),
+  renumberVoucherNumbers: vi.fn(),
+  appendActorOperationLog: vi.fn(),
   requireCommandPermission: vi.fn((actor) => actor),
   requireCommandLedgerAccess: vi.fn()
 }))
@@ -28,6 +30,14 @@ vi.mock('../services/voucherLifecycle', async () => {
   }
 })
 
+vi.mock('../services/voucherNumberLifecycle', async () => {
+  const actual = await vi.importActual('../services/voucherNumberLifecycle')
+  return {
+    ...(actual as object),
+    renumberVoucherNumbers: voucherCommandMocks.renumberVoucherNumbers
+  }
+})
+
 vi.mock('./authz', async () => {
   const actual = await vi.importActual('./authz')
   return {
@@ -37,12 +47,18 @@ vi.mock('./authz', async () => {
   }
 })
 
+vi.mock('./operationLog', () => ({
+  appendActorOperationLog: voucherCommandMocks.appendActorOperationLog
+}))
+
 import {
   createVoucherCommand,
   exportVoucherEditPayloadCommand,
+  renumberVoucherNumbersCommand,
   updateVoucherCommand
 } from './voucherCommands'
 import { CommandError } from './types'
+import { VoucherNumberRenumberValidationError } from '../services/voucherNumberLifecycle'
 
 describe('voucherCommands', () => {
   const currentPeriodQuery = {
@@ -192,6 +208,33 @@ describe('voucherCommands', () => {
       status: 0
     })
     voucherCommandMocks.updateVoucherWithEntries.mockReturnValue(undefined)
+    voucherCommandMocks.renumberVoucherNumbers.mockReturnValue({
+      ledgerId: 8,
+      period: '2026-01',
+      totalCount: 2,
+      updatedCount: 1,
+      groups: [
+        {
+          voucherWord: '记',
+          totalCount: 2,
+          activeCount: 2,
+          deletedCount: 0,
+          updatedCount: 1,
+          firstNumber: 1,
+          lastNumber: 2
+        }
+      ],
+      changes: [
+        {
+          voucherId: 44,
+          voucherWord: '记',
+          status: 1,
+          deletedFromStatus: null,
+          oldNumber: 3,
+          newNumber: 2
+        }
+      ]
+    })
   })
 
   it('normalizes agent-style voucher save payload aliases before invoking lifecycle', async () => {
@@ -456,6 +499,121 @@ describe('voucherCommands', () => {
     expect(result.error).toMatchObject({
       code: 'VALIDATION_ERROR',
       message: '仅未审核凭证可修改'
+    })
+  })
+
+  it('renumbers voucher numbers for the current writable period', async () => {
+    const result = await renumberVoucherNumbersCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01'
+    })
+
+    expect(result.status).toBe('success')
+    expect(voucherCommandMocks.requireCommandPermission).toHaveBeenCalledWith(
+      context.actor,
+      'voucher_entry'
+    )
+    expect(voucherCommandMocks.requireCommandLedgerAccess).toHaveBeenCalledWith(
+      context.db,
+      context.actor,
+      8
+    )
+    expect(voucherCommandMocks.renumberVoucherNumbers).toHaveBeenCalledWith(
+      context.db,
+      8,
+      '2026-01'
+    )
+    expect(result.data).toMatchObject({
+      ledgerId: 8,
+      period: '2026-01',
+      totalCount: 2,
+      updatedCount: 1
+    })
+    expect(voucherCommandMocks.appendActorOperationLog).toHaveBeenCalledWith(
+      expect.objectContaining({ actor: context.actor }),
+      expect.objectContaining({
+        ledgerId: 8,
+        module: 'voucher',
+        action: 'renumber_voucher_numbers',
+        targetType: 'voucher_period',
+        targetId: '8:2026-01'
+      })
+    )
+  })
+
+  it('does not renumber voucher numbers without voucher entry permission', async () => {
+    voucherCommandMocks.requireCommandPermission.mockImplementationOnce(() => {
+      throw new CommandError('FORBIDDEN', '无权限执行该操作', { permission: 'voucher_entry' }, 4)
+    })
+
+    const result = await renumberVoucherNumbersCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01'
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: '无权限执行该操作'
+    })
+    expect(voucherCommandMocks.renumberVoucherNumbers).not.toHaveBeenCalled()
+  })
+
+  it('does not renumber voucher numbers without ledger access', async () => {
+    voucherCommandMocks.requireCommandLedgerAccess.mockImplementationOnce(() => {
+      throw new CommandError('LEDGER_ACCESS_DENIED', '无权访问该账套', { ledgerId: 8 }, 4)
+    })
+
+    const result = await renumberVoucherNumbersCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01'
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'LEDGER_ACCESS_DENIED',
+      message: '无权访问该账套'
+    })
+    expect(voucherCommandMocks.renumberVoucherNumbers).not.toHaveBeenCalled()
+  })
+
+  it('does not renumber voucher numbers for a closed period', async () => {
+    voucherCommandMocks.assertPeriodWritable.mockImplementationOnce(() => {
+      throw new Error('当前期间已结账，不能整理凭证号')
+    })
+
+    const result = await renumberVoucherNumbersCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01'
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '当前期间已结账，不能整理凭证号'
+    })
+    expect(voucherCommandMocks.renumberVoucherNumbers).not.toHaveBeenCalled()
+  })
+
+  it('does not renumber voucher numbers when the period contains posted vouchers', async () => {
+    voucherCommandMocks.renumberVoucherNumbers.mockImplementationOnce(() => {
+      throw new VoucherNumberRenumberValidationError('存在已记账凭证，不允许整理凭证号', {
+        voucherId: 45
+      })
+    })
+
+    const result = await renumberVoucherNumbersCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01'
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '存在已记账凭证，不允许整理凭证号',
+      details: {
+        voucherId: 45
+      }
     })
   })
 })

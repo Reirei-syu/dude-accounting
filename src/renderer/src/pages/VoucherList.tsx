@@ -595,6 +595,71 @@ export default function VoucherList(): JSX.Element {
     }
   }
 
+  const handleRenumberVouchers = async (): Promise<void> => {
+    setMessage(null)
+
+    if (!canOperate || !currentLedger || !currentPeriod) {
+      setMessage({
+        type: 'error',
+        text: '当前环境不支持该操作'
+      })
+      return
+    }
+
+    if (isClosedPeriod) {
+      setMessage({ type: 'error', text: closedPeriodMessage })
+      return
+    }
+
+    if (allRows.some((row) => row.status === 2)) {
+      setMessage({
+        type: 'error',
+        text: '当前期间存在已记账凭证，不允许整理凭证号'
+      })
+      return
+    }
+
+    if (
+      !window.confirm(
+        `将整理当前账套 ${currentPeriod} 期间的凭证号，未删除且未记账凭证会按字号从 1 开始连续编号。是否继续？`
+      )
+    ) {
+      return
+    }
+
+    try {
+      const result = await window.api.voucher.renumber({
+        ledgerId: currentLedger.id,
+        period: currentPeriod
+      })
+
+      if (!result.success) {
+        setMessage({
+          type: 'error',
+          text: result.error || '整理凭证号失败'
+        })
+        return
+      }
+
+      const totalCount = Number(result.totalCount ?? 0)
+      const updatedCount = Number(result.updatedCount ?? 0)
+      setMessage({
+        type: 'success',
+        text:
+          updatedCount > 0
+            ? `已整理凭证号：当前期间 ${totalCount} 张可整理凭证，更新 ${updatedCount} 处编号`
+            : '当前期间凭证号已连续，无需整理'
+      })
+      await loadRows({ trackDiff: true })
+      await loadPeriodStatus()
+    } catch (err) {
+      setMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : '整理凭证号失败'
+      })
+    }
+  }
+
   const openVoucherForEdit = (voucherId: number): void => {
     const row = allRows.find((item) => item.id === voucherId)
     if (!row) {
@@ -767,6 +832,13 @@ export default function VoucherList(): JSX.Element {
         label: '交换位置',
         onClick: () => void handleSwapPositions(),
         disabled: !canSwapSelected || !canOperate
+      },
+      {
+        key: 'renumber',
+        label: '整理凭证号',
+        onClick: () => void handleRenumberVouchers(),
+        disabled: !canOperate || isClosedPeriod,
+        title: isClosedPeriod ? '当前期间已结账，如需整理请先反结账' : '按当前期间顺序整理凭证号'
       },
       { key: 'print', label: '打印预览', onClick: handleOpenPrintDialog },
       { key: 'audit', label: '审核', onClick: () => void runBatchAction('audit') },

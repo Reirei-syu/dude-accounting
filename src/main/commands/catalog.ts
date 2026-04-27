@@ -524,6 +524,19 @@ const commandMetadata: CommandMetadata[] = [
   },
   {
     domain: 'voucher',
+    action: 'renumber',
+    description: '整理凭证号',
+    aliases: ['整理凭证号'],
+    batchSafe: true,
+    desktopAssisted: false,
+    requiresSession: true,
+    sessionEffect: 'none',
+    uiMethods: ['window.api.voucher.renumber'],
+    uiAssistedMethods: [],
+    promptHints: ['ledgerId', 'period']
+  },
+  {
+    domain: 'voucher',
     action: 'batch',
     description: '批量处理凭证',
     aliases: [],
