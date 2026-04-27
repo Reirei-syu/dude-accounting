@@ -472,6 +472,19 @@ const commandMetadata: CommandMetadata[] = [
   },
   {
     domain: 'voucher',
+    action: 'export-edit-payload',
+    description: '导出凭证编辑载荷',
+    aliases: ['导出凭证编辑载荷'],
+    batchSafe: true,
+    desktopAssisted: false,
+    requiresSession: true,
+    sessionEffect: 'none',
+    uiMethods: [],
+    uiAssistedMethods: [],
+    promptHints: []
+  },
+  {
+    domain: 'voucher',
     action: 'list',
     description: '查询凭证列表',
     aliases: ['凭证列表'],

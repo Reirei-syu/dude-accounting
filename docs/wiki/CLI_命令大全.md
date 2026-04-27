@@ -93,10 +93,13 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `voucher next-number` | 获取下一个凭证号 | 获取下一个凭证号 | 是 | 否 |
 | `voucher save` | 创建凭证 | 创建凭证 | 是 | 否 |
 | `voucher update` | 更新凭证 | 更新凭证 | 是 | 否 |
+| `voucher export-edit-payload` | 导出凭证编辑载荷 | 导出凭证编辑载荷 | 是 | 否 |
 | `voucher list` | 凭证列表 | 查询凭证列表 | 是 | 否 |
 | `voucher entries` | 查询凭证明细 | 查询凭证明细 | 是 | 否 |
 | `voucher swap` | 交换凭证位置 | 交换凭证位置 | 是 | 否 |
 | `voucher batch` | 批量处理凭证 | 批量处理凭证 | 是 | 否 |
+
+凭证修改建议流程：先执行 `voucher export-edit-payload --voucherId <id> --filePath <json路径>` 导出可编辑 JSON，修改文件后执行 `voucher update --payload-file <json路径>` 提交。`voucher update` 只允许更新未审核且当前期间可写的凭证。
 
 ## initial-balance
 

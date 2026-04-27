@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { assertPeriodWritable } from '../services/periodState'
 import {
   applyVoucherBatchAction,
@@ -65,8 +68,101 @@ interface UpdateVoucherInput {
   entries: VoucherEntryInput[]
 }
 
+interface VoucherEditPayload {
+  voucherId: number
+  ledgerId: number
+  period: string
+  voucherDate: string
+  entries: VoucherEntryInput[]
+}
+
+interface ExportVoucherEditPayloadInput {
+  voucherId: number
+  filePath?: string
+}
+
 interface SwapVoucherPositionsInput {
   voucherIds: number[]
+}
+
+const WSL_DRIVE_PATH_PATTERN = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/
+
+function toWindowsSeparators(value: string): string {
+  return value.replace(/\//g, '\\')
+}
+
+function convertPosixPathWithWslPath(filePath: string): string | null {
+  try {
+    const output = execFileSync('wsl.exe', ['wslpath', '-w', filePath], {
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 3000
+    }).trim()
+    return output || null
+  } catch {
+    return null
+  }
+}
+
+function normalizeCommandFilePath(filePath: string): string {
+  const trimmedPath = filePath.trim()
+  if (!trimmedPath) {
+    throw new CommandError('VALIDATION_ERROR', 'filePath 不能为空', { field: 'filePath' }, 2)
+  }
+
+  if (process.platform !== 'win32') {
+    return trimmedPath
+  }
+
+  const driveMatch = trimmedPath.match(WSL_DRIVE_PATH_PATTERN)
+  if (driveMatch) {
+    const drive = driveMatch[1].toUpperCase()
+    const rest = driveMatch[2] ? toWindowsSeparators(driveMatch[2]) : ''
+    return rest ? `${drive}:\\${rest}` : `${drive}:\\`
+  }
+
+  const distroName = process.env.DUDEACC_WSL_DISTRO_NAME?.trim()
+  if (distroName && trimmedPath.startsWith('/') && !trimmedPath.startsWith('//')) {
+    return `\\\\wsl.localhost\\${distroName}${toWindowsSeparators(trimmedPath)}`
+  }
+
+  if (trimmedPath.startsWith('/') && !trimmedPath.startsWith('//')) {
+    return convertPosixPathWithWslPath(trimmedPath) ?? trimmedPath
+  }
+
+  return trimmedPath
+}
+
+function formatAmountCents(amountCents: number): string {
+  if (!Number.isFinite(amountCents)) {
+    return '0'
+  }
+
+  const normalizedCents = Math.trunc(amountCents)
+  const sign = normalizedCents < 0 ? '-' : ''
+  const absoluteCents = Math.abs(normalizedCents)
+  const yuan = Math.floor(absoluteCents / 100)
+  const cents = absoluteCents % 100
+  if (cents === 0) {
+    return `${sign}${yuan}`
+  }
+
+  return `${sign}${yuan}.${String(cents).padStart(2, '0').replace(/0$/, '')}`
+}
+
+function normalizeExportVoucherEditPayload(payload: unknown): ExportVoucherEditPayloadInput {
+  const rawPayload = asCommandPayloadRecord(payload, '导出凭证编辑载荷 payload 格式不正确')
+  return {
+    voucherId: normalizePositiveInteger(rawPayload.voucherId, 'voucherId', '缺少凭证 voucherId'),
+    filePath: normalizeOptionalStringField(rawPayload.filePath, 'filePath')
+  }
+}
+
+function writeVoucherEditPayloadFile(filePath: string, payload: VoucherEditPayload): string {
+  const normalizedPath = normalizeCommandFilePath(filePath)
+  fs.mkdirSync(path.dirname(normalizedPath), { recursive: true })
+  fs.writeFileSync(normalizedPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  return normalizedPath
 }
 
 function normalizeVoucherDateField(payload: Record<string, unknown>): string {
@@ -488,6 +584,68 @@ export async function updateVoucherCommand(
       voucherNumber: voucher.voucher_number,
       status: voucher.status
     }
+  })
+}
+
+export async function exportVoucherEditPayloadCommand(
+  context: CommandContext,
+  payload: ExportVoucherEditPayloadInput
+): Promise<CommandResult<{ payload: VoucherEditPayload; filePath?: string }>> {
+  return withCommandResult(context, () => {
+    requireCommandPermission(context.actor, 'voucher_entry')
+    const normalizedPayload = normalizeExportVoucherEditPayload(payload)
+    const voucher = context.db
+      .prepare(
+        `SELECT id, ledger_id, period, voucher_date, status
+         FROM vouchers
+         WHERE id = ?`
+      )
+      .get(normalizedPayload.voucherId) as
+      | {
+          id: number
+          ledger_id: number
+          period: string
+          voucher_date: string
+          status: number
+        }
+      | undefined
+
+    if (!voucher) {
+      throw new CommandError('NOT_FOUND', '凭证不存在', { voucherId: normalizedPayload.voucherId }, 5)
+    }
+    requireCommandLedgerAccess(context.db, context.actor, voucher.ledger_id)
+    if (voucher.status !== 0) {
+      throw new CommandError('VALIDATION_ERROR', '仅未审核凭证可导出编辑载荷', null, 2)
+    }
+    ensureVoucherPeriod(context, voucher.ledger_id, voucher.voucher_date, 'date')
+
+    const entries = listVoucherEntries(context.db, normalizedPayload.voucherId)
+    const editPayload: VoucherEditPayload = {
+      voucherId: voucher.id,
+      ledgerId: voucher.ledger_id,
+      period: voucher.period,
+      voucherDate: voucher.voucher_date,
+      entries: entries.map((entry) => ({
+        summary: entry.summary,
+        subjectCode: entry.subject_code,
+        debitAmount: formatAmountCents(entry.debit_amount),
+        creditAmount: formatAmountCents(entry.credit_amount),
+        cashFlowItemId: entry.cash_flow_item_id
+      }))
+    }
+
+    const filePath = normalizedPayload.filePath
+      ? writeVoucherEditPayloadFile(normalizedPayload.filePath, editPayload)
+      : undefined
+
+    return filePath
+      ? {
+          payload: editPayload,
+          filePath
+        }
+      : {
+          payload: editPayload
+        }
   })
 }
 

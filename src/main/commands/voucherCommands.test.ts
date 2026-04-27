@@ -1,3 +1,6 @@
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const voucherCommandMocks = vi.hoisted(() => ({
@@ -34,7 +37,12 @@ vi.mock('./authz', async () => {
   }
 })
 
-import { createVoucherCommand, updateVoucherCommand } from './voucherCommands'
+import {
+  createVoucherCommand,
+  exportVoucherEditPayloadCommand,
+  updateVoucherCommand
+} from './voucherCommands'
+import { CommandError } from './types'
 
 describe('voucherCommands', () => {
   const currentPeriodQuery = {
@@ -54,6 +62,40 @@ describe('voucherCommands', () => {
       status: 0
     }))
   }
+  const voucherEditQuery = {
+    get: vi.fn(() => ({
+      id: 43,
+      ledger_id: 8,
+      period: '2026-01',
+      voucher_date: '2026-01-03',
+      status: 0
+    }))
+  }
+  const voucherEntriesQuery = {
+    all: vi.fn(() => [
+      {
+        summary: '收到客户付款活动款（张三）',
+        subject_code: '1002',
+        debit_amount: 300000,
+        credit_amount: 0,
+        cash_flow_item_id: 161
+      },
+      {
+        summary: '收到客户付款活动款（张三）',
+        subject_code: '2206',
+        debit_amount: 0,
+        credit_amount: 2000,
+        cash_flow_item_id: null
+      },
+      {
+        summary: '收到客户付款活动款（张三）',
+        subject_code: '430101',
+        debit_amount: 0,
+        credit_amount: 298000,
+        cash_flow_item_id: null
+      }
+    ])
+  }
 
   const context = {
     db: {
@@ -72,6 +114,15 @@ describe('voucherCommands', () => {
           sql.includes('FROM vouchers')
         ) {
           return voucherQuery
+        }
+        if (
+          sql.includes('SELECT id, ledger_id, period, voucher_date, status') &&
+          sql.includes('FROM vouchers')
+        ) {
+          return voucherEditQuery
+        }
+        if (sql.includes('FROM voucher_entries ve') && sql.includes('ORDER BY ve.row_order ASC')) {
+          return voucherEntriesQuery
         }
         throw new Error(`unexpected sql: ${sql}`)
       })
@@ -105,6 +156,36 @@ describe('voucherCommands', () => {
       voucher_number: 1,
       status: 0
     })
+    voucherEditQuery.get.mockReturnValue({
+      id: 43,
+      ledger_id: 8,
+      period: '2026-01',
+      voucher_date: '2026-01-03',
+      status: 0
+    })
+    voucherEntriesQuery.all.mockReturnValue([
+      {
+        summary: '收到客户付款活动款（张三）',
+        subject_code: '1002',
+        debit_amount: 300000,
+        credit_amount: 0,
+        cash_flow_item_id: 161
+      },
+      {
+        summary: '收到客户付款活动款（张三）',
+        subject_code: '2206',
+        debit_amount: 0,
+        credit_amount: 2000,
+        cash_flow_item_id: null
+      },
+      {
+        summary: '收到客户付款活动款（张三）',
+        subject_code: '430101',
+        debit_amount: 0,
+        credit_amount: 298000,
+        cash_flow_item_id: null
+      }
+    ])
     voucherCommandMocks.createVoucherWithEntries.mockReturnValue({
       voucherId: 43,
       voucherNumber: 1,
@@ -241,5 +322,140 @@ describe('voucherCommands', () => {
         ]
       })
     )
+  })
+
+  it('exports editable voucher update payload and writes a payload file', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-voucher-edit-'))
+    const filePath = path.join(tempDir, 'voucher-update.json')
+
+    try {
+      const result = await exportVoucherEditPayloadCommand(context as never, {
+        voucherId: 43,
+        filePath
+      })
+
+      const expectedPayload = {
+        voucherId: 43,
+        ledgerId: 8,
+        period: '2026-01',
+        voucherDate: '2026-01-03',
+        entries: [
+          {
+            summary: '收到客户付款活动款（张三）',
+            subjectCode: '1002',
+            debitAmount: '3000',
+            creditAmount: '0',
+            cashFlowItemId: 161
+          },
+          {
+            summary: '收到客户付款活动款（张三）',
+            subjectCode: '2206',
+            debitAmount: '0',
+            creditAmount: '20',
+            cashFlowItemId: null
+          },
+          {
+            summary: '收到客户付款活动款（张三）',
+            subjectCode: '430101',
+            debitAmount: '0',
+            creditAmount: '2980',
+            cashFlowItemId: null
+          }
+        ]
+      }
+
+      expect(result.status).toBe('success')
+      expect(result.data).toEqual({
+        payload: expectedPayload,
+        filePath
+      })
+      expect(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toEqual(expectedPayload)
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not export an edit payload for missing vouchers', async () => {
+    voucherEditQuery.get.mockReturnValueOnce(undefined as never)
+
+    const result = await exportVoucherEditPayloadCommand(context as never, {
+      voucherId: 404
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'NOT_FOUND',
+      message: '凭证不存在'
+    })
+  })
+
+  it('does not export an edit payload without ledger access', async () => {
+    voucherCommandMocks.requireCommandLedgerAccess.mockImplementationOnce(() => {
+      throw new CommandError('LEDGER_ACCESS_DENIED', '无权访问账套', null, 4)
+    })
+
+    const result = await exportVoucherEditPayloadCommand(context as never, {
+      voucherId: 43
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'LEDGER_ACCESS_DENIED',
+      message: '无权访问账套'
+    })
+  })
+
+  it('does not export an edit payload for non-draft vouchers', async () => {
+    voucherEditQuery.get.mockReturnValueOnce({
+      id: 43,
+      ledger_id: 8,
+      period: '2026-01',
+      voucher_date: '2026-01-03',
+      status: 1
+    })
+
+    const result = await exportVoucherEditPayloadCommand(context as never, {
+      voucherId: 43
+    })
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '仅未审核凭证可导出编辑载荷'
+    })
+  })
+
+  it('keeps voucher update blocked for non-draft vouchers', async () => {
+    voucherQuery.get.mockReturnValueOnce({
+      id: 43,
+      ledger_id: 8,
+      voucher_number: 1,
+      status: 1
+    })
+
+    const result = await updateVoucherCommand(context as never, {
+      voucherId: 43,
+      ledgerId: 8,
+      date: '2026-01-05',
+      description: '更新后的摘要',
+      entries: [
+        {
+          subjectCode: '1002',
+          debit: 500,
+          credit: 0
+        },
+        {
+          subjectCode: '430101',
+          debit: 0,
+          credit: 500
+        }
+      ]
+    } as never)
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '仅未审核凭证可修改'
+    })
   })
 })

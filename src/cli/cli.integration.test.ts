@@ -11,6 +11,7 @@ const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
 const loginPayloadPath = path.join(tempRoot, 'dude-cli-login-payload.json')
 const ledgerCreatePayloadPath = path.join(tempRoot, 'dude-cli-ledger-create.json')
 const voucherAliasPayloadPath = path.join(tempRoot, 'dude-cli-voucher-alias.json')
+const voucherEditPayloadPath = path.join(tempRoot, 'dude-cli-voucher-edit.json')
 fs.mkdirSync(appDataPath, { recursive: true })
 
 function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
@@ -120,6 +121,10 @@ describe('embedded cli integration', () => {
           expect.objectContaining({
             command: 'backup restore',
             desktopAssisted: false
+          }),
+          expect.objectContaining({
+            command: 'voucher export-edit-payload',
+            aliasZh: '导出凭证编辑载荷'
           })
         ])
       })
@@ -253,6 +258,95 @@ describe('embedded cli integration', () => {
           expect.objectContaining({
             subject_code: '430101',
             credit_amount: 298000
+          })
+        ])
+      )
+
+      const exportEditPayloadResult = await runCli([
+        'voucher',
+        'export-edit-payload',
+        '--voucherId',
+        String(voucherId),
+        '--filePath',
+        voucherEditPayloadPath
+      ])
+      expect(exportEditPayloadResult.status).toBe('success')
+      expect(exportEditPayloadResult.data).toMatchObject({
+        filePath: voucherEditPayloadPath,
+        payload: {
+          voucherId,
+          ledgerId,
+          period: '2026-01',
+          voucherDate: '2026-01-03'
+        }
+      })
+
+      const updatePayload = JSON.parse(fs.readFileSync(voucherEditPayloadPath, 'utf8')) as {
+        voucherId: number
+        ledgerId: number
+        period: string
+        voucherDate: string
+        entries: Array<{
+          summary: string
+          subjectCode: string
+          debitAmount: string
+          creditAmount: string
+          cashFlowItemId: number | null
+        }>
+      }
+      updatePayload.voucherDate = '2026-01-04'
+      updatePayload.entries = [
+        {
+          summary: '更新后的 CLI 凭证摘要',
+          subjectCode: '1002',
+          debitAmount: '500',
+          creditAmount: '0',
+          cashFlowItemId: updatePayload.entries[0].cashFlowItemId
+        },
+        {
+          summary: '更新后的 CLI 凭证摘要',
+          subjectCode: '430101',
+          debitAmount: '0',
+          creditAmount: '500',
+          cashFlowItemId: null
+        }
+      ]
+      fs.writeFileSync(voucherEditPayloadPath, JSON.stringify(updatePayload, null, 2), 'utf8')
+
+      const updateResult = await runCli([
+        'voucher',
+        'update',
+        '--payload-file',
+        voucherEditPayloadPath
+      ])
+      expect(updateResult.status).toBe('success')
+
+      const updatedEntriesResult = await runCli([
+        'voucher',
+        'entries',
+        '--voucherId',
+        String(voucherId)
+      ])
+      expect(updatedEntriesResult.status).toBe('success')
+      expect(updatedEntriesResult.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            summary: '更新后的 CLI 凭证摘要',
+            subject_code: '1002',
+            debit_amount: 50000,
+            cash_flow_code: 'CF01'
+          }),
+          expect.objectContaining({
+            summary: '更新后的 CLI 凭证摘要',
+            subject_code: '430101',
+            credit_amount: 50000
+          })
+        ])
+      )
+      expect(updatedEntriesResult.data).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            subject_code: '2206'
           })
         ])
       )

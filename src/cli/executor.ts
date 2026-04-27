@@ -116,6 +116,7 @@ import {
 } from '../main/commands/settingsCommands'
 import {
   createVoucherCommand,
+  exportVoucherEditPayloadCommand,
   getNextVoucherNumberCommand,
   getVoucherEntriesCommand,
   listVouchersCommand,
@@ -309,6 +310,11 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       createVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     update: async (runtime, payload, outputMode, token) =>
       updateVoucherCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'export-edit-payload': async (runtime, payload, outputMode, token) =>
+      exportVoucherEditPayloadCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     list: async (runtime, payload, outputMode, token) =>
       listVouchersCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     entries: async (runtime, payload, outputMode, token) =>
