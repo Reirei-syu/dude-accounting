@@ -618,6 +618,53 @@ describe('reporting service', () => {
     expect(readTotal(balanceSheet.content.totals, 'assets')).toBe(144_300)
   })
 
+  it('accepts balance sheet month from cli start and end period fallback', () => {
+    const monthDb = createTestDb()
+    const monthTestDb = monthDb as never
+    seedEnterpriseLedger(monthDb)
+
+    const snapshotByMonth = generateReportSnapshot(monthTestDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      month: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T10:00:30.000Z'
+    })
+
+    expect(snapshotByMonth.period).toBe('2026.03')
+    expect(snapshotByMonth.as_of_date).toBe('2026-03-31')
+
+    const cliDb = createTestDb()
+    const cliTestDb = cliDb as never
+    seedEnterpriseLedger(cliDb)
+
+    const snapshotByCliRange = generateReportSnapshot(cliTestDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      startPeriod: '2026-03',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T10:00:31.000Z'
+    })
+
+    expect(snapshotByCliRange.period).toBe('2026.03')
+    expect(snapshotByCliRange.as_of_date).toBe('2026-03-31')
+
+    expect(() =>
+      generateReportSnapshot(cliTestDb, {
+        ledgerId: 1,
+        reportType: 'balance_sheet',
+        startPeriod: '2026-01',
+        endPeriod: '2026-02',
+        includeUnpostedVouchers: false,
+        generatedBy: 9,
+        now: '2026-03-09T10:00:32.000Z'
+      })
+    ).toThrow('资产负债表只能按单月生成，起始月份和结束月份必须一致')
+  })
+
   it('includes general risk reserve in enterprise balance sheet equity totals', () => {
     const db = createTestDb()
     const testDb = db as never

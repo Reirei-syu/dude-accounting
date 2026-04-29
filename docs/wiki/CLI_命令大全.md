@@ -139,6 +139,8 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `report export` | 导出报表快照 | 导出报表快照 | 是 | 否 |
 | `report export-batch` | 批量导出报表快照 | 批量导出报表快照 | 是 | 否 |
 
+说明：`report generate` 生成 `balance_sheet` 时推荐传 `month=YYYY-MM`；同时兼容 `startPeriod` 与 `endPeriod` 相同的同月输入。利润表、业务活动表、现金流量表和所有者权益变动表继续使用 `startPeriod` / `endPeriod` 区间。
+
 ## book
 
 | 英文命令 | 中文命令 | 功能说明 | 需登录 | 桌面辅助 |

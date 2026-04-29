@@ -383,7 +383,13 @@ function buildScope(
   includeUnpostedVouchers: boolean
 ): ReportSnapshotScope {
   if (reportType === 'balance_sheet') {
-    const targetMonth = month?.trim() ?? ''
+    const normalizedMonth = month?.trim() ?? ''
+    const normalizedStart = startPeriod?.trim() ?? ''
+    const normalizedEnd = endPeriod?.trim() ?? ''
+    if (!normalizedMonth && normalizedStart && normalizedEnd && normalizedStart !== normalizedEnd) {
+      throw new Error('资产负债表只能按单月生成，起始月份和结束月份必须一致')
+    }
+    const targetMonth = normalizedMonth || normalizedStart || normalizedEnd
     assertPeriod(targetMonth)
     return {
       mode: 'month',

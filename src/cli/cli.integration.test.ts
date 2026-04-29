@@ -165,6 +165,56 @@ describe('embedded cli integration', () => {
   )
 
   it(
+    'accepts balance sheet start and end period flags through the batch cli',
+    async () => {
+      fs.writeFileSync(loginPayloadPath, JSON.stringify({ username: 'admin', password: '' }), 'utf8')
+      const loginResult = await runCli(['auth', 'login', '--payload-file', loginPayloadPath])
+      expect(loginResult.status).toBe('success')
+
+      fs.writeFileSync(
+        ledgerCreatePayloadPath,
+        JSON.stringify({
+          name: `CLI 资产负债表期间兼容测试 ${Date.now()}`,
+          standardType: 'enterprise',
+          startPeriod: '2026-01'
+        }),
+        'utf8'
+      )
+      const createLedgerResult = await runCli([
+        'ledger',
+        'create',
+        '--payload-file',
+        ledgerCreatePayloadPath
+      ])
+      expect(createLedgerResult.status).toBe('success')
+      const ledgerId = (createLedgerResult.data as { id: number }).id
+
+      const reportResult = await runCli([
+        'report',
+        'generate',
+        '--ledgerId',
+        String(ledgerId),
+        '--reportType',
+        'balance_sheet',
+        '--startPeriod',
+        '2026-01',
+        '--endPeriod',
+        '2026-01'
+      ])
+
+      expect(reportResult.status).toBe('success')
+      expect(reportResult.data).toMatchObject({
+        snapshot: {
+          report_type: 'balance_sheet',
+          period: '2026.01',
+          as_of_date: '2026-01-31'
+        }
+      })
+    },
+    120_000
+  )
+
+  it(
     'accepts agent-style voucher payload aliases through the batch cli',
     async () => {
       fs.writeFileSync(loginPayloadPath, JSON.stringify({ username: 'admin', password: '' }), 'utf8')
