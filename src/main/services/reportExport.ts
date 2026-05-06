@@ -7,6 +7,7 @@ import {
 import type { ReportExportFormat, ReportSnapshotDetail } from './reporting'
 import { buildDefaultReportExportFileName, buildReportSnapshotHtml } from './reportSnapshotOutput'
 import { writeReportSnapshotExcel } from './reportSnapshotOutput'
+import type { ReportRenderOptions } from '../../shared/reportTablePresentation'
 
 export const REPORT_EXPORT_LAST_DIR_KEY = 'report_export_last_dir'
 export const REPORT_EXPORT_BATCH_LAST_DIR_KEY = 'report_export_batch_last_dir'
@@ -67,11 +68,12 @@ export async function exportReportSnapshotToFile(
   detail: ReportSnapshotDetail,
   format: ReportExportFormat,
   filePath: string,
-  exportPdf: (targetPath: string, html: string) => Promise<string>
+  exportPdf: (targetPath: string, html: string) => Promise<string>,
+  renderOptions?: ReportRenderOptions
 ): Promise<string> {
   return format === 'xlsx'
-    ? writeReportSnapshotExcel(filePath, detail)
-    : exportPdf(filePath, buildReportSnapshotHtml(detail))
+    ? writeReportSnapshotExcel(filePath, detail, renderOptions)
+    : exportPdf(filePath, buildReportSnapshotHtml(detail, renderOptions))
 }
 
 export async function exportReportSnapshotsBatch(

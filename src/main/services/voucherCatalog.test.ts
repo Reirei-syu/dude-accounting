@@ -46,14 +46,16 @@ class FakeVoucherCatalogDb {
 
     if (
       normalized ===
-      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ?'
+      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND status <> 3'
     ) {
       return {
         get: (ledgerId, period) => ({
           max_num: this.vouchers
             .filter(
               (voucher) =>
-                voucher.ledger_id === Number(ledgerId) && voucher.period === String(period)
+                voucher.ledger_id === Number(ledgerId) &&
+                voucher.period === String(period) &&
+                voucher.status !== 3
             )
             .reduce((max, voucher) => Math.max(max, voucher.voucher_number), 0)
         }),
@@ -220,6 +222,18 @@ describe('voucherCatalog service', () => {
         voucher_number: 5,
         voucher_word: '记',
         status: 0,
+        creator_id: null,
+        auditor_id: null,
+        bookkeeper_id: null
+      },
+      {
+        id: 3,
+        ledger_id: 1,
+        period: '2026-03',
+        voucher_date: '2026-03-03',
+        voucher_number: 9,
+        voucher_word: '记',
+        status: 3,
         creator_id: null,
         auditor_id: null,
         bookkeeper_id: null

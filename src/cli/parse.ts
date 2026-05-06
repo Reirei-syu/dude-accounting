@@ -5,6 +5,7 @@ export interface ParsedCliArgs {
   action: string
   flags: Record<string, string | boolean>
   payloadFile?: string
+  payloadStdin?: boolean
   payloadJson?: string
 }
 
@@ -13,6 +14,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
   let outputMode: 'json' | 'pretty' = 'json'
   let token: string | undefined
   let payloadFile: string | undefined
+  let payloadStdin = false
   let payloadJson: string | undefined
   const positionals: string[] = []
 
@@ -39,6 +41,9 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
         payloadFile = hasValue ? next : undefined
         if (hasValue) index += 1
         break
+      case 'payload-stdin':
+        payloadStdin = true
+        break
       case 'payload-json':
         payloadJson = hasValue ? next : undefined
         if (hasValue) index += 1
@@ -61,6 +66,7 @@ export function parseCliArgs(argv: string[]): ParsedCliArgs {
     action: positionals[1],
     flags,
     payloadFile,
+    payloadStdin,
     payloadJson
   }
 }

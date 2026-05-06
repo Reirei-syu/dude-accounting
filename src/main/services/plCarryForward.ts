@@ -831,8 +831,8 @@ export function executePLCarryForward(
     const maxNumberRow = db
       .prepare(
         `SELECT COALESCE(MAX(voucher_number), 0) AS max_num
-         FROM vouchers
-         WHERE ledger_id = ? AND period = ? AND voucher_word = ?`
+       FROM vouchers
+         WHERE ledger_id = ? AND period = ? AND voucher_word = ? AND status <> 3`
       )
       .get(ledgerId, period, preview.voucherWord) as { max_num: number }
     const nextNumber = (maxNumberRow?.max_num ?? 0) + 1

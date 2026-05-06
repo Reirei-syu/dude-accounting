@@ -236,6 +236,58 @@ describe('interactive cli helpers', () => {
     })
   })
 
+  it('exports complete interactive help to a json file', async () => {
+    const interactive = await loadInteractiveModule()
+    if (!interactive?.executeShellBuiltin) {
+      throw new Error('interactive module not loaded')
+    }
+
+    const outputPath = path.join(os.tmpdir(), `dude-cli-help-all-${Date.now()}.json`)
+
+    try {
+      const execution = interactive.executeShellBuiltin(['帮助', 'all', '--output', outputPath], {
+        outputMode: 'pretty'
+      })
+
+      expect(execution).toMatchObject({
+        handled: true,
+        result: {
+          status: 'success',
+          data: {
+            filePath: path.resolve(outputPath),
+            showAll: true
+          }
+        }
+      })
+
+      const exported = JSON.parse(fs.readFileSync(outputPath, 'utf8')) as {
+        status: string
+        data: { allCommands?: Array<{ command: string }> }
+      }
+      expect(exported.status).toBe('success')
+      expect(exported.data.allCommands).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            command: 'auth create-user'
+          })
+        ])
+      )
+    } finally {
+      fs.rmSync(outputPath, { force: true })
+    }
+  })
+
+  it('rejects payload stdin inside the interactive shell command parser', async () => {
+    const interactive = await loadInteractiveModule()
+    if (!interactive?.resolveInteractiveCommand) {
+      throw new Error('interactive module not loaded')
+    }
+
+    expect(() => interactive.resolveInteractiveCommand?.('auth login --payload-stdin')).toThrow(
+      '交互式命令不支持 --payload-stdin'
+    )
+  })
+
   it('injects current ledger and period context without overriding explicit payload', async () => {
     const interactive = await loadInteractiveModule()
 

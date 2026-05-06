@@ -292,7 +292,7 @@ export function createVoucherWithEntries(
   const createVoucherTx = db.transaction(() => {
     const maxNumberRow = db
       .prepare(
-        'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ?'
+        'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND status <> 3'
       )
       .get(input.ledgerId, input.period) as { max_num: number }
     const nextNumber = maxNumberRow.max_num + 1

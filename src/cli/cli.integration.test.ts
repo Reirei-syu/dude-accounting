@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
 
@@ -79,6 +79,45 @@ async function runCli(args: string[]): Promise<{ status: string; data: unknown; 
   return extractCommandResult(`${stdout}\n${stderr}`)
 }
 
+async function runCliWithStdin(
+  args: string[],
+  stdinText: string
+): Promise<{ status: string; data: unknown; error: unknown }> {
+  const output = await new Promise<string>((resolve, reject) => {
+    const child = spawn('node', ['scripts/run-cli.mjs', ...args], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        APPDATA: appDataPath
+      },
+      windowsHide: true
+    })
+
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      const combined = `${stdout}\n${stderr}`
+      if (code === 0) {
+        resolve(combined)
+      } else {
+        reject(new Error(`CLI exited with ${String(code)}:\n${combined}`))
+      }
+    })
+    child.stdin.end(stdinText)
+  })
+
+  return extractCommandResult(output)
+}
+
 describe('embedded cli integration', () => {
   afterAll(() => {
     if (fs.existsSync(tempRoot)) {
@@ -133,6 +172,51 @@ describe('embedded cli integration', () => {
             aliasZh: '整理凭证号'
           })
         ])
+      })
+    },
+    120_000
+  )
+
+  it(
+    'exports full help catalog to a file',
+    async () => {
+      const helpOutputPath = path.join(tempRoot, 'dude-cli-help-all.json')
+      const result = await runCli(['--help', '--all', '--output', helpOutputPath])
+      expect(result.status).toBe('success')
+      expect(result.data).toMatchObject({
+        filePath: path.resolve(helpOutputPath)
+      })
+
+      const exported = JSON.parse(fs.readFileSync(helpOutputPath, 'utf8')) as {
+        status: string
+        data: { product: string; allCommands?: Array<{ command: string }> }
+      }
+      expect(exported.status).toBe('success')
+      expect(exported.data.product).toBe('dude-accounting')
+      expect(exported.data.allCommands).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            command: 'voucher renumber'
+          })
+        ])
+      )
+    },
+    120_000
+  )
+
+  it(
+    'accepts stdin payload and lets explicit flags override payload fields',
+    async () => {
+      const loginResult = await runCliWithStdin(
+        ['auth', 'login', '--payload-stdin', '--username', 'admin'],
+        JSON.stringify({ username: 'wrong-user', password: '' })
+      )
+      expect(loginResult.status).toBe('success')
+      expect(loginResult.data).toMatchObject({
+        user: {
+          username: 'admin',
+          isAdmin: true
+        }
       })
     },
     120_000
@@ -500,7 +584,7 @@ describe('embedded cli integration', () => {
         ledgerId,
         period: '2026-01',
         totalCount: 2,
-        updatedCount: 2
+        updatedCount: 1
       })
 
       const listResult = await runCli([
@@ -525,7 +609,7 @@ describe('embedded cli integration', () => {
       })
       expect(rows.find((row) => row.id === voucherIds[1])).toMatchObject({
         status: 3,
-        voucher_number: 3
+        voucher_number: 2
       })
     },
     120_000

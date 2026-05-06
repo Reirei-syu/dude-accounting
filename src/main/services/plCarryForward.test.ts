@@ -385,7 +385,7 @@ class FakeDatabase {
 
     if (
       normalized ===
-      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND voucher_word = ?'
+      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND voucher_word = ? AND status <> 3'
     ) {
       return {
         get: (ledgerId, period, voucherWord) => ({
@@ -394,7 +394,8 @@ class FakeDatabase {
               (voucher) =>
                 voucher.ledger_id === Number(ledgerId) &&
                 voucher.period === String(period) &&
-                voucher.voucher_word === String(voucherWord)
+                voucher.voucher_word === String(voucherWord) &&
+                voucher.status !== 3
             )
             .reduce((max, voucher) => Math.max(max, voucher.voucher_number), 0)
         }),

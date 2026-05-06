@@ -7,6 +7,7 @@ import {
   buildDefaultReportExportFileName,
   buildReportSnapshotHtml,
   resolveReportPdfCjkFont,
+  writeHtmlSnapshotPdfWithChromium,
   writeReportSnapshotExcel,
   writeReportSnapshotHtml,
   writeReportSnapshotPdf
@@ -173,6 +174,14 @@ describe('reportSnapshotOutput service', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
 
     expect(resolveReportPdfCjkFont([{ filePath: path.join(tempDir, 'missing.ttf') }])).toBeNull()
+  })
+
+  it('returns a clear error when chromium pdf generation is unavailable', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+
+    await expect(
+      writeHtmlSnapshotPdfWithChromium(path.join(tempDir, 'report.pdf'), '<html><body>报表</body></html>')
+    ).rejects.toThrow('Electron/Chromium PDF 引擎不可用')
   })
 
   it('writes cross-year excel and html exports with stable title metadata', async () => {

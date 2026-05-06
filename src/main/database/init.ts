@@ -368,8 +368,9 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_subject_aux_custom_items_subject ON subject_auxiliary_custom_items(subject_id);
     CREATE INDEX IF NOT EXISTS idx_subject_aux_custom_items_aux_item ON subject_auxiliary_custom_items(auxiliary_item_id);
     CREATE INDEX IF NOT EXISTS idx_vouchers_ledger_period ON vouchers(ledger_id, period);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_number
-      ON vouchers(ledger_id, period, voucher_word, voucher_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_active_number
+      ON vouchers(ledger_id, period, voucher_word, voucher_number)
+      WHERE status <> 3;
     CREATE INDEX IF NOT EXISTS idx_voucher_entries_voucher ON voucher_entries(voucher_id);
     CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
     CREATE INDEX IF NOT EXISTS idx_operation_logs_created_at ON operation_logs(created_at);
@@ -621,6 +622,45 @@ export function ensureInitialBalanceSchema(db: Database.Database): void {
   ).run()
 }
 
+export function ensureVoucherActiveNumberIndex(db: Database.Database): void {
+  const activeConflict = db
+    .prepare(
+      `SELECT
+         ledger_id,
+         period,
+         voucher_word,
+         voucher_number,
+         COUNT(*) AS count
+       FROM vouchers
+       WHERE status <> 3
+       GROUP BY ledger_id, period, voucher_word, voucher_number
+       HAVING COUNT(*) > 1
+       LIMIT 1`
+    )
+    .get() as
+    | {
+        ledger_id: number
+        period: string
+        voucher_word: string
+        voucher_number: number
+        count: number
+      }
+    | undefined
+
+  if (activeConflict) {
+    throw new Error(
+      `凭证编号索引迁移失败：有效凭证存在重复编号（账套ID ${activeConflict.ledger_id}，期间 ${activeConflict.period}，字号 ${activeConflict.voucher_word}，号码 ${activeConflict.voucher_number}）。请先修复重复凭证号后再重试。`
+    )
+  }
+
+  db.prepare('DROP INDEX IF EXISTS idx_vouchers_unique_number').run()
+  db.prepare(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_active_number
+       ON vouchers(ledger_id, period, voucher_word, voucher_number)
+       WHERE status <> 3`
+  ).run()
+}
+
 export function ensureVoucherSchema(db: Database.Database): void {
   const columns = db.prepare("PRAGMA table_info('vouchers')").all() as Array<{ name: string }>
   if (columns.length === 0) return
@@ -717,9 +757,7 @@ export function ensureVoucherSchema(db: Database.Database): void {
   db.prepare(
     'CREATE INDEX IF NOT EXISTS idx_vouchers_ledger_period ON vouchers(ledger_id, period)'
   ).run()
-  db.prepare(
-    'CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_number ON vouchers(ledger_id, period, voucher_word, voucher_number)'
-  ).run()
+  ensureVoucherActiveNumberIndex(db)
   db.prepare('CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date)').run()
 }
 

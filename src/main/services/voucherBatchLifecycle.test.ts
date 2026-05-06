@@ -12,6 +12,7 @@ class FakeVoucherBatchDb {
   vouchers: VoucherBatchTarget[] = []
 
   prepare(sql: string): {
+    get: (...args: unknown[]) => unknown
     all: (...args: unknown[]) => unknown[]
     run: (...args: unknown[]) => { changes: number }
   } {
@@ -19,12 +20,33 @@ class FakeVoucherBatchDb {
 
     if (
       normalized.startsWith(
-        'SELECT id, status, deleted_from_status, ledger_id, period, voucher_word, auditor_id, bookkeeper_id FROM vouchers WHERE id IN ('
+        'SELECT id, status, deleted_from_status, ledger_id, period, voucher_number, voucher_word, auditor_id, bookkeeper_id FROM vouchers WHERE id IN ('
       )
     ) {
       return {
+        get: () => undefined,
         all: (...voucherIds) =>
           this.vouchers.filter((voucher) => voucherIds.map(Number).includes(voucher.id)),
+        run: () => ({ changes: 0 })
+      }
+    }
+
+    if (
+      normalized ===
+      'SELECT id FROM vouchers WHERE ledger_id = ? AND period = ? AND voucher_word = ? AND voucher_number = ? AND status <> 3 AND id <> ? LIMIT 1'
+    ) {
+      return {
+        get: (ledgerId, period, voucherWord, voucherNumber, voucherId) =>
+          this.vouchers.find(
+            (voucher) =>
+              voucher.ledger_id === Number(ledgerId) &&
+              voucher.period === String(period) &&
+              voucher.voucher_word === String(voucherWord) &&
+              voucher.voucher_number === Number(voucherNumber) &&
+              voucher.status !== 3 &&
+              voucher.id !== Number(voucherId)
+          ),
+        all: () => [],
         run: () => ({ changes: 0 })
       }
     }
@@ -107,6 +129,7 @@ class FakeVoucherBatchDb {
       "UPDATE vouchers SET status = ?, deleted_from_status = NULL, updated_at = datetime('now') WHERE id = ?"
     ) {
       return {
+        get: () => undefined,
         all: () => [],
         run: (status, voucherId) => {
           const voucher = this.vouchers.find((item) => item.id === Number(voucherId))
@@ -122,6 +145,7 @@ class FakeVoucherBatchDb {
 
     if (normalized === 'DELETE FROM vouchers WHERE id = ?') {
       return {
+        get: () => undefined,
         all: () => [],
         run: (voucherId) => {
           const before = this.vouchers.length
@@ -142,10 +166,12 @@ class FakeVoucherBatchDb {
     apply: (voucher: VoucherBatchTarget, ...prefixArgs: unknown[]) => void,
     prefixArgCount = 1
   ): {
+    get: (...args: unknown[]) => unknown
     all: (...args: unknown[]) => unknown[]
     run: (...args: unknown[]) => { changes: number }
   } {
     return {
+      get: () => undefined,
       all: () => [],
       run: (...args) => {
         const voucherId = Number(args[prefixArgCount])
@@ -182,6 +208,7 @@ describe('voucherBatchLifecycle service', () => {
         deleted_from_status: null,
         ledger_id: 1,
         period: '2026-03',
+        voucher_number: 1,
         voucher_word: '记',
         auditor_id: null,
         bookkeeper_id: null
@@ -192,6 +219,7 @@ describe('voucherBatchLifecycle service', () => {
         deleted_from_status: null,
         ledger_id: 1,
         period: '2026-03',
+        voucher_number: 2,
         voucher_word: '记',
         auditor_id: null,
         bookkeeper_id: null
@@ -215,6 +243,7 @@ describe('voucherBatchLifecycle service', () => {
         deleted_from_status: null,
         ledger_id: 1,
         period: '2026-03',
+        voucher_number: 1,
         voucher_word: '记',
         auditor_id: null,
         bookkeeper_id: null
@@ -225,6 +254,7 @@ describe('voucherBatchLifecycle service', () => {
         deleted_from_status: null,
         ledger_id: 1,
         period: '2026-03',
+        voucher_number: 2,
         voucher_word: '记',
         auditor_id: 5,
         bookkeeper_id: 6
@@ -264,6 +294,7 @@ describe('voucherBatchLifecycle service', () => {
         deleted_from_status: null,
         ledger_id: 1,
         period: '2026-03',
+        voucher_number: 1,
         voucher_word: '记',
         auditor_id: 9,
         bookkeeper_id: null
@@ -274,6 +305,7 @@ describe('voucherBatchLifecycle service', () => {
         deleted_from_status: 1,
         ledger_id: 1,
         period: '2026-03',
+        voucher_number: 2,
         voucher_word: '记',
         auditor_id: 9,
         bookkeeper_id: null
@@ -295,5 +327,38 @@ describe('voucherBatchLifecycle service', () => {
 
     applyVoucherBatchAction(db as never, 'purgeDelete', [db.vouchers[0]], 1, null)
     expect(db.vouchers.map((voucher) => voucher.id)).toEqual([2])
+  })
+
+  it('rejects restoring a deleted voucher when its number is already used by an active voucher', () => {
+    const db = new FakeVoucherBatchDb()
+    db.vouchers = [
+      {
+        id: 1,
+        status: 0,
+        deleted_from_status: null,
+        ledger_id: 1,
+        period: '2026-03',
+        voucher_number: 2,
+        voucher_word: '记',
+        auditor_id: null,
+        bookkeeper_id: null
+      },
+      {
+        id: 2,
+        status: 3,
+        deleted_from_status: 0,
+        ledger_id: 1,
+        period: '2026-03',
+        voucher_number: 2,
+        voucher_word: '记',
+        auditor_id: null,
+        bookkeeper_id: null
+      }
+    ]
+
+    expect(() => applyVoucherBatchAction(db as never, 'restoreDelete', [db.vouchers[1]], 1, null)).toThrow(
+      '已被有效凭证占用'
+    )
+    expect(db.vouchers[1]?.status).toBe(3)
   })
 })

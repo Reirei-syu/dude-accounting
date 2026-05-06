@@ -8,7 +8,10 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 本文档以 `src/main/commands/catalog.ts` 和 `src/cli/interactive.ts` 为事实源。英文 canonical 命令是正式批处理契约；中文命令用于交互式输入、完整 help 展示与人工查阅。
 
 - 批处理完整帮助：`dude-accounting --help --all`
+- 批处理帮助导出：`dude-accounting --help --all --output <filePath>`
 - 交互式完整帮助：`help all` / `帮助 all`
+- 交互式帮助导出：`help all --output <filePath>` / `帮助 all --output <filePath>`
+- 复杂 JSON 输入推荐 `--payload-file <path>` 或 `--payload-stdin`；payload 来源优先级为 `--payload-file` > `--payload-stdin` > `--payload-json`，显式参数覆盖 payload 同名字段。
 
 ## 交互式内建命令
 
@@ -92,21 +95,21 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 
 | 英文命令 | 中文命令 | 功能说明 | 需登录 | 桌面辅助 |
 | --- | --- | --- | --- | --- |
-| `voucher next-number` | 获取下一个凭证号 | 获取下一个凭证号 | 是 | 否 |
+| `voucher next-number` | 获取下一个凭证号 | 获取下一个凭证号；已删除凭证不占用新号 | 是 | 否 |
 | `voucher save` | 创建凭证 | 创建凭证 | 是 | 否 |
 | `voucher update` | 更新凭证 | 更新凭证 | 是 | 否 |
 | `voucher export-edit-payload` | 导出凭证编辑载荷 | 导出凭证编辑载荷 | 是 | 否 |
 | `voucher list` | 凭证列表 | 查询凭证列表；默认隐藏已删除凭证，status=all 可包含已删除 | 是 | 否 |
 | `voucher entries` | 查询凭证明细 | 查询凭证明细 | 是 | 否 |
 | `voucher swap` | 交换凭证位置 | 交换凭证位置 | 是 | 否 |
-| `voucher renumber` | 整理凭证号 | 整理凭证号 | 是 | 否 |
+| `voucher renumber` | 整理凭证号 | 整理有效凭证号；已删除凭证保留历史编号 | 是 | 否 |
 | `voucher batch` | 批量处理凭证 | 批量处理凭证 | 是 | 否 |
 
 凭证修改建议流程：先执行 `voucher export-edit-payload --voucherId <id> --filePath <json路径>` 导出可编辑 JSON，修改文件后执行 `voucher update --payload-file <json路径>` 提交。`voucher update` 只允许更新未审核且当前期间可写的凭证。
 
 凭证列表默认返回状态 `0/1/2` 的凭证，不包含已删除凭证；如需包含已删除凭证，传入 `status=all`；如只查询已删除凭证，传入 `status=3`。
 
-凭证号整理流程：执行 `voucher renumber --ledgerId <账套ID> --period <YYYY-MM>`，系统会按当前期间的凭证字号分组从 1 开始重排未删除且未记账凭证号；如期间内存在已记账凭证或历史已记账删除态凭证，将拒绝整理。
+凭证取号与整理规则：`voucher next-number` 与新建凭证自动取号只统计有效凭证，已删除凭证不再占用新号。执行 `voucher renumber --ledgerId <账套ID> --period <YYYY-MM>` 时，系统会按当前期间的凭证字号分组从 1 开始重排有效且未记账凭证号；已删除凭证保留历史编号。如期间内存在已记账凭证或历史已记账删除态凭证，将拒绝整理；恢复已删除凭证时如原编号已被有效凭证占用，将拒绝恢复并提示先整理或另行处理。
 
 ## initial-balance
 
@@ -140,10 +143,10 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `report detail` | 查询报表快照详情 | 查询报表快照详情 | 是 | 否 |
 | `report generate` | 生成报表快照 | 生成报表快照 | 是 | 否 |
 | `report delete` | 删除报表快照 | 删除报表快照 | 是 | 否 |
-| `report export` | 导出报表快照 | 导出报表快照 | 是 | 否 |
-| `report export-batch` | 批量导出报表快照 | 批量导出报表快照 | 是 | 否 |
+| `report export` | 导出报表快照 | 导出报表快照；PDF 与 HTML 版式同源 | 是 | 否 |
+| `report export-batch` | 批量导出报表快照 | 批量导出报表快照；PDF 与 HTML 版式同源 | 是 | 否 |
 
-说明：`report generate` 生成 `balance_sheet` 时推荐传 `month=YYYY-MM`；同时兼容 `startPeriod` 与 `endPeriod` 相同的同月输入。利润表、业务活动表、现金流量表和所有者权益变动表继续使用 `startPeriod` / `endPeriod` 区间。
+说明：`report generate` 生成 `balance_sheet` 时推荐传 `month=YYYY-MM`；同时兼容 `startPeriod` 与 `endPeriod` 相同的同月输入。利润表、业务活动表、现金流量表和所有者权益变动表继续使用 `startPeriod` / `endPeriod` 区间。`report export format=pdf` 与 HTML 导出复用同一份 HTML/CSS 版式，并通过 Electron/Chromium 生成 PDF；桌面 PDF 引擎不可用时会返回结构化错误。
 
 ## book
 

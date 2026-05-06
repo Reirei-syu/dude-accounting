@@ -189,7 +189,11 @@ describe('reportExport service', () => {
 
   it('uses the provided pdf exporter for pdf output', async () => {
     const detail = createDetail('2026.03 资产负债表')
-    const exportPdf = vi.fn(async (filePath: string) => filePath)
+    const exportPdf = vi.fn(async (filePath: string, html: string) => {
+      expect(html).toContain('<h1>资产负债表</h1>')
+      expect(html).toContain('编制单位：演示账套')
+      return filePath
+    })
 
     const exportedPath = await exportReportSnapshotToFile(
       detail as never,

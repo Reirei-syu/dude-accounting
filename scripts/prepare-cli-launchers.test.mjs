@@ -27,6 +27,9 @@ describe('prepare-cli-launchers', () => {
       'wslpath -w "$ARG"'
     )
     expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc'), 'utf8')).toContain(
+      'DUDEACC_PAYLOAD_STDIN_JSON="$(cat)"'
+    )
+    expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc'), 'utf8')).toContain(
       '"$APP_EXE" --cli "${ARGS[@]}"'
     )
     expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting'), 'utf8')).toContain(
@@ -42,7 +45,10 @@ describe('prepare-cli-launchers', () => {
       'dudeacc-host.exe'
     )
     expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting.cmd'), 'utf8')).toContain(
-      'dude-app.exe" --cli %*'
+      'DUDEACC_PAYLOAD_STDIN_JSON'
+    )
+    expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting.cmd'), 'utf8')).toContain(
+      '"%DUDEACC_APP%" --cli %*'
     )
   })
 })

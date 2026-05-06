@@ -15,6 +15,7 @@ if [ ! -f "$APP_EXE" ]; then
 fi
 ARGS=()
 CONVERT_NEXT=0
+PAYLOAD_STDIN=0
 for ARG in "$@"; do
   if [ "$CONVERT_NEXT" -eq 1 ]; then
     if command -v wslpath >/dev/null 2>&1; then
@@ -31,13 +32,31 @@ for ARG in "$@"; do
   if [ "$ARG" = "--payload-file" ]; then
     CONVERT_NEXT=1
   fi
+  if [ "$ARG" = "--payload-stdin" ]; then
+    PAYLOAD_STDIN=1
+  fi
 done
+if [ "$PAYLOAD_STDIN" -eq 1 ]; then
+  if [ -t 0 ]; then
+    DUDEACC_PAYLOAD_STDIN_JSON=""
+  else
+    DUDEACC_PAYLOAD_STDIN_JSON="$(cat)"
+  fi
+  export DUDEACC_PAYLOAD_STDIN_JSON
+fi
 "$APP_EXE" --cli "\${ARGS[@]}"
 `
 
 const WINDOWS_BATCH_LAUNCHER_CONTENT = `@echo off
 setlocal
-"%~dp0dude-app.exe" --cli %*
+set "DUDEACC_APP=%~dp0dude-app.exe"
+set "DUDEACC_ARGS=%*"
+echo.%DUDEACC_ARGS% | findstr /C:"--payload-stdin" >nul
+if errorlevel 1 (
+  "%DUDEACC_APP%" --cli %*
+  exit /b %ERRORLEVEL%
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$payload = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }; $env:DUDEACC_PAYLOAD_STDIN_JSON = $payload; & $env:DUDEACC_APP --cli @args; exit $LASTEXITCODE" -- %*
 exit /b %ERRORLEVEL%
 `
 

@@ -6,6 +6,7 @@ if [ ! -f "$APP_EXE" ]; then
 fi
 ARGS=()
 CONVERT_NEXT=0
+PAYLOAD_STDIN=0
 for ARG in "$@"; do
   if [ "$CONVERT_NEXT" -eq 1 ]; then
     if command -v wslpath >/dev/null 2>&1; then
@@ -22,5 +23,16 @@ for ARG in "$@"; do
   if [ "$ARG" = "--payload-file" ]; then
     CONVERT_NEXT=1
   fi
+  if [ "$ARG" = "--payload-stdin" ]; then
+    PAYLOAD_STDIN=1
+  fi
 done
+if [ "$PAYLOAD_STDIN" -eq 1 ]; then
+  if [ -t 0 ]; then
+    DUDEACC_PAYLOAD_STDIN_JSON=""
+  else
+    DUDEACC_PAYLOAD_STDIN_JSON="$(cat)"
+  fi
+  export DUDEACC_PAYLOAD_STDIN_JSON
+fi
 "$APP_EXE" --cli "${ARGS[@]}"

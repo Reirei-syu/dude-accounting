@@ -186,10 +186,9 @@ export function buildVoucherNumberRenumberPlan(
       .filter((row) => row.status === 0 || row.status === 1)
       .sort(compareRowsByNumberDateId)
     const deletedRows = groupRows.filter((row) => row.status === 3).sort(compareRowsByNumberDateId)
-    const orderedRows = [...activeRows, ...deletedRows]
     const groupChanges: VoucherNumberChange[] = []
 
-    for (const [index, row] of orderedRows.entries()) {
+    for (const [index, row] of activeRows.entries()) {
       const newNumber = index + 1
       const assignment: VoucherNumberAssignment = {
         voucherId: row.id,
@@ -217,7 +216,7 @@ export function buildVoucherNumberRenumberPlan(
 
     groups.push({
       voucherWord,
-      totalCount: orderedRows.length,
+      totalCount: activeRows.length + deletedRows.length,
       activeCount: activeRows.length,
       deletedCount: deletedRows.length,
       updatedCount: groupChanges.length,

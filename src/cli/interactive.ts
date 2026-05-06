@@ -1,4 +1,6 @@
 import readline from 'node:readline/promises'
+import fs from 'node:fs'
+import path from 'node:path'
 import { stdin as processStdin, stdout as processStdout } from 'node:process'
 import type { Readable, Writable } from 'node:stream'
 import { renderCommandOutput } from './output'
@@ -362,6 +364,51 @@ function buildInteractiveHelpText(showAll = false): string {
   ].join('\n')
 }
 
+function parseInteractiveHelpOptions(tokens: string[]): {
+  showAll: boolean
+  outputPath?: string
+} {
+  let showAll = false
+  let outputPath: string | undefined
+
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index]
+    if (token === 'all' || token === '全部') {
+      showAll = true
+      continue
+    }
+
+    if (token === '--output') {
+      outputPath = tokens[index + 1]
+      if (!outputPath || outputPath.startsWith('--')) {
+        throw new CommandError('VALIDATION_ERROR', '--output 需要指定文件路径', null, 2)
+      }
+      index += 1
+    }
+  }
+
+  return {
+    showAll,
+    outputPath
+  }
+}
+
+function writeInteractiveHelpResultToFile(
+  outputPath: string,
+  showAll: boolean
+): CommandResult<{ filePath: string; showAll: boolean; bytes: number }> {
+  const result = buildInteractiveHelpResult(showAll)
+  const resolvedPath = path.resolve(outputPath)
+  const content = `${renderCommandOutput(result, 'json')}\n`
+  fs.mkdirSync(path.dirname(resolvedPath), { recursive: true })
+  fs.writeFileSync(resolvedPath, content, 'utf8')
+  return createSuccessResult({
+    filePath: resolvedPath,
+    showAll,
+    bytes: Buffer.byteLength(content, 'utf8')
+  })
+}
+
 export function listShellBuiltInCommands(): ShellBuiltInCommand[] {
   return builtinCommands.map((item) => ({
     ...item,
@@ -403,6 +450,14 @@ export function resolveInteractiveCommand(line: string): ResolvedInteractiveInpu
 
   const commandTokens = normalizeCommandTokens(rawTokens)
   const parsed = parseCliArgs(commandTokens)
+  if (parsed.payloadStdin) {
+    throw new CommandError(
+      'VALIDATION_ERROR',
+      '交互式命令不支持 --payload-stdin，请使用 --payload-file，或在批处理 CLI 中通过管道输入',
+      null,
+      2
+    )
+  }
   return {
     kind: 'command',
     domain: parsed.domain,
@@ -564,12 +619,27 @@ export function executeShellBuiltin(
 
   switch (builtinName) {
     case 'help': {
-      const showAll = normalizedTokens[1] === 'all' || normalizedTokens[1] === '全部'
+      const helpOptions = parseInteractiveHelpOptions(normalizedTokens)
+      if (helpOptions.outputPath) {
+        const exportResult = writeInteractiveHelpResultToFile(
+          helpOptions.outputPath,
+          helpOptions.showAll
+        )
+        return {
+          handled: true,
+          nextState: state,
+          text: `完整帮助已导出：${String(
+            (exportResult.data as { filePath: string }).filePath
+          )}`,
+          result: exportResult
+        }
+      }
+
       return {
         handled: true,
         nextState: state,
-        text: buildInteractiveHelpText(showAll),
-        result: buildInteractiveHelpResult(showAll)
+        text: buildInteractiveHelpText(helpOptions.showAll),
+        result: buildInteractiveHelpResult(helpOptions.showAll)
       }
     }
     case 'exit':

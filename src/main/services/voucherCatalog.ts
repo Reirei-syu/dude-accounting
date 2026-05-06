@@ -53,7 +53,7 @@ export function getNextVoucherNumber(
 ): number {
   const row = db
     .prepare(
-      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ?'
+      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND status <> 3'
     )
     .get(ledgerId, period) as { max_num: number }
 

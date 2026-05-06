@@ -49,6 +49,19 @@ export function normalizeCliPayloadFilePath(payloadFile: string): string {
   return payloadFile
 }
 
+function parseJsonPayload(sourceName: string, rawJson: string): unknown {
+  try {
+    return JSON.parse(stripUtf8Bom(rawJson)) as unknown
+  } catch (error) {
+    throw new CommandError(
+      'VALIDATION_ERROR',
+      error instanceof Error ? `解析 ${sourceName} 失败：${error.message}` : `解析 ${sourceName} 失败`,
+      null,
+      2
+    )
+  }
+}
+
 function normalizeLooseValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => normalizeLooseValue(item))
@@ -73,15 +86,56 @@ function normalizeLooseValue(value: unknown): unknown {
   return value
 }
 
+function hasOwnFlags(flags: Record<string, string | boolean>): boolean {
+  return Object.keys(flags).length > 0
+}
+
+function isMergeablePayloadObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function mergeExplicitFlags(
+  payload: unknown,
+  flags: Record<string, string | boolean>
+): unknown {
+  if (!hasOwnFlags(flags)) {
+    return payload
+  }
+
+  const normalizedFlags = normalizeLooseValue(flags) as Record<string, unknown>
+  if (payload === undefined) {
+    return normalizedFlags
+  }
+
+  if (!isMergeablePayloadObject(payload)) {
+    throw new CommandError(
+      'VALIDATION_ERROR',
+      'payload 文件、stdin 或 JSON 的根节点不是对象，不能再叠加命令行参数',
+      {
+        payloadType: Array.isArray(payload) ? 'array' : typeof payload
+      },
+      2
+    )
+  }
+
+  return {
+    ...payload,
+    ...normalizedFlags
+  }
+}
+
 export function resolveCliPayload(input: {
   payloadFile?: string
+  payloadStdinJson?: string
   payloadJson?: string
   flags: Record<string, string | boolean>
 }): unknown {
+  let payload: unknown
+
   if (input.payloadFile) {
     const payloadFilePath = normalizeCliPayloadFilePath(input.payloadFile)
     try {
-      return JSON.parse(stripUtf8Bom(fs.readFileSync(payloadFilePath, 'utf8'))) as unknown
+      payload = JSON.parse(stripUtf8Bom(fs.readFileSync(payloadFilePath, 'utf8'))) as unknown
     } catch (error) {
       throw new CommandError(
         'VALIDATION_ERROR',
@@ -93,20 +147,18 @@ export function resolveCliPayload(input: {
         2
       )
     }
+    return mergeExplicitFlags(payload, input.flags)
+  }
+
+  if (typeof input.payloadStdinJson === 'string') {
+    payload = parseJsonPayload('stdin payload JSON', input.payloadStdinJson)
+    return mergeExplicitFlags(payload, input.flags)
   }
 
   if (input.payloadJson) {
-    try {
-      return JSON.parse(input.payloadJson) as unknown
-    } catch (error) {
-      throw new CommandError(
-        'VALIDATION_ERROR',
-        error instanceof Error ? `解析 payload JSON 失败：${error.message}` : '解析 payload JSON 失败',
-        null,
-        2
-      )
-    }
+    payload = parseJsonPayload('payload JSON', input.payloadJson)
+    return mergeExplicitFlags(payload, input.flags)
   }
 
-  return normalizeLooseValue(input.flags)
+  return mergeExplicitFlags(undefined, input.flags)
 }

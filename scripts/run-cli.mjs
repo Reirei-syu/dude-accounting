@@ -56,11 +56,12 @@ function extractCommandResult(output) {
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    const { stdoutTarget, stderrTarget, ...spawnOptions } = options
     const child = spawn(command, args, {
       cwd: process.cwd(),
       env: process.env,
       windowsHide: false,
-      ...options
+      ...spawnOptions
     })
 
     let stdout = ''
@@ -69,16 +70,16 @@ function run(command, args, options = {}) {
     child.stdout?.on('data', (chunk) => {
       const text = chunk.toString()
       stdout += text
-      if (options.stdoutTarget) {
-        options.stdoutTarget.write(text)
+      if (stdoutTarget) {
+        stdoutTarget.write(text)
       }
     })
 
     child.stderr?.on('data', (chunk) => {
       const text = chunk.toString()
       stderr += text
-      if (options.stderrTarget) {
-        options.stderrTarget.write(text)
+      if (stderrTarget) {
+        stderrTarget.write(text)
       }
     })
 
@@ -95,6 +96,22 @@ function run(command, args, options = {}) {
         stderr
       })
     })
+  })
+}
+
+function readProcessStdin() {
+  if (process.stdin.isTTY) {
+    return Promise.resolve('')
+  }
+
+  return new Promise((resolve, reject) => {
+    let input = ''
+    process.stdin.setEncoding('utf8')
+    process.stdin.on('data', (chunk) => {
+      input += chunk
+    })
+    process.stdin.once('error', reject)
+    process.stdin.once('end', () => resolve(input))
   })
 }
 
@@ -183,8 +200,16 @@ async function runInteractiveShell() {
 }
 
 async function runBatchMode() {
+  const shouldForwardStdin = cliArgs.includes('--payload-stdin')
+  const env = shouldForwardStdin
+    ? {
+        ...process.env,
+        DUDEACC_PAYLOAD_STDIN_JSON: await readProcessStdin()
+      }
+    : process.env
   const result = await run(electronPath, ['.', '--cli', ...cliArgs], {
-    stdio: ['inherit', 'inherit', 'inherit']
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env
   })
   process.exit(result.code)
 }

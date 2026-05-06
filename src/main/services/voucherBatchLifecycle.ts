@@ -16,6 +16,7 @@ export interface VoucherBatchTarget {
   deleted_from_status: number | null
   ledger_id: number
   period: string
+  voucher_number: number
   voucher_word: string
   auditor_id: number | null
   bookkeeper_id: number | null
@@ -80,6 +81,7 @@ export function listVoucherBatchTargets(
          deleted_from_status,
          ledger_id,
          period,
+         voucher_number,
          voucher_word,
          auditor_id,
          bookkeeper_id
@@ -87,6 +89,31 @@ export function listVoucherBatchTargets(
        WHERE id IN (${placeholders})`
     )
     .all(...voucherIds) as VoucherBatchTarget[]
+}
+
+function findActiveVoucherNumberConflict(
+  db: Database.Database,
+  voucher: VoucherBatchTarget
+): { id: number } | undefined {
+  return db
+    .prepare(
+      `SELECT id
+       FROM vouchers
+       WHERE ledger_id = ?
+         AND period = ?
+         AND voucher_word = ?
+         AND voucher_number = ?
+         AND status <> 3
+         AND id <> ?
+       LIMIT 1`
+    )
+    .get(
+      voucher.ledger_id,
+      voucher.period,
+      voucher.voucher_word,
+      voucher.voucher_number,
+      voucher.id
+    ) as { id: number } | undefined
 }
 
 export function applyVoucherBatchAction(
@@ -145,6 +172,12 @@ export function applyVoucherBatchAction(
            WHERE id = ?`
         ).run(voucher.id)
       } else if (action === 'restoreDelete') {
+        const conflict = findActiveVoucherNumberConflict(db, voucher)
+        if (conflict) {
+          throw new Error(
+            `无法恢复已删除凭证：${voucher.voucher_word}-${voucher.voucher_number} 已被有效凭证占用，请先整理凭证号或另行处理`
+          )
+        }
         const restoredStatus = voucher.deleted_from_status ?? 0
         if (restoredStatus === 0) {
           db.prepare(

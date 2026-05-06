@@ -89,14 +89,16 @@ class FakeVoucherLifecycleDb {
 
     if (
       normalized ===
-      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ?'
+      'SELECT COALESCE(MAX(voucher_number), 0) AS max_num FROM vouchers WHERE ledger_id = ? AND period = ? AND status <> 3'
     ) {
       return {
         get: (ledgerId, period) => ({
           max_num: this.vouchers
             .filter(
               (voucher) =>
-                voucher.ledger_id === Number(ledgerId) && voucher.period === String(period)
+                voucher.ledger_id === Number(ledgerId) &&
+                voucher.period === String(period) &&
+                voucher.status !== 3
             )
             .reduce((max, voucher) => Math.max(max, voucher.voucher_number), 0)
         }),
@@ -295,6 +297,19 @@ describe('voucherLifecycle service', () => {
       entryDirection: 'outflow',
       cashFlowItemId: 1
     })
+    db.vouchers.push({
+      id: 99,
+      ledger_id: 1,
+      period: '2026-03',
+      voucher_date: '2026-03-01',
+      voucher_number: 8,
+      voucher_word: '记',
+      status: 3,
+      creator_id: 8,
+      auditor_id: null,
+      bookkeeper_id: null,
+      is_carry_forward: 0
+    })
 
     const result = createVoucherWithEntries(db as never, {
       ledgerId: 1,
@@ -327,7 +342,8 @@ describe('voucherLifecycle service', () => {
       voucherNumber: 1,
       status: 2
     })
-    expect(db.vouchers[0]).toMatchObject({
+    const createdVoucher = db.vouchers.find((voucher) => voucher.id === 1)
+    expect(createdVoucher).toMatchObject({
       id: 1,
       status: 2,
       auditor_id: 9,

@@ -1,5 +1,6 @@
 import {
   buildReportExportDefaultPath,
+  exportReportSnapshotToFile,
   exportReportSnapshotsBatch,
   getDefaultReportExportRootDir,
   getPreferredReportExportDir,
@@ -15,7 +16,10 @@ import {
   type ReportExportFormat,
   type ReportListFilters
 } from '../services/reporting'
-import { writeReportSnapshotExcel, writeReportSnapshotPdf } from '../services/reportSnapshotOutput'
+import {
+  writeHtmlSnapshotPdfWithChromium,
+  writeReportSnapshotExcel
+} from '../services/reportSnapshotOutput'
 import type { ReportRenderOptions } from '../../shared/reportTablePresentation'
 import {
   buildBookQueryExportDefaultPath,
@@ -171,10 +175,13 @@ export async function exportReportCommand(
     const detail = getReportSnapshotDetail(context.db, payload.snapshotId, payload.ledgerId)
     requireCommandLedgerAccess(context.db, context.actor, detail.ledger_id)
     const targetPath = resolveReportExportPath(context, payload.format, payload.filePath, detail)
-    const exportPath =
-      payload.format === 'xlsx'
-        ? await writeReportSnapshotExcel(targetPath, detail, payload.renderOptions)
-        : await writeReportSnapshotPdf(targetPath, detail, payload.renderOptions)
+    const exportPath = await exportReportSnapshotToFile(
+      detail,
+      payload.format,
+      targetPath,
+      writeHtmlSnapshotPdfWithChromium,
+      payload.renderOptions
+    )
     rememberReportExportDir(context.db, exportPath)
 
     appendActorOperationLog(context, {
@@ -226,7 +233,13 @@ export async function exportReportsBatchCommand(
       async (detail, filePath) =>
         payload.format === 'xlsx'
           ? writeReportSnapshotExcel(filePath, detail, payload.renderOptions)
-          : writeReportSnapshotPdf(filePath, detail, payload.renderOptions)
+          : exportReportSnapshotToFile(
+              detail,
+              payload.format,
+              filePath,
+              writeHtmlSnapshotPdfWithChromium,
+              payload.renderOptions
+            )
     )
     rememberReportExportBatchDir(context.db, payload.directoryPath)
 

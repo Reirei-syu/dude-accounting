@@ -51,6 +51,73 @@ describe('resolveCliPayload', () => {
     })
   })
 
+  it('uses payload-file before stdin and payload-json, then applies explicit flag overrides', () => {
+    const filePath = path.join(os.tmpdir(), `dude-cli-payload-priority-${Date.now()}.json`)
+    tempFiles.push(filePath)
+
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        ledgerId: 1,
+        reportType: 'balance_sheet',
+        period: '2026-01'
+      }),
+      'utf8'
+    )
+
+    expect(
+      resolveCliPayload({
+        payloadFile: filePath,
+        payloadStdinJson: JSON.stringify({
+          ledgerId: 2,
+          reportType: 'income_statement'
+        }),
+        payloadJson: JSON.stringify({
+          ledgerId: 3
+        }),
+        flags: {
+          period: '2026-02'
+        }
+      })
+    ).toEqual({
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      period: '2026-02'
+    })
+  })
+
+  it('reads stdin payload before payload-json and keeps explicit flags as the final override', () => {
+    expect(
+      resolveCliPayload({
+        payloadStdinJson: JSON.stringify({
+          ledgerId: 8,
+          status: 'all'
+        }),
+        payloadJson: JSON.stringify({
+          ledgerId: 9,
+          status: 0
+        }),
+        flags: {
+          status: '3'
+        }
+      })
+    ).toEqual({
+      ledgerId: 8,
+      status: '3'
+    })
+  })
+
+  it('rejects flag overrides when the payload root is not an object', () => {
+    expect(() =>
+      resolveCliPayload({
+        payloadStdinJson: '[1,2,3]',
+        flags: {
+          ledgerId: '1'
+        }
+      })
+    ).toThrow('payload 文件、stdin 或 JSON 的根节点不是对象')
+  })
+
   it('converts WSL mount payload paths before Windows reads the file', () => {
     expect(normalizeCliPayloadFilePath('/mnt/d/tmp/voucher.json')).toBe(
       process.platform === 'win32' ? 'D:\\tmp\\voucher.json' : '/mnt/d/tmp/voucher.json'

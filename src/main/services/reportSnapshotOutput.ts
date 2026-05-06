@@ -747,3 +747,81 @@ export async function writeReportSnapshotPdf(
 
   return filePath
 }
+
+type ElectronBrowserWindowLike = {
+  loadURL(url: string): Promise<void>
+  webContents: {
+    printToPDF(options: Record<string, unknown>): Promise<Buffer | Uint8Array>
+  }
+  close(): void
+  isDestroyed?(): boolean
+}
+
+type ElectronBrowserWindowConstructor = new (
+  options: Record<string, unknown>
+) => ElectronBrowserWindowLike
+
+async function resolveElectronBrowserWindow(): Promise<ElectronBrowserWindowConstructor> {
+  let electronModule: unknown
+  try {
+    electronModule = await import('electron')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `无法生成 PDF：Electron/Chromium PDF 引擎不可用，请在桌面主进程中执行报表 PDF 导出（${message}）。`
+    )
+  }
+
+  const BrowserWindow = (electronModule as { BrowserWindow?: ElectronBrowserWindowConstructor })
+    .BrowserWindow
+  if (typeof BrowserWindow !== 'function') {
+    throw new Error('无法生成 PDF：Electron/Chromium PDF 引擎不可用，请在桌面主进程中执行报表 PDF 导出。')
+  }
+
+  return BrowserWindow
+}
+
+export async function writeHtmlSnapshotPdfWithChromium(
+  filePath: string,
+  html: string
+): Promise<string> {
+  ensureDirectory(path.dirname(filePath))
+  const BrowserWindow = await resolveElectronBrowserWindow()
+  const window = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+
+  try {
+    const htmlDataUrl = `data:text/html;charset=UTF-8;base64,${Buffer.from(html, 'utf8').toString(
+      'base64'
+    )}`
+    await window.loadURL(htmlDataUrl)
+    const pdfBuffer = await window.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      marginsType: 0
+    })
+    await fs.promises.writeFile(filePath, Buffer.from(pdfBuffer))
+    return filePath
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`无法生成 PDF：Electron/Chromium PDF 输出失败：${message}`)
+  } finally {
+    if (!window.isDestroyed?.()) {
+      window.close()
+    }
+  }
+}
+
+export async function writeReportSnapshotChromiumPdf(
+  filePath: string,
+  detail: ReportSnapshotDetail,
+  renderOptions?: ReportRenderOptions
+): Promise<string> {
+  return writeHtmlSnapshotPdfWithChromium(filePath, buildReportSnapshotHtml(detail, renderOptions))
+}

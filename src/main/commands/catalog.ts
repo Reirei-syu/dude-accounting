@@ -434,7 +434,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'voucher',
     action: 'next-number',
-    description: '获取下一个凭证号',
+    description: '获取下一个凭证号；已删除凭证不占用新号',
     aliases: [],
     batchSafe: true,
     desktopAssisted: false,
@@ -525,7 +525,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'voucher',
     action: 'renumber',
-    description: '整理凭证号',
+    description: '整理有效凭证号；已删除凭证保留历史编号',
     aliases: ['整理凭证号'],
     batchSafe: true,
     desktopAssisted: false,
@@ -720,7 +720,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'report',
     action: 'export',
-    description: '导出报表快照',
+    description: '导出报表快照；PDF 与 HTML 版式同源',
     aliases: [],
     batchSafe: true,
     desktopAssisted: false,
@@ -733,7 +733,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'report',
     action: 'export-batch',
-    description: '批量导出报表快照',
+    description: '批量导出报表快照；PDF 与 HTML 版式同源',
     aliases: [],
     batchSafe: true,
     desktopAssisted: false,

@@ -1,4 +1,6 @@
 import { executeCliCommand, listCommands } from './executor'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import {
   listShellBuiltInCommands,
   runInteractiveCli,
@@ -63,7 +65,7 @@ function buildHelpResult(showAll = false): CommandResult<{
       product: 'dude-accounting',
       aliases: ['dudeacc'],
       usage:
-        'dudeacc|dude-accounting <domain> <action> [--payload-file path | --payload-json json | --key value]',
+        'dudeacc|dude-accounting <domain> <action> [--payload-file path | --payload-stdin | --payload-json json | --key value]',
       interactiveEntry: '无参数且当前终端为 TTY 时，直接进入 dudeacc 交互式命令壳',
       commands: listCommands(),
       builtinCommands: showAll ? listShellBuiltInCommands() : undefined,
@@ -72,6 +74,58 @@ function buildHelpResult(showAll = false): CommandResult<{
     },
     error: null
   }
+}
+
+function parseHelpOutputPath(argv: string[]): string | undefined {
+  const outputIndex = argv.indexOf('--output')
+  if (outputIndex < 0) {
+    return undefined
+  }
+
+  const outputPath = argv[outputIndex + 1]
+  if (!outputPath || outputPath.startsWith('--')) {
+    throw new CommandError('VALIDATION_ERROR', '--output 需要指定文件路径', null, 2)
+  }
+  return outputPath
+}
+
+async function writeCommandResultToFile(
+  filePath: string,
+  result: CommandResult<unknown>,
+  outputMode: CommandOutputMode
+): Promise<CommandResult<{ filePath: string; bytes: number }>> {
+  const resolvedPath = path.resolve(filePath)
+  await fs.mkdir(path.dirname(resolvedPath), { recursive: true })
+  const content = `${renderCommandOutput(result, outputMode)}\n`
+  await fs.writeFile(resolvedPath, content, 'utf8')
+  return {
+    status: 'success',
+    data: {
+      filePath: resolvedPath,
+      bytes: Buffer.byteLength(content, 'utf8')
+    },
+    error: null
+  }
+}
+
+async function readStdinPayloadJson(): Promise<string> {
+  const envPayload = process.env.DUDEACC_PAYLOAD_STDIN_JSON
+  if (typeof envPayload === 'string') {
+    if (!envPayload.trim()) {
+      throw new CommandError('VALIDATION_ERROR', '--payload-stdin 未读取到 JSON 输入', null, 2)
+    }
+    return envPayload
+  }
+
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+  }
+  const raw = Buffer.concat(chunks).toString('utf8')
+  if (!raw.trim()) {
+    throw new CommandError('VALIDATION_ERROR', '--payload-stdin 未读取到 JSON 输入', null, 2)
+  }
+  return raw
 }
 
 function detectInteractiveTerminalState() {
@@ -88,12 +142,19 @@ export async function runCliBatch(runtime: RuntimeContext, argv: string[]): Prom
 
   try {
     if (argv.length === 0 || argv.includes('--help')) {
+      const helpOutputPath = parseHelpOutputPath(argv)
+      outputMode = argv.includes('--pretty') ? 'pretty' : 'json'
       result = buildHelpResult(argv.includes('--all'))
+      if (helpOutputPath) {
+        result = await writeCommandResultToFile(helpOutputPath, result, outputMode)
+      }
     } else {
       const parsed = parseCliArgs(argv)
       outputMode = parsed.outputMode
+      const payloadStdinJson = parsed.payloadStdin ? await readStdinPayloadJson() : undefined
       const payload = resolveCliPayload({
         payloadFile: parsed.payloadFile,
+        payloadStdinJson,
         payloadJson: parsed.payloadJson,
         flags: parsed.flags
       })

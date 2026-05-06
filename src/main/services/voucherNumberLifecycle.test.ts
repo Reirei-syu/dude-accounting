@@ -56,6 +56,8 @@ class FakeVoucherNumberDb {
           const duplicate = this.vouchers.find(
             (item) =>
               item.id !== voucher.id &&
+              item.status !== 3 &&
+              voucher.status !== 3 &&
               item.ledgerId === voucher.ledgerId &&
               item.period === voucher.period &&
               item.voucherWord === voucher.voucherWord &&
@@ -100,7 +102,7 @@ function createVoucher(overrides: Partial<VoucherNumberRow>): VoucherNumberRow {
 }
 
 describe('voucherNumberLifecycle service', () => {
-  it('renumbers normal and carry-forward vouchers by voucher word and moves deleted rows to the tail', () => {
+  it('renumbers active normal and carry-forward vouchers by voucher word without changing deleted rows', () => {
     const db = new FakeVoucherNumberDb()
     db.vouchers.push(
       createVoucher({ id: 1, voucherNumber: 1, voucherWord: '记', status: 0 }),
@@ -122,14 +124,14 @@ describe('voucherNumberLifecycle service', () => {
       ledgerId: 1,
       period: '2026-01',
       totalCount: 4,
-      updatedCount: 3,
+      updatedCount: 2,
       groups: [
         {
           voucherWord: '记',
           totalCount: 3,
           activeCount: 2,
           deletedCount: 1,
-          updatedCount: 2,
+          updatedCount: 1,
           firstNumber: 1,
           lastNumber: 2
         },
@@ -146,13 +148,12 @@ describe('voucherNumberLifecycle service', () => {
     })
     expect(result.changes).toEqual([
       expect.objectContaining({ voucherId: 2, oldNumber: 3, newNumber: 2 }),
-      expect.objectContaining({ voucherId: 3, oldNumber: 2, newNumber: 3 }),
       expect.objectContaining({ voucherId: 5, oldNumber: 3, newNumber: 2 })
     ])
     expect(db.vouchers.map((voucher) => [voucher.id, voucher.voucherNumber])).toEqual([
       [1, 1],
       [2, 2],
-      [3, 3],
+      [3, 2],
       [4, 1],
       [5, 2]
     ])
@@ -196,10 +197,10 @@ describe('voucherNumberLifecycle service', () => {
     expect(() => renumberVoucherNumbers(db as never, 1, '2026-01')).not.toThrow()
     expect(db.vouchers.map((voucher) => [voucher.id, voucher.voucherNumber])).toEqual([
       [1, 1],
-      [2, 3],
+      [2, 2],
       [3, 2]
     ])
-    expect(db.updateCalls.slice(0, 3).every((call) => call.voucherNumber < 0)).toBe(true)
+    expect(db.updateCalls.slice(0, 2).every((call) => call.voucherNumber < 0)).toBe(true)
   })
 
   it('blocks active posted vouchers and deleted vouchers that came from posted state', () => {
