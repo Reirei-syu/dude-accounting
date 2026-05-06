@@ -51,11 +51,13 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `ledger list` | 账套列表 | 查看账套列表 | 是 | 否 |
 | `ledger create` | 创建账套 | 创建账套 | 是 | 否 |
 | `ledger update` | 更新账套 | 更新账套 | 是 | 否 |
-| `ledger delete` | 删除账套 | 删除账套 | 是 | 否 |
+| `ledger delete` | 删除账套 | 删除账套；缺少已校验备份或档案时需传 riskAcknowledged=true 明确确认风险 | 是 | 否 |
 | `ledger risk` | 获取账套删除风险快照 | 获取账套删除风险快照 | 是 | 否 |
 | `ledger periods` | 期间列表 | 查看账套期间列表 | 是 | 否 |
 | `ledger templates` | 列出标准账套模板 | 列出标准账套模板 | 是 | 否 |
 | `ledger apply-template` | 应用账套标准模板 | 应用账套标准模板 | 是 | 否 |
+
+删除账套前建议先执行 `ledger risk --ledgerId <账套ID>` 查看风险快照；缺少已校验备份或档案时，CLI 删除需在 payload 中显式传入 `riskAcknowledged=true`，不使用额外 `force` 参数。
 
 ## subject
 
@@ -94,13 +96,15 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `voucher save` | 创建凭证 | 创建凭证 | 是 | 否 |
 | `voucher update` | 更新凭证 | 更新凭证 | 是 | 否 |
 | `voucher export-edit-payload` | 导出凭证编辑载荷 | 导出凭证编辑载荷 | 是 | 否 |
-| `voucher list` | 凭证列表 | 查询凭证列表 | 是 | 否 |
+| `voucher list` | 凭证列表 | 查询凭证列表；默认隐藏已删除凭证，status=all 可包含已删除 | 是 | 否 |
 | `voucher entries` | 查询凭证明细 | 查询凭证明细 | 是 | 否 |
 | `voucher swap` | 交换凭证位置 | 交换凭证位置 | 是 | 否 |
 | `voucher renumber` | 整理凭证号 | 整理凭证号 | 是 | 否 |
 | `voucher batch` | 批量处理凭证 | 批量处理凭证 | 是 | 否 |
 
 凭证修改建议流程：先执行 `voucher export-edit-payload --voucherId <id> --filePath <json路径>` 导出可编辑 JSON，修改文件后执行 `voucher update --payload-file <json路径>` 提交。`voucher update` 只允许更新未审核且当前期间可写的凭证。
+
+凭证列表默认返回状态 `0/1/2` 的凭证，不包含已删除凭证；如需包含已删除凭证，传入 `status=all`；如只查询已删除凭证，传入 `status=3`。
 
 凭证号整理流程：执行 `voucher renumber --ledgerId <账套ID> --period <YYYY-MM>`，系统会按当前期间的凭证字号分组从 1 开始重排未删除且未记账凭证号；如期间内存在已记账凭证或历史已记账删除态凭证，将拒绝整理。
 

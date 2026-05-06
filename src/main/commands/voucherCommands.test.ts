@@ -54,6 +54,7 @@ vi.mock('./operationLog', () => ({
 import {
   createVoucherCommand,
   exportVoucherEditPayloadCommand,
+  listVouchersCommand,
   renumberVoucherNumbersCommand,
   updateVoucherCommand
 } from './voucherCommands'
@@ -112,6 +113,9 @@ describe('voucherCommands', () => {
       }
     ])
   }
+  const voucherListQuery = {
+    all: vi.fn(() => [])
+  }
 
   const context = {
     db: {
@@ -139,6 +143,13 @@ describe('voucherCommands', () => {
         }
         if (sql.includes('FROM voucher_entries ve') && sql.includes('ORDER BY ve.row_order ASC')) {
           return voucherEntriesQuery
+        }
+        if (
+          sql.includes('SELECT') &&
+          sql.includes('FROM vouchers v') &&
+          sql.includes('INNER JOIN voucher_entries ve')
+        ) {
+          return voucherListQuery
         }
         throw new Error(`unexpected sql: ${sql}`)
       })
@@ -202,6 +213,7 @@ describe('voucherCommands', () => {
         cash_flow_item_id: null
       }
     ])
+    voucherListQuery.all.mockReturnValue([])
     voucherCommandMocks.createVoucherWithEntries.mockReturnValue({
       voucherId: 43,
       voucherNumber: 1,
@@ -316,6 +328,116 @@ describe('voucherCommands', () => {
         field: 'voucherDate'
       }
     })
+  })
+
+  it('returns a clear validation error when voucher date is outside current period', async () => {
+    currentPeriodQuery.get.mockReturnValueOnce({ current_period: '2026-02' })
+
+    const result = await createVoucherCommand(context as never, {
+      ledgerId: 8,
+      voucherDate: '2026-01-03',
+      entries: []
+    } as never)
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '凭证日期所属期间（2026-01）与当前会计期间（2026-02）不一致',
+      details: {
+        ledgerId: 8,
+        currentPeriod: '2026-02',
+        requestedPeriod: '2026-01',
+        voucherDate: '2026-01-03'
+      }
+    })
+    expect(voucherCommandMocks.createVoucherWithEntries).not.toHaveBeenCalled()
+  })
+
+  it('returns a clear validation error when ledger current period is missing', async () => {
+    currentPeriodQuery.get.mockReturnValueOnce({ current_period: '' })
+
+    const result = await createVoucherCommand(context as never, {
+      ledgerId: 8,
+      voucherDate: '2026-01-03',
+      entries: []
+    } as never)
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '账套当前会计期间未设置，无法保存或整理凭证',
+      details: {
+        ledgerId: 8,
+        currentPeriod: null,
+        requestedPeriod: '2026-01',
+        voucherDate: '2026-01-03'
+      }
+    })
+    expect(voucherCommandMocks.createVoucherWithEntries).not.toHaveBeenCalled()
+  })
+
+  it('keeps closed period validation details for voucher save', async () => {
+    voucherCommandMocks.assertPeriodWritable.mockImplementationOnce(() => {
+      throw new Error('当前会计期间（2026-01）已结账，本期凭证不能新增或编辑')
+    })
+
+    const result = await createVoucherCommand(context as never, {
+      ledgerId: 8,
+      voucherDate: '2026-01-03',
+      entries: []
+    } as never)
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: '当前会计期间（2026-01）已结账，本期凭证不能新增或编辑',
+      details: {
+        ledgerId: 8,
+        currentPeriod: '2026-01',
+        requestedPeriod: '2026-01',
+        voucherDate: '2026-01-03'
+      }
+    })
+    expect(voucherCommandMocks.createVoucherWithEntries).not.toHaveBeenCalled()
+  })
+
+  it('normalizes voucher list status filters before querying summaries', async () => {
+    const result = await listVouchersCommand(context as never, {
+      ledgerId: 8,
+      status: '3'
+    } as never)
+
+    expect(result.status).toBe('success')
+    expect(voucherListQuery.all).toHaveBeenCalledWith(8, 3)
+  })
+
+  it('passes voucher list status=all through as an explicit all-states query', async () => {
+    const result = await listVouchersCommand(context as never, {
+      ledgerId: 8,
+      status: 'all'
+    } as never)
+
+    expect(result.status).toBe('success')
+    expect(voucherListQuery.all).toHaveBeenCalledWith(8)
+  })
+
+  it('rejects invalid voucher list status filters', async () => {
+    const result = await listVouchersCommand(context as never, {
+      ledgerId: 8,
+      status: 'deleted'
+    } as never)
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'status 仅支持 0、1、2、3 或 all；默认不返回已删除凭证，status=all 可包含已删除凭证',
+      details: {
+        field: 'status',
+        received: 'deleted',
+        allowed: [0, 1, 2, 3, 'all']
+      }
+    })
+    expect(voucherListQuery.all).not.toHaveBeenCalled()
   })
 
   it('normalizes update payload aliases before invoking lifecycle', async () => {

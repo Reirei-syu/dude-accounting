@@ -180,7 +180,7 @@ CLI -> src/main/commands -> src/main/services -> core/database
 
 - `--pretty`：切换成人类可读输出
 - `--payload-file <path>`：推荐的复杂输入方式
-- `--payload-json "<json>"`：适合简单 JSON
+- `--payload-json "<json>"`：适合简单 JSON；跨 shell 的复杂 JSON 建议改用 `--payload-file`
 - 显式参数优先于交互式上下文
 
 ## 9. CLI 会话与数据位置
@@ -241,6 +241,11 @@ CLI 登录态会持久化到：
 - 优先使用 `--payload-file`
 - 对删除、恢复、结账类操作显式传入原因、风险确认或审批字段
 - 先查询再修改，不要直接盲写
+
+凭证与账套删除补充：
+
+- `voucher list` 默认只返回状态 `0/1/2`，如需包含已删除凭证传 `status=all`，如只看已删除传 `status=3`。
+- `ledger delete` 已支持 CLI 风险确认路径；缺少已校验备份或档案时，先用 `ledger risk` 查看风险，再在 payload 中传 `riskAcknowledged=true`，不要新增或依赖 `force` 参数。
 
 ## 12. 桌面辅助型 CLI 命令
 

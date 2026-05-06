@@ -652,6 +652,22 @@ describe('reporting service', () => {
     expect(snapshotByCliRange.period).toBe('2026.03')
     expect(snapshotByCliRange.as_of_date).toBe('2026-03-31')
 
+    const endOnlyDb = createTestDb()
+    const endOnlyTestDb = endOnlyDb as never
+    seedEnterpriseLedger(endOnlyDb)
+
+    const snapshotByEndPeriod = generateReportSnapshot(endOnlyTestDb, {
+      ledgerId: 1,
+      reportType: 'balance_sheet',
+      endPeriod: '2026-03',
+      includeUnpostedVouchers: false,
+      generatedBy: 9,
+      now: '2026-03-09T10:00:32.000Z'
+    })
+
+    expect(snapshotByEndPeriod.period).toBe('2026.03')
+    expect(snapshotByEndPeriod.as_of_date).toBe('2026-03-31')
+
     expect(() =>
       generateReportSnapshot(cliTestDb, {
         ledgerId: 1,
@@ -660,9 +676,19 @@ describe('reporting service', () => {
         endPeriod: '2026-02',
         includeUnpostedVouchers: false,
         generatedBy: 9,
-        now: '2026-03-09T10:00:32.000Z'
+        now: '2026-03-09T10:00:33.000Z'
       })
     ).toThrow('资产负债表只能按单月生成，起始月份和结束月份必须一致')
+
+    expect(() =>
+      generateReportSnapshot(cliTestDb, {
+        ledgerId: 1,
+        reportType: 'balance_sheet',
+        includeUnpostedVouchers: false,
+        generatedBy: 9,
+        now: '2026-03-09T10:00:34.000Z'
+      })
+    ).toThrow('资产负债表需要指定会计期间')
   })
 
   it('includes general risk reserve in enterprise balance sheet equity totals', () => {

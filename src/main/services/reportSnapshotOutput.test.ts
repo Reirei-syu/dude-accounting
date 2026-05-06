@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildDefaultReportExportFileName,
   buildReportSnapshotHtml,
+  resolveReportPdfCjkFont,
   writeReportSnapshotExcel,
   writeReportSnapshotHtml,
   writeReportSnapshotPdf
@@ -152,6 +153,26 @@ describe('reportSnapshotOutput service', () => {
     expect(buildDefaultReportExportFileName(detail, 'pdf')).toBe(
       '2025.12-2026.03 利润表_含未记账凭证.pdf'
     )
+  })
+
+  it('resolves the first available CJK font candidate for PDF exports', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const missingFontPath = path.join(tempDir, 'missing.ttf')
+    const fontPath = path.join(tempDir, 'cjk.ttf')
+    fs.writeFileSync(fontPath, 'font-placeholder')
+
+    expect(
+      resolveReportPdfCjkFont([
+        { filePath: missingFontPath },
+        { filePath: fontPath, family: 'Test CJK' }
+      ])
+    ).toEqual({ filePath: fontPath, family: 'Test CJK' })
+  })
+
+  it('returns null when no CJK font candidate exists for PDF exports', () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+
+    expect(resolveReportPdfCjkFont([{ filePath: path.join(tempDir, 'missing.ttf') }])).toBeNull()
   })
 
   it('writes cross-year excel and html exports with stable title metadata', async () => {
@@ -329,7 +350,14 @@ describe('reportSnapshotOutput service', () => {
 
     const html = buildReportSnapshotHtml(detail, { showCashflowPreviousAmount: false })
     await writeReportSnapshotExcel(xlsxPath, detail, { showCashflowPreviousAmount: false })
-    await writeReportSnapshotPdf(pdfPath, detail, { showCashflowPreviousAmount: false })
+    const cjkFont = resolveReportPdfCjkFont()
+    if (cjkFont) {
+      await writeReportSnapshotPdf(pdfPath, detail, { showCashflowPreviousAmount: false })
+    } else {
+      await expect(
+        writeReportSnapshotPdf(pdfPath, detail, { showCashflowPreviousAmount: false })
+      ).rejects.toThrow('未找到可用中文字体')
+    }
 
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.readFile(xlsxPath)
@@ -340,6 +368,10 @@ describe('reportSnapshotOutput service', () => {
     expect(worksheet?.getCell(4, 1).value).toBe('项目')
     expect(worksheet?.getCell(4, 2).value).toBe('本年金额')
     expect(worksheet?.getCell(4, 3).value).not.toBe('上年金额')
-    expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+    if (cjkFont) {
+      expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+    } else {
+      expect(fs.existsSync(pdfPath)).toBe(false)
+    }
   })
 })

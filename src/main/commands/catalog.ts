@@ -187,7 +187,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'ledger',
     action: 'delete',
-    description: '删除账套',
+    description: '删除账套；缺少已校验备份或档案时需传 riskAcknowledged=true 明确确认风险',
     aliases: [],
     batchSafe: true,
     desktopAssisted: false,
@@ -486,7 +486,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'voucher',
     action: 'list',
-    description: '查询凭证列表',
+    description: '查询凭证列表；默认隐藏已删除凭证，status=all 可包含已删除',
     aliases: ['凭证列表'],
     batchSafe: true,
     desktopAssisted: false,

@@ -390,6 +390,9 @@ function buildScope(
       throw new Error('资产负债表只能按单月生成，起始月份和结束月份必须一致')
     }
     const targetMonth = normalizedMonth || normalizedStart || normalizedEnd
+    if (!targetMonth) {
+      throw new Error('资产负债表需要指定会计期间 month，或传入 startPeriod/endPeriod 中的一个 YYYY-MM 期间')
+    }
     assertPeriod(targetMonth)
     return {
       mode: 'month',

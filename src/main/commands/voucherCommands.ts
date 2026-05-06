@@ -392,6 +392,46 @@ function normalizeVoucherPeriodPayload(payload: unknown): { ledgerId: number; pe
   }
 }
 
+function throwInvalidVoucherListStatus(value: unknown): never {
+  throw new CommandError(
+    'VALIDATION_ERROR',
+    'status 仅支持 0、1、2、3 或 all；默认不返回已删除凭证，status=all 可包含已删除凭证',
+    {
+      field: 'status',
+      received: value,
+      allowed: [0, 1, 2, 3, 'all']
+    },
+    2
+  )
+}
+
+function normalizeVoucherListStatus(value: unknown): VoucherListStatusFilter | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 3) {
+    return value as VoucherListStatusFilter
+  }
+
+  if (typeof value !== 'string' && typeof value !== 'number') {
+    throwInvalidVoucherListStatus(value)
+  }
+
+  const status = String(value).trim().toLowerCase()
+  if (!status) {
+    return undefined
+  }
+  if (status === 'all') {
+    return 'all'
+  }
+  if (/^[0-3]$/.test(status)) {
+    return Number(status) as VoucherListStatusFilter
+  }
+
+  throwInvalidVoucherListStatus(value)
+}
+
 function normalizeVoucherListPayload(payload: unknown): {
   ledgerId: number
   voucherId?: number
@@ -409,9 +449,7 @@ function normalizeVoucherListPayload(payload: unknown): {
     dateFrom: normalizeOptionalStringField(rawPayload.dateFrom, 'dateFrom'),
     dateTo: normalizeOptionalStringField(rawPayload.dateTo, 'dateTo'),
     keyword: normalizeOptionalStringField(rawPayload.keyword, 'keyword'),
-    status: normalizeOptionalStringField(rawPayload.status, 'status') as
-      | VoucherListStatusFilter
-      | undefined
+    status: normalizeVoucherListStatus(rawPayload.status)
   }
 }
 
@@ -475,15 +513,44 @@ function ensureVoucherPeriod(
   if (!ledger) {
     throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId }, 5)
   }
-  if (ledger.current_period !== period) {
+  const currentPeriod = ledger.current_period?.trim() ?? ''
+  const details: Record<string, unknown> = {
+    ledgerId,
+    currentPeriod: currentPeriod || null,
+    requestedPeriod: period
+  }
+  if (mode === 'date') {
+    details.voucherDate = voucherDateOrPeriod
+  }
+
+  if (!currentPeriod) {
+    throw new CommandError('VALIDATION_ERROR', '账套当前会计期间未设置，无法保存或整理凭证', details, 2)
+  }
+
+  if (currentPeriod !== period) {
+    const message =
+      mode === 'date'
+        ? `凭证日期所属期间（${period}）与当前会计期间（${currentPeriod}）不一致`
+        : `凭证会计期间（${period}）与当前会计期间（${currentPeriod}）不一致`
     throw new CommandError(
       'VALIDATION_ERROR',
-      `凭证日期必须在当前会计期间（${ledger.current_period}）内`,
-      null,
+      message,
+      details,
       2
     )
   }
-  assertPeriodWritable(context.db, ledgerId, period)
+
+  try {
+    assertPeriodWritable(context.db, ledgerId, period)
+  } catch (error) {
+    if (error instanceof CommandError) {
+      throw error
+    }
+    if (error instanceof Error) {
+      throw new CommandError('VALIDATION_ERROR', error.message, details, 2)
+    }
+    throw error
+  }
   return { period }
 }
 

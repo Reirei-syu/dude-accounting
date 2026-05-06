@@ -162,11 +162,7 @@ class FakeVoucherCatalogDb {
       )
     }
 
-    if (
-      statusArg === undefined &&
-      !remainingArgs.some((arg) => typeof arg === 'string' && String(arg).includes('%')) &&
-      !sql.includes('status = ?')
-    ) {
+    if (statusArg === undefined && sql.includes('status IN (0, 1, 2)')) {
       vouchers = vouchers.filter(
         (voucher) => voucher.status === 0 || voucher.status === 1 || voucher.status === 2
       )
@@ -265,9 +261,9 @@ describe('voucherCatalog service', () => {
       {
         id: 3,
         ledger_id: 1,
-        period: '2026-04',
-        voucher_date: '2026-04-01',
-        voucher_number: 1,
+        period: '2026-03',
+        voucher_date: '2026-03-25',
+        voucher_number: 5,
         voucher_word: '记',
         status: 3,
         creator_id: null,
@@ -319,8 +315,37 @@ describe('voucherCatalog service', () => {
         credit_amount: 2000,
         auxiliary_item_id: null,
         cash_flow_item_id: null
+      },
+      {
+        id: 5,
+        voucher_id: 3,
+        row_order: 1,
+        summary: '已删除凭证',
+        subject_code: '1002',
+        debit_amount: 3000,
+        credit_amount: 0,
+        auxiliary_item_id: null,
+        cash_flow_item_id: null
+      },
+      {
+        id: 6,
+        voucher_id: 3,
+        row_order: 2,
+        summary: '已删除凭证',
+        subject_code: '6001',
+        debit_amount: 0,
+        credit_amount: 3000,
+        auxiliary_item_id: null,
+        cash_flow_item_id: null
       }
     )
+
+    const defaultRows = listVoucherSummaries(db as never, {
+      ledgerId: 1,
+      period: '2026-03'
+    })
+
+    expect(defaultRows.map((row) => row.id)).not.toContain(3)
 
     const allRows = listVoucherSummaries(db as never, {
       ledgerId: 1,
@@ -328,7 +353,7 @@ describe('voucherCatalog service', () => {
       status: 'all'
     })
 
-    expect(allRows).toHaveLength(2)
+    expect(allRows.map((row) => row.id)).toContain(3)
 
     const rows = listVoucherSummaries(db as never, {
       ledgerId: 1,
@@ -343,6 +368,18 @@ describe('voucherCatalog service', () => {
       creator_name: 'lisi',
       total_debit: 2000,
       total_credit: 2000
+    })
+
+    const deletedRows = listVoucherSummaries(db as never, {
+      ledgerId: 1,
+      period: '2026-03',
+      status: 3
+    })
+
+    expect(deletedRows).toHaveLength(1)
+    expect(deletedRows[0]).toMatchObject({
+      id: 3,
+      first_summary: '已删除凭证'
     })
   })
 

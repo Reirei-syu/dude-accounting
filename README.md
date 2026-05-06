@@ -182,7 +182,7 @@ dude-accounting <domain> <action>
 
 - 默认输出 JSON
 - 可追加 `--pretty` 切换为人类可读模式
-- 复杂参数建议使用 `--payload-file` 或 `--payload-json`
+- 复杂参数优先使用 `--payload-file`；`--payload-json` 更适合简单 JSON，跨 shell 场景容易受引号转义影响
 - CLI 与桌面 UI 共用同一份本机数据目录，不会分裂出第二套运行时
 - 无参数且当前终端为 TTY 时，`dudeacc` / `dude-accounting` 都会进入交互式命令壳
 - 交互式命令壳固定使用 `dudeacc>` prompt，并在每轮输入前显示一行状态栏：账号 / 账套 / 会计期间
@@ -305,6 +305,8 @@ dude-accounting.cmd -> dude-app.exe --cli <domain> <action> ...
 说明：
 
 - 复杂输入优先推荐 `--payload-file <path>`。
+- `voucher list` 默认隐藏已删除凭证；如需包含已删除凭证，传 `status=all`，如只查询已删除凭证，传 `status=3`。
+- `ledger delete` 的 CLI 风险确认通过 payload 字段 `riskAcknowledged=true` 完成，建议先执行 `ledger risk` 查看删除风险。
 - `print open-preview`、`print print`、`settings diagnostics-open-dir`、`backup restore` 属于 `desktop-assisted` 命令，依赖本机 Electron 桌面环境。
 - `print export-pdf` 支持显式 `--outputPath`，不再依赖先打开预览窗口。
 

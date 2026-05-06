@@ -19,7 +19,7 @@ describe('installer PATH integration', () => {
     expect(installerScript).toContain('"$INSTDIR\\dudeacc-host.exe" path remove --install-dir "$INSTDIR"')
   })
 
-  it('uses the native CLI host for the installed dudeacc wrapper while keeping POSIX shell entry unchanged', () => {
+  it('uses the native CLI host for the installed dudeacc wrapper while keeping POSIX shell entry on the Electron CLI path', () => {
     const dudeaccCmd = fs.readFileSync(dudeaccCmdPath, 'utf8')
     const dudeaccSh = fs.readFileSync(dudeaccShPath, 'utf8')
 
@@ -27,6 +27,9 @@ describe('installer PATH integration', () => {
     expect(dudeaccCmd).not.toContain('ELECTRON_RUN_AS_NODE')
     expect(dudeaccCmd).not.toContain('installedShellEntry.js')
     expect(dudeaccSh).not.toContain('ELECTRON_RUN_AS_NODE')
-    expect(dudeaccSh).toContain('"$SCRIPT_DIR/dude-app" --cli "$@"')
+    expect(dudeaccSh).toContain('APP_EXE="$SCRIPT_DIR/dude-app.exe"')
+    expect(dudeaccSh).toContain('APP_EXE="$SCRIPT_DIR/dude-app"')
+    expect(dudeaccSh).toContain('wslpath -w "$ARG"')
+    expect(dudeaccSh).toContain('"$APP_EXE" --cli "${ARGS[@]}"')
   })
 })

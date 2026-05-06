@@ -10,6 +10,60 @@ import {
 } from '../../shared/reportTablePresentation'
 
 const REPORT_EXPORT_FALLBACK_NAME = '报表导出'
+const REPORT_PDF_CJK_FONT_NAME = 'dude-report-cjk'
+
+export interface ReportPdfCjkFontCandidate {
+  filePath: string
+  family?: string
+}
+
+const DEFAULT_REPORT_PDF_CJK_FONT_CANDIDATES: ReportPdfCjkFontCandidate[] = [
+  { filePath: 'C:\\Windows\\Fonts\\simhei.ttf' },
+  { filePath: 'C:\\Windows\\Fonts\\simkai.ttf' },
+  { filePath: 'C:\\Windows\\Fonts\\simfang.ttf' },
+  { filePath: 'C:\\Windows\\Fonts\\Deng.ttf' },
+  { filePath: 'C:\\Windows\\Fonts\\msyh.ttc', family: 'Microsoft YaHei' },
+  { filePath: 'C:\\Windows\\Fonts\\simsun.ttc', family: 'SimSun' },
+  { filePath: '/System/Library/Fonts/PingFang.ttc', family: 'PingFang SC' },
+  { filePath: '/System/Library/Fonts/Supplemental/Songti.ttc', family: 'Songti SC' },
+  { filePath: '/System/Library/Fonts/Supplemental/Arial Unicode.ttf' },
+  { filePath: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' },
+  { filePath: '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc' },
+  { filePath: '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc' },
+  { filePath: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' },
+  { filePath: '/usr/share/fonts/truetype/arphic/uming.ttc' }
+]
+
+function getConfiguredReportPdfCjkFontCandidates(): ReportPdfCjkFontCandidate[] {
+  const configuredPath = process.env.DUDEACC_REPORT_PDF_CJK_FONT?.trim()
+  return configuredPath ? [{ filePath: configuredPath }] : []
+}
+
+export function resolveReportPdfCjkFont(
+  candidates: ReportPdfCjkFontCandidate[] = [
+    ...getConfiguredReportPdfCjkFontCandidates(),
+    ...DEFAULT_REPORT_PDF_CJK_FONT_CANDIDATES
+  ]
+): ReportPdfCjkFontCandidate | null {
+  return candidates.find((candidate) => fs.existsSync(candidate.filePath)) ?? null
+}
+
+function registerReportPdfCjkFont(document: PDFKit.PDFDocument): void {
+  const font = resolveReportPdfCjkFont()
+  if (!font) {
+    throw new Error(
+      '无法生成 PDF：未找到可用中文字体。请安装 SimHei、Microsoft YaHei、PingFang SC 或 Noto Sans CJK，或通过 DUDEACC_REPORT_PDF_CJK_FONT 指定字体文件路径。'
+    )
+  }
+
+  try {
+    document.registerFont(REPORT_PDF_CJK_FONT_NAME, font.filePath, font.family)
+    document.font(REPORT_PDF_CJK_FONT_NAME)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`无法生成 PDF：中文字体加载失败（${font.filePath}）：${message}`)
+  }
+}
 
 function normalizeText(value: string | null | undefined): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim()
@@ -582,8 +636,10 @@ export async function writeReportSnapshotPdf(
       margin: 40,
       bufferPages: true
     })
-    const stream = fs.createWriteStream(filePath)
 
+    registerReportPdfCjkFont(document)
+
+    const stream = fs.createWriteStream(filePath)
     document.pipe(stream)
 
     const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right
