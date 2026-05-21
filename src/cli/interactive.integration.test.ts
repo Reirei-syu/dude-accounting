@@ -115,7 +115,7 @@ async function runSession(steps: Array<{ waitFor: string; input: string }>): Pro
   let stepIndex = 0
   let settled = false
 
-  const maybeAdvance = () => {
+  const maybeAdvance = (): void => {
     while (stepIndex < steps.length && buffer.includes(steps[stepIndex].waitFor)) {
       const nextInput = steps[stepIndex].input
       stepIndex += 1

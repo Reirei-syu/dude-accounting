@@ -24,37 +24,25 @@ describe('diagnosticsLogPath service', () => {
   it('uses userData/logs by default in development-like environments', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-diagnostics-path-'))
 
-    expect(getDiagnosticsLogPathState(tempDir, { useInstallDirectoryAsDefault: false })).toEqual({
+    expect(getDiagnosticsLogPathState(tempDir)).toEqual({
       mode: 'default',
       defaultDirectory: path.join(tempDir, 'logs'),
       customDirectory: null,
       activeDirectory: path.join(tempDir, 'logs')
     })
-    expect(resolveDiagnosticsLogDirectory(tempDir, { useInstallDirectoryAsDefault: false })).toBe(
-      path.join(tempDir, 'logs')
-    )
+    expect(resolveDiagnosticsLogDirectory(tempDir)).toBe(path.join(tempDir, 'logs'))
   })
 
   it('still uses userData logs by default in packaged environments', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-diagnostics-path-'))
 
-    expect(
-      getDefaultDiagnosticsLogDirectory(tempDir, {
-        useInstallDirectoryAsDefault: true,
-        executablePath: 'D:/Program Files/Dude Accounting/Dude Accounting.exe'
-      })
-    ).toBe(path.join(tempDir, 'logs'))
+    expect(getDefaultDiagnosticsLogDirectory(tempDir)).toBe(path.join(tempDir, 'logs'))
   })
 
   it('ignores installDirectory when resolving packaged default log paths', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-diagnostics-path-'))
 
-    expect(
-      getDefaultDiagnosticsLogDirectory(tempDir, {
-        useInstallDirectoryAsDefault: true,
-        installDirectory: 'D:/Program Files/Dude Accounting'
-      })
-    ).toBe(path.join(tempDir, 'logs'))
+    expect(getDefaultDiagnosticsLogDirectory(tempDir)).toBe(path.join(tempDir, 'logs'))
   })
 
   it('persists a custom diagnostics log directory', () => {

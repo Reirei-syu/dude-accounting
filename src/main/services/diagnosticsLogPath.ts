@@ -8,12 +8,6 @@ interface DiagnosticsLogPathConfigPayload {
   directoryPath?: string
 }
 
-interface DiagnosticsLogPathOptions {
-  executablePath?: string
-  installDirectory?: string
-  useInstallDirectoryAsDefault?: boolean
-}
-
 export interface DiagnosticsLogPathState {
   mode: 'default' | 'custom'
   defaultDirectory: string
@@ -94,17 +88,13 @@ function getRetentionCutoff(now: Date): Date {
 }
 
 export function getDefaultDiagnosticsLogDirectory(
-  baseDir: string,
-  _options: DiagnosticsLogPathOptions = {}
+  baseDir: string
 ): string {
   return path.join(baseDir, 'logs')
 }
 
-export function getDiagnosticsLogPathState(
-  baseDir: string,
-  options: DiagnosticsLogPathOptions = {}
-): DiagnosticsLogPathState {
-  const defaultDirectory = getDefaultDiagnosticsLogDirectory(baseDir, options)
+export function getDiagnosticsLogPathState(baseDir: string): DiagnosticsLogPathState {
+  const defaultDirectory = getDefaultDiagnosticsLogDirectory(baseDir)
   const customDirectory = readDiagnosticsLogPathConfig(baseDir)
 
   return {
@@ -115,11 +105,8 @@ export function getDiagnosticsLogPathState(
   }
 }
 
-export function resolveDiagnosticsLogDirectory(
-  baseDir: string,
-  options: DiagnosticsLogPathOptions = {}
-): string {
-  return getDiagnosticsLogPathState(baseDir, options).activeDirectory
+export function resolveDiagnosticsLogDirectory(baseDir: string): string {
+  return getDiagnosticsLogPathState(baseDir).activeDirectory
 }
 
 export function pruneExpiredDiagnosticsLogs(

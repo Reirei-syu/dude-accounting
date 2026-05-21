@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import Database from 'better-sqlite3'
 import { hashPassword } from '../security/password'
 import {
   buildTimestampToken,
@@ -156,7 +156,7 @@ function writeLedgerBackupManifest(packageDir: string, manifest: LedgerBackupMan
   return manifestPath
 }
 
-function trimLedgerBackupDatabase(db: DatabaseSync, ledgerId: number): void {
+function trimLedgerBackupDatabase(db: Database.Database, ledgerId: number): void {
   db.exec('PRAGMA foreign_keys = ON;')
   db.prepare('DELETE FROM ledgers WHERE id <> ?').run(ledgerId)
 
@@ -170,7 +170,7 @@ function trimLedgerBackupDatabase(db: DatabaseSync, ledgerId: number): void {
 }
 
 function copyLedgerAttachments(
-  db: DatabaseSync,
+  db: Database.Database,
   packageDir: string
 ): LedgerBackupAttachment[] {
   const attachmentDir = path.join(packageDir, 'electronic-vouchers')
@@ -229,7 +229,7 @@ function deriveUserDataPathFromDatabasePath(databasePath: string): string {
 }
 
 function copyLedgerSettingsAssets(
-  db: DatabaseSync,
+  db: Database.Database,
   sourceUserDataPath: string,
   packageDir: string
 ): LedgerBackupSettingsAsset[] {
@@ -391,7 +391,7 @@ export function createLedgerBackupArtifact(input: {
   ensureDirectory(packageDir)
   fs.copyFileSync(input.sourcePath, backupPath)
 
-  const packageDb = new DatabaseSync(backupPath)
+  const packageDb = new Database(backupPath)
   let attachments: LedgerBackupAttachment[] = []
   let settingsAssets: LedgerBackupSettingsAsset[] = []
   try {
@@ -591,7 +591,7 @@ export function validateLedgerBackupArtifact(
 }
 
 function resolveImportedLedgerName(
-  targetDb: DatabaseSync,
+  targetDb: Database.Database,
   sourceLedgerName: string | null
 ): string {
   const baseName = sourceLedgerName?.trim() || '导入账套'
@@ -639,8 +639,8 @@ export function importLedgerBackupArtifact(input: {
     throw new Error(validation.error ?? '账套备份包校验失败')
   }
 
-  const packageDb = new DatabaseSync(input.backupPath, { readOnly: true })
-  const targetDb = new DatabaseSync(input.targetPath)
+  const packageDb = new Database(input.backupPath, { readonly: true })
+  const targetDb = new Database(input.targetPath)
   const packageDir = path.dirname(input.manifestPath)
   const targetUserDataPath = path.dirname(input.attachmentRootDir)
 

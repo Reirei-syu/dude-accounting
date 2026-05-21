@@ -28,30 +28,10 @@ function getDefaultDocumentsPath() {
   return path.join(os.homedir(), 'Documents')
 }
 
-function extractCommandResult(output) {
-  const statusIndex = output.lastIndexOf('"status"')
-  if (statusIndex < 0) {
-    throw new Error(`未找到 CLI JSON 输出：\n${output}`)
-  }
-
-  const startIndex = output.lastIndexOf('{', statusIndex)
-  if (startIndex < 0) {
-    throw new Error(`未找到 CLI JSON 起始位置：\n${output}`)
-  }
-
-  let depth = 0
-  for (let index = startIndex; index < output.length; index += 1) {
-    const current = output[index]
-    if (current === '{') depth += 1
-    if (current === '}') {
-      depth -= 1
-      if (depth === 0) {
-        return JSON.parse(output.slice(startIndex, index + 1))
-      }
-    }
-  }
-
-  throw new Error(`CLI JSON 输出不完整：\n${output}`)
+function getElectronAppEnv(baseEnv = process.env) {
+  const env = { ...baseEnv }
+  delete env.ELECTRON_RUN_AS_NODE
+  return env
 }
 
 function run(command, args, options = {}) {
@@ -168,7 +148,8 @@ async function executeBatchCommand(invocation) {
   }
 
   const result = await run(electronPath, args, {
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: getElectronAppEnv()
   })
 
   if (result.code !== 0 && !result.stdout && !result.stderr) {
@@ -209,7 +190,7 @@ async function runBatchMode() {
     : process.env
   const result = await run(electronPath, ['.', '--cli', ...cliArgs], {
     stdio: ['ignore', 'inherit', 'inherit'],
-    env
+    env: getElectronAppEnv(env)
   })
   process.exit(result.code)
 }

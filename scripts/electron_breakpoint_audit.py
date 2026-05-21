@@ -58,6 +58,7 @@ class AuditRunner:
         self.screenshots_dir = output_dir / "screenshots"
         self.exports_dir = output_dir / "exports"
         self.runtime_logs_dir = output_dir / "runtime-logs"
+        self.e2e_app_data_dir = output_dir / "app-data"
         self.log_file = self.logs_dir / "audit.log"
         self.app_process: subprocess.Popen[str] | None = None
         self.playwright: Playwright | None = None
@@ -85,6 +86,7 @@ class AuditRunner:
         self.screenshots_dir.mkdir(parents=True, exist_ok=True)
         self.exports_dir.mkdir(parents=True, exist_ok=True)
         self.runtime_logs_dir.mkdir(parents=True, exist_ok=True)
+        self.e2e_app_data_dir.mkdir(parents=True, exist_ok=True)
         self._current_log_handle = self.log_file.open("w", encoding="utf-8")
         self.log(f"输出目录：{self.output_dir}")
 
@@ -147,6 +149,10 @@ class AuditRunner:
             self.app_process = subprocess.Popen(
                 command,
                 cwd=self.repo_root,
+                env={
+                    **os.environ,
+                    "DUDEACC_E2E_APPDATA_PATH": str(self.e2e_app_data_dir)
+                },
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -1028,7 +1034,10 @@ class AuditRunner:
         self.screenshot("07-npo-smoke")
 
     def copy_runtime_logs(self) -> None:
-        source_dir = Path(os.environ["APPDATA"]) / "dude-app-dev" / "logs"
+        if self.start_app:
+            source_dir = self.e2e_app_data_dir / "dude-app-dev" / "logs"
+        else:
+            source_dir = Path(os.environ["APPDATA"]) / "dude-app-dev" / "logs"
         if not source_dir.exists():
             self.log("未发现运行日志目录，跳过复制")
             return

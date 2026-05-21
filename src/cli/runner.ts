@@ -128,7 +128,11 @@ async function readStdinPayloadJson(): Promise<string> {
   return raw
 }
 
-function detectInteractiveTerminalState() {
+function detectInteractiveTerminalState(): {
+  stdinIsTTY: boolean
+  stdoutIsTTY: boolean
+  forceInteractive: boolean
+} {
   return {
     stdinIsTTY: Boolean(process.stdin.isTTY),
     stdoutIsTTY: Boolean(process.stdout.isTTY),

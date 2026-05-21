@@ -1,11 +1,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createLedgerBackupArtifact, importLedgerBackupArtifact } from './backupRecovery'
 
-function createLedgerSchema(db: DatabaseSync): void {
+function createLedgerSchema(db: Database.Database): void {
   db.exec(`
     PRAGMA foreign_keys = ON;
     CREATE TABLE users (
@@ -245,7 +245,7 @@ describe('ledger backup import', () => {
     fs.mkdirSync(sourceWallpaperDir, { recursive: true })
     fs.writeFileSync(sourceWallpaperPath, 'source-wallpaper', 'utf8')
 
-    const sourceDb = new DatabaseSync(sourcePath)
+    const sourceDb = new Database(sourcePath)
     createLedgerSchema(sourceDb)
     const sourceVoucherPath = path.join(tempDir, 'source-voucher.ofd')
     fs.writeFileSync(sourceVoucherPath, 'source-voucher', 'utf8')
@@ -297,7 +297,7 @@ describe('ledger backup import', () => {
       now: new Date(2026, 3, 2, 10, 0, 0)
     })
 
-    const targetDb = new DatabaseSync(targetPath)
+    const targetDb = new Database(targetPath)
     createLedgerSchema(targetDb)
     targetDb.exec(`
       INSERT INTO users (id, username, real_name, password_hash, permissions, is_admin, created_at)
@@ -321,7 +321,7 @@ describe('ledger backup import', () => {
       operatorIsAdmin: false
     })
 
-    const importedDb = new DatabaseSync(targetPath, { readOnly: true })
+    const importedDb = new Database(targetPath, { readonly: true })
     expect(result.importedLedgerName).toBe('华北客户（导入）')
     expect(
       importedDb.prepare('SELECT COUNT(1) AS count FROM ledgers').get() as { count: number }

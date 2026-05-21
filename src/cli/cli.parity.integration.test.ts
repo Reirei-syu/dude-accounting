@@ -22,8 +22,18 @@ const wallpaperPath = path.resolve(process.cwd(), 'src/renderer/src/assets/wallp
 
 fs.mkdirSync(appDataPath, { recursive: true })
 
-function extractCommandResult(output: string): { status: string; data: unknown; error: unknown } {
-  const matches: Array<{ status: string; data: unknown; error: unknown }> = []
+interface CliCommandResult<TData = unknown> {
+  status: string
+  data: TData
+  error: unknown
+}
+
+interface PrintStatusData {
+  status: string
+}
+
+function extractCommandResult(output: string): CliCommandResult {
+  const matches: CliCommandResult[] = []
 
   for (let startIndex = 0; startIndex < output.length; startIndex += 1) {
     if (output[startIndex] !== '{') continue
@@ -42,7 +52,11 @@ function extractCommandResult(output: string): { status: string; data: unknown; 
               Object.prototype.hasOwnProperty.call(parsed, 'data') &&
               Object.prototype.hasOwnProperty.call(parsed, 'error')
             ) {
-              matches.push(parsed as { status: string; data: unknown; error: unknown })
+              matches.push({
+                status: parsed.status,
+                data: parsed.data,
+                error: parsed.error
+              })
             }
           } catch {
             // ignore invalid slices
@@ -82,7 +96,7 @@ async function ensureBuildArtifacts(): Promise<void> {
   await buildArtifactsReady
 }
 
-async function runCli(args: string[]): Promise<{ status: string; data: unknown; error: unknown }> {
+async function runCli(args: string[]): Promise<CliCommandResult> {
   await ensureBuildArtifacts()
 
   const { stdout, stderr } = await execFileAsync(
@@ -103,11 +117,11 @@ async function runCli(args: string[]): Promise<{ status: string; data: unknown; 
   return extractCommandResult(`${stdout}\n${stderr}`)
 }
 
-async function waitForPrintReady(jobId: string): Promise<{ status: string; data: any; error: unknown }> {
+async function waitForPrintReady(jobId: string): Promise<CliCommandResult<PrintStatusData>> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const result = await runCli(['print', 'status', '--jobId', jobId])
     if (result.status === 'success' && (result.data as { status: string }).status === 'ready') {
-      return result as { status: string; data: any; error: unknown }
+      return result as CliCommandResult<PrintStatusData>
     }
     if (result.status === 'success' && (result.data as { status: string }).status === 'failed') {
       throw new Error(`打印任务失败：${JSON.stringify(result.data)}`)

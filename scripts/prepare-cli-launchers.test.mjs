@@ -41,14 +41,18 @@ describe('prepare-cli-launchers', () => {
       POSIX_LAUNCHER_MODE
     )
 
-    expect(fs.readFileSync(path.join(buildCliDir, 'dudeacc.cmd'), 'utf8')).toContain(
-      'dudeacc-host.exe'
+    const dudeaccCmd = fs.readFileSync(path.join(buildCliDir, 'dudeacc.cmd'), 'utf8')
+    const dudeAccountingCmd = fs.readFileSync(
+      path.join(buildCliDir, 'dude-accounting.cmd'),
+      'utf8'
     )
-    expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting.cmd'), 'utf8')).toContain(
-      'DUDEACC_PAYLOAD_STDIN_JSON'
-    )
-    expect(fs.readFileSync(path.join(buildCliDir, 'dude-accounting.cmd'), 'utf8')).toContain(
-      '"%DUDEACC_APP%" --cli %*'
-    )
+    expect(dudeaccCmd).toBe(dudeAccountingCmd)
+    expect(dudeaccCmd).toContain('dudeacc-host.exe')
+    expect(dudeaccCmd).toContain('DUDEACC_PAYLOAD_STDIN_JSON')
+    expect(dudeaccCmd).toContain(':checkPayloadStdin')
+    expect(dudeaccCmd).toContain('"%DUDEACC_HOST%" %*')
+    expect(dudeaccCmd).toContain(':payloadStdin')
+    expect(dudeaccCmd).not.toContain('if errorlevel 1 (')
+    expect(dudeaccCmd).not.toContain('"%DUDEACC_APP%" --cli %*')
   })
 })

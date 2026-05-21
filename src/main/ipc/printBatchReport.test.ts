@@ -13,8 +13,9 @@ vi.mock('../services/reporting', async () => {
 })
 
 import { createPrintDocument } from './print'
+import type { ReportSnapshotDetail } from '../services/reporting'
 
-function createCashflowDetail(id: number) {
+function createCashflowDetail(id: number): ReportSnapshotDetail {
   return {
     id,
     ledger_id: 1,

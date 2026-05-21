@@ -36,22 +36,6 @@ export function getLedgerDeletionPrerequisites(
   }
 }
 
-export function assertLedgerDeletionAllowed(db: Database.Database, ledgerId: number): void {
-  const prerequisites = getLedgerDeletionPrerequisites(db, ledgerId)
-
-  if (prerequisites.validatedBackupCount <= 0 && prerequisites.validatedArchiveCount <= 0) {
-    throw new Error('删除账套前必须先完成已校验的系统备份和电子档案导出')
-  }
-
-  if (prerequisites.validatedBackupCount <= 0) {
-    throw new Error('删除账套前必须先完成已校验的系统备份')
-  }
-
-  if (prerequisites.validatedArchiveCount <= 0) {
-    throw new Error('删除账套前必须先完成已校验的电子档案导出')
-  }
-}
-
 export function getLedgerDeletionRiskSnapshot(
   db: Database.Database,
   ledgerId: number

@@ -1445,7 +1445,7 @@ describe('reporting service', () => {
     const pdfPath = path.join(tempDir, '资产负债表.pdf')
 
     await writeReportSnapshotExcel(excelPath, snapshot)
-    await writeReportSnapshotPdf(pdfPath, snapshot)
+    await expect(writeReportSnapshotPdf(pdfPath, snapshot)).rejects.toThrow('Electron/Chromium PDF')
 
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.readFile(excelPath)
@@ -1453,8 +1453,7 @@ describe('reporting service', () => {
 
     expect(fs.existsSync(excelPath)).toBe(true)
     expect(fs.statSync(excelPath).size).toBeGreaterThan(0)
-    expect(fs.existsSync(pdfPath)).toBe(true)
-    expect(fs.statSync(pdfPath).size).toBeGreaterThan(0)
+    expect(fs.existsSync(pdfPath)).toBe(false)
     expect(worksheet.getCell(1, 1).value).toBe('资产负债表')
     expect(worksheet.getCell(2, 1).value).toBe('编制单位：企业测试账套')
     expect(worksheet.getCell(2, 6).value).toBe('单位：元')

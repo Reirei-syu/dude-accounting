@@ -55,6 +55,11 @@ function waitForText(getBuffer: () => string, text: string, timeoutMs: number): 
 }
 
 beforeAll(() => {
+  execFileSync('cmd.exe', ['/d', '/c', 'npm.cmd run prepare:cli-launchers'], {
+    cwd: process.cwd(),
+    windowsHide: true,
+    timeout: 120_000
+  })
   execFileSync('cmd.exe', ['/d', '/c', 'npm.cmd run build:cli'], {
     cwd: process.cwd(),
     windowsHide: true,

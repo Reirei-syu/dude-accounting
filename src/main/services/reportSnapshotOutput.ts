@@ -1,7 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
-import PDFDocument from 'pdfkit'
 import { buildTimestampToken, ensureDirectory, sanitizePathSegment } from './fileIntegrity'
 import type { ReportExportFormat, ReportSnapshotDetail, ReportSnapshotScope } from './reporting'
 import {
@@ -10,61 +9,6 @@ import {
 } from '../../shared/reportTablePresentation'
 
 const REPORT_EXPORT_FALLBACK_NAME = '报表导出'
-const REPORT_PDF_CJK_FONT_NAME = 'dude-report-cjk'
-
-export interface ReportPdfCjkFontCandidate {
-  filePath: string
-  family?: string
-}
-
-const DEFAULT_REPORT_PDF_CJK_FONT_CANDIDATES: ReportPdfCjkFontCandidate[] = [
-  { filePath: 'C:\\Windows\\Fonts\\simhei.ttf' },
-  { filePath: 'C:\\Windows\\Fonts\\simkai.ttf' },
-  { filePath: 'C:\\Windows\\Fonts\\simfang.ttf' },
-  { filePath: 'C:\\Windows\\Fonts\\Deng.ttf' },
-  { filePath: 'C:\\Windows\\Fonts\\msyh.ttc', family: 'Microsoft YaHei' },
-  { filePath: 'C:\\Windows\\Fonts\\simsun.ttc', family: 'SimSun' },
-  { filePath: '/System/Library/Fonts/PingFang.ttc', family: 'PingFang SC' },
-  { filePath: '/System/Library/Fonts/Supplemental/Songti.ttc', family: 'Songti SC' },
-  { filePath: '/System/Library/Fonts/Supplemental/Arial Unicode.ttf' },
-  { filePath: '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc' },
-  { filePath: '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc' },
-  { filePath: '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc' },
-  { filePath: '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc' },
-  { filePath: '/usr/share/fonts/truetype/arphic/uming.ttc' }
-]
-
-function getConfiguredReportPdfCjkFontCandidates(): ReportPdfCjkFontCandidate[] {
-  const configuredPath = process.env.DUDEACC_REPORT_PDF_CJK_FONT?.trim()
-  return configuredPath ? [{ filePath: configuredPath }] : []
-}
-
-export function resolveReportPdfCjkFont(
-  candidates: ReportPdfCjkFontCandidate[] = [
-    ...getConfiguredReportPdfCjkFontCandidates(),
-    ...DEFAULT_REPORT_PDF_CJK_FONT_CANDIDATES
-  ]
-): ReportPdfCjkFontCandidate | null {
-  return candidates.find((candidate) => fs.existsSync(candidate.filePath)) ?? null
-}
-
-function registerReportPdfCjkFont(document: PDFKit.PDFDocument): void {
-  const font = resolveReportPdfCjkFont()
-  if (!font) {
-    throw new Error(
-      '无法生成 PDF：未找到可用中文字体。请安装 SimHei、Microsoft YaHei、PingFang SC 或 Noto Sans CJK，或通过 DUDEACC_REPORT_PDF_CJK_FONT 指定字体文件路径。'
-    )
-  }
-
-  try {
-    document.registerFont(REPORT_PDF_CJK_FONT_NAME, font.filePath, font.family)
-    document.font(REPORT_PDF_CJK_FONT_NAME)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`无法生成 PDF：中文字体加载失败（${font.filePath}）：${message}`)
-  }
-}
-
 function normalizeText(value: string | null | undefined): string | undefined {
   const normalized = value?.replace(/\s+/g, ' ').trim()
   return normalized ? normalized : undefined
@@ -622,130 +566,12 @@ export async function writeReportSnapshotExcel(
   await workbook.xlsx.writeFile(filePath)
   return filePath
 }
-
 export async function writeReportSnapshotPdf(
   filePath: string,
   detail: ReportSnapshotDetail,
   renderOptions?: ReportRenderOptions
 ): Promise<string> {
-  ensureDirectory(path.dirname(filePath))
-
-  await new Promise<void>((resolve, reject) => {
-    const document = new PDFDocument({
-      size: 'A4',
-      margin: 40,
-      bufferPages: true
-    })
-
-    registerReportPdfCjkFont(document)
-
-    const stream = fs.createWriteStream(filePath)
-    document.pipe(stream)
-
-    const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right
-    const headers = getExportTableHeaders(detail, renderOptions)
-    const rows = getExportTableRows(detail, renderOptions)
-    const hasOfficialTables =
-      (buildPresentedReportTables(detail.report_type, detail.content.tables, renderOptions)?.length ??
-        0) > 0
-    const columnWidth = headers.length > 0 ? pageWidth / headers.length : pageWidth
-    const exportPeriod = formatExportPeriodLabel(detail.content.scope)
-
-    const drawRow = (
-      values: string[],
-      top: number,
-      options?: { bold?: boolean; fillColor?: string; header?: boolean }
-    ): number => {
-      const rowHeight = 24
-      if (options?.fillColor) {
-        document.save()
-        document
-          .fillColor(options.fillColor)
-          .rect(document.page.margins.left, top, pageWidth, rowHeight)
-          .fill()
-        document.restore()
-      }
-
-      values.forEach((value, index) => {
-        const left = document.page.margins.left + index * columnWidth
-        document.rect(left, top, columnWidth, rowHeight).stroke('#111827')
-        document.fontSize(options?.bold ? 10.5 : 10)
-        document.text(value, left + 6, top + 6, {
-          width: columnWidth - 12,
-          align: options?.header ? 'center' : index === 0 ? 'left' : 'right'
-        })
-      })
-
-      return top + rowHeight
-    }
-
-    document.fontSize(18).text(detail.content.title, { align: 'center' })
-    document.moveDown(0.5)
-    document.fontSize(10).text(`编制单位：${detail.ledger_name}`, { continued: true })
-    document.text(`单位：元`, { align: 'right' })
-    document.text(`会计期间：${exportPeriod}`, { align: 'center' })
-    document.moveDown(0.5)
-
-    let top = document.y
-    top = drawRow(headers, top, { bold: true, header: true })
-
-    let currentSection = ''
-    for (const row of rows) {
-      if (top > document.page.height - 80) {
-        document.addPage()
-        top = document.page.margins.top
-        top = drawRow(headers, top, { bold: true })
-      }
-
-      if (!hasOfficialTables && row.section !== currentSection) {
-        currentSection = row.section
-        top = drawRow([currentSection, ...Array(headers.length - 1).fill('')], top, {
-          bold: true,
-          fillColor: '#f3f4f6'
-        })
-      }
-
-      const highlightKind = resolveRowHighlightKindByLabel(String(row.values[0] ?? ''))
-      top = drawRow(row.values, top, {
-        fillColor:
-          highlightKind === 'total'
-            ? '#eff6ff'
-            : highlightKind === 'subtotal'
-              ? '#ecfdf5'
-              : undefined
-      })
-    }
-
-    if (!hasOfficialTables) {
-      if (top > document.page.height - 120) {
-        document.addPage()
-        top = document.page.margins.top
-      }
-
-      document.moveDown()
-      document.fontSize(12).text('汇总', document.page.margins.left, top + 8)
-      top += 28
-      top = drawRow(['项目', '金额'], top, { bold: true })
-      detail.content.totals.forEach((total) => {
-        const highlightKind = resolveRowHighlightKindByLabel(total.label)
-        top = drawRow([total.label, formatAmount(total.amountCents)], top, {
-          fillColor:
-            highlightKind === 'total'
-              ? '#eff6ff'
-              : highlightKind === 'subtotal'
-                ? '#ecfdf5'
-                : undefined
-        })
-      })
-    }
-
-    document.end()
-    stream.on('finish', () => resolve())
-    stream.on('error', reject)
-    document.on('error', reject)
-  })
-
-  return filePath
+  return writeReportSnapshotChromiumPdf(filePath, detail, renderOptions)
 }
 
 type ElectronBrowserWindowLike = {

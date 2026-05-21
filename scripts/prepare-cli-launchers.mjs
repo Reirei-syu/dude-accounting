@@ -49,20 +49,20 @@ fi
 
 const WINDOWS_BATCH_LAUNCHER_CONTENT = `@echo off
 setlocal
-set "DUDEACC_APP=%~dp0dude-app.exe"
+set "DUDEACC_HOST=%~dp0dudeacc-host.exe"
 set "DUDEACC_ARGS=%*"
-echo.%DUDEACC_ARGS% | findstr /C:"--payload-stdin" >nul
-if errorlevel 1 (
-  "%DUDEACC_APP%" --cli %*
-  exit /b %ERRORLEVEL%
-)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$payload = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }; $env:DUDEACC_PAYLOAD_STDIN_JSON = $payload; & $env:DUDEACC_APP --cli @args; exit $LASTEXITCODE" -- %*
+if not "%~1"=="" goto checkPayloadStdin
+"%DUDEACC_HOST%"
 exit /b %ERRORLEVEL%
-`
 
-const WINDOWS_INTERACTIVE_LAUNCHER_CONTENT = `@echo off
-setlocal
-"%~dp0dudeacc-host.exe" %*
+:checkPayloadStdin
+echo.%DUDEACC_ARGS% | findstr /C:"--payload-stdin" >nul
+if not errorlevel 1 goto payloadStdin
+"%DUDEACC_HOST%" %*
+exit /b %ERRORLEVEL%
+
+:payloadStdin
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$payload = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { '' }; $env:DUDEACC_PAYLOAD_STDIN_JSON = $payload; & $env:DUDEACC_HOST @args; exit $LASTEXITCODE" -- %*
 exit /b %ERRORLEVEL%
 `
 
@@ -85,7 +85,7 @@ export function ensureCliLaunchers(options = {}) {
   )
   fs.writeFileSync(
     path.join(buildCliDir, 'dudeacc.cmd'),
-    WINDOWS_INTERACTIVE_LAUNCHER_CONTENT,
+    WINDOWS_BATCH_LAUNCHER_CONTENT,
     'utf8'
   )
 }

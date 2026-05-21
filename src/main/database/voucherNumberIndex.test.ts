@@ -14,11 +14,16 @@ interface FakeIndexState {
   activeOnly: boolean
 }
 
+interface FakePreparedStatement {
+  get?: () => unknown
+  run?: () => void
+}
+
 class FakeVoucherIndexDb {
   vouchers: VoucherIndexRow[] = []
   indexes = new Map<string, FakeIndexState>()
 
-  prepare(sql: string) {
+  prepare(sql: string): FakePreparedStatement {
     const normalizedSql = sql.replace(/\s+/g, ' ').trim()
 
     if (normalizedSql.startsWith('SELECT ledger_id, period, voucher_word, voucher_number')) {

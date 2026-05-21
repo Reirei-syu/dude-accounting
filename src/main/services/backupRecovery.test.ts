@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createBackupArtifact,
@@ -243,7 +243,7 @@ describe('backupRecovery service', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backup-'))
     const sourcePath = path.join(tempDir, 'source.db')
     const backupDir = path.join(tempDir, 'backups')
-    const sourceDb = new DatabaseSync(sourcePath)
+    const sourceDb = new Database(sourcePath)
     sourceDb.exec('PRAGMA foreign_keys = ON;')
     sourceDb.exec(`
       CREATE TABLE users (
@@ -543,7 +543,7 @@ describe('backupRecovery service', () => {
       now: new Date(2026, 3, 2, 10, 0, 0)
     })
 
-    const packageDb = new DatabaseSync(result.backupPath, { readOnly: true })
+    const packageDb = new Database(result.backupPath, { readonly: true })
     expect(
       packageDb.prepare('SELECT COUNT(1) AS count FROM ledgers').get() as { count: number }
     ).toEqual({ count: 1 })
@@ -609,7 +609,7 @@ describe('backupRecovery service', () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-backup-'))
     const sourcePath = path.join(tempDir, 'source.db')
     const backupDir = path.join(tempDir, 'backups')
-    const sourceDb = new DatabaseSync(sourcePath)
+    const sourceDb = new Database(sourcePath)
     sourceDb.exec(`
       CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, real_name TEXT NOT NULL DEFAULT '', password_hash TEXT NOT NULL DEFAULT '', permissions TEXT NOT NULL DEFAULT '{}', is_admin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '');
       CREATE TABLE ledgers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, standard_type TEXT NOT NULL, start_period TEXT NOT NULL, current_period TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '');
@@ -679,7 +679,7 @@ describe('backupRecovery service', () => {
     const wallpaperPath = path.join(wallpaperDir, 'current.png')
     fs.mkdirSync(wallpaperDir, { recursive: true })
     fs.writeFileSync(wallpaperPath, 'wallpaper-file', 'utf8')
-    const sourceDb = new DatabaseSync(sourcePath)
+    const sourceDb = new Database(sourcePath)
     sourceDb.exec(`
       CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, real_name TEXT NOT NULL DEFAULT '', password_hash TEXT NOT NULL DEFAULT '', permissions TEXT NOT NULL DEFAULT '{}', is_admin INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '');
       CREATE TABLE ledgers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, standard_type TEXT NOT NULL, start_period TEXT NOT NULL, current_period TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '');

@@ -1,9 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { PassThrough } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
 
@@ -176,18 +174,6 @@ function buildIsolatedEnvironment(label, outputRoot, options = {}) {
   }
 }
 
-function quoteCmdArg(value) {
-  if (!value) {
-    return '""'
-  }
-
-  if (!/[ \t"&()^[\]{}=;!'+,`~|<>]/.test(value)) {
-    return value
-  }
-
-  return `"${value.replace(/"/g, '""')}"`
-}
-
 function buildCmdInvocation(targetPath, args) {
   const command = path.basename(targetPath)
   return {
@@ -261,33 +247,6 @@ function extractCommandResult(output) {
   }
 
   return matches[matches.length - 1]
-}
-
-function extractFirstJsonValue(output) {
-  const trimmed = output.trim()
-  if (!trimmed) {
-    throw new Error('未找到可解析的 JSON 输出')
-  }
-
-  for (let startIndex = 0; startIndex < trimmed.length; startIndex += 1) {
-    if (trimmed[startIndex] !== '{') {
-      continue
-    }
-
-    let depth = 0
-    for (let index = startIndex; index < trimmed.length; index += 1) {
-      const current = trimmed[index]
-      if (current === '{') depth += 1
-      if (current === '}') {
-        depth -= 1
-        if (depth === 0) {
-          return JSON.parse(trimmed.slice(startIndex, index + 1))
-        }
-      }
-    }
-  }
-
-  throw new Error(`未找到可解析的 JSON 输出：\n${output}`)
 }
 
 async function waitForPreviewTargets(port, timeoutMs = 30_000) {
@@ -437,7 +396,9 @@ function createReleaseSurfaceAdapter() {
       interactive: 'dudeacc.cmd',
       desktop: 'dude-app.exe --cli'
     },
-    async prepare() {},
+    async prepare() {
+      // 发布态入口无需额外准备；validate 会统一检查安装包产物是否存在。
+    },
     async validate() {
       for (const [label, filePath] of Object.entries(releasePaths)) {
         if (label === 'releaseRoot') {

@@ -1,5 +1,5 @@
 import fs from 'node:fs'
-import { nativeImage } from 'electron'
+import { nativeImage, type NativeImage } from 'electron'
 import {
   calculateInitialCropViewport,
   clampCropViewport,
@@ -27,7 +27,7 @@ export interface WallpaperAnalyzeResult {
   outputHeight: number
 }
 
-function loadSourceImage(sourcePath: string) {
+function loadSourceImage(sourcePath: string): NativeImage {
   const image = nativeImage.createFromPath(sourcePath)
   if (image.isEmpty()) {
     throw new Error('读取图片失败，文件可能已损坏或格式不受支持')
