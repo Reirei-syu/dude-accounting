@@ -4,6 +4,7 @@ out
 .DS_Store
 .eslintcache
 *.log*
+.tmp/
 build/cli/*.exe
 build/cli/*.pdb
 tools/**/bin/
