@@ -4,6 +4,7 @@ import {
   deleteReportCommand,
   exportReportCommand,
   exportReportsBatchCommand,
+  exportTaxTemplateCommand,
   generateReportCommand,
   getReportDetailCommand,
   listReportsCommand
@@ -21,6 +22,15 @@ import {
   type ReportListFilters,
   type ReportSnapshotDetail
 } from '../services/reporting'
+import {
+  buildNpoTaxTemplateFileName,
+  buildUniqueTaxTemplateOutputPath,
+  getPreferredTaxTemplateOutputDir,
+  rememberTaxTemplateOutputDirectory,
+  rememberTaxTemplateOutputFile,
+  resolveNpoTaxTemplatePeriod,
+  type TaxTemplateDeclarationType
+} from '../services/npoTaxTemplateExport'
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
 
@@ -45,6 +55,34 @@ function toLegacyFailure(
     error: error?.message ?? fallbackMessage,
     errorCode: error?.code ?? 'INTERNAL_ERROR',
     errorDetails: error?.details ?? null
+  }
+}
+
+const TAX_TEMPLATE_PERIOD_VALIDATION_MESSAGES = [
+  '月报需要指定 1-12 的月份',
+  '季报需要指定 1-4 的季度',
+  '申报年度不合法',
+  '申报类型不合法'
+]
+
+function toTaxTemplateExceptionFailure(error: unknown): {
+  success: false
+  error: string
+  errorCode: string
+  errorDetails: null
+} {
+  const message = error instanceof Error ? error.message : '导出税务模板失败'
+  const isValidationError =
+    error instanceof Error &&
+    TAX_TEMPLATE_PERIOD_VALIDATION_MESSAGES.some((validationMessage) =>
+      error.message.includes(validationMessage)
+    )
+
+  return {
+    success: false,
+    error: message,
+    errorCode: isValidationError ? 'VALIDATION_ERROR' : 'INTERNAL_ERROR',
+    errorDetails: null
   }
 }
 
@@ -273,6 +311,129 @@ export function registerReportingHandlers(): void {
               errorCode: 'INTERNAL_ERROR',
               errorDetails: null
             }
+          }
+        }
+      )
+  )
+
+  ipcMain.handle('reporting:chooseTaxTemplateOutputDirectory', async (event) =>
+    withIpcTelemetry(
+      {
+        channel: 'reporting:chooseTaxTemplateOutputDirectory',
+        baseDir: app.getPath('userData')
+      },
+      async () => {
+        const context = createCommandContextFromEvent(event)
+        if (!context.actor) {
+          return {
+            success: false,
+            error: '请先登录',
+            errorCode: 'AUTH_REQUIRED',
+            errorDetails: null
+          }
+        }
+
+        const db = getDatabase()
+        const defaultPath = getPreferredTaxTemplateOutputDir(
+          db,
+          context.actor.id,
+          app.getPath('documents')
+        )
+        const browserWindow = BrowserWindow.fromWebContents(event.sender)
+        const openResult = browserWindow
+          ? await dialog.showOpenDialog(browserWindow, {
+              defaultPath,
+              properties: ['openDirectory', 'createDirectory']
+            })
+          : await dialog.showOpenDialog({
+              defaultPath,
+              properties: ['openDirectory', 'createDirectory']
+            })
+
+        if (openResult.canceled || openResult.filePaths.length === 0) {
+          return { success: false, cancelled: true }
+        }
+
+        const directoryPath = openResult.filePaths[0]
+        rememberTaxTemplateOutputDirectory(db, context.actor.id, directoryPath)
+        return {
+          success: true,
+          directoryPath
+        }
+      }
+    )
+  )
+
+  ipcMain.handle(
+    'reporting:exportTaxTemplate',
+    async (
+      event,
+      payload: {
+        ledgerId: number
+        declarationType: TaxTemplateDeclarationType
+        year: number
+        month?: number
+        quarter?: number
+        directoryPath?: string
+        outputPath?: string
+        overwrite?: boolean
+      }
+    ) =>
+      withIpcTelemetry(
+        {
+          channel: 'reporting:exportTaxTemplate',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: payload.ledgerId,
+            declarationType: payload.declarationType,
+            year: payload.year,
+            month: payload.month ?? null,
+            quarter: payload.quarter ?? null
+          }
+        },
+        async () => {
+          try {
+            const db = getDatabase()
+            const context = createCommandContextFromEvent(event)
+            if (!context.actor) {
+              return {
+                success: false,
+                error: '请先登录',
+                errorCode: 'AUTH_REQUIRED',
+                errorDetails: null
+              }
+            }
+
+            let outputPath = payload.outputPath
+            if (!outputPath) {
+              const period = resolveNpoTaxTemplatePeriod(payload)
+              const preferredDir =
+                payload.directoryPath ||
+                getPreferredTaxTemplateOutputDir(db, context.actor.id, app.getPath('documents'))
+              const ledger = db
+                .prepare('SELECT name FROM ledgers WHERE id = ?')
+                .get(payload.ledgerId) as { name: string } | undefined
+              outputPath = buildUniqueTaxTemplateOutputPath(
+                preferredDir,
+                buildNpoTaxTemplateFileName(ledger?.name ?? '税务模板', period)
+              )
+            }
+
+            const result = await exportTaxTemplateCommand(context, {
+              ...payload,
+              outputPath
+            })
+            if (!isCommandSuccess(result)) {
+              return toLegacyFailure(result.error, '导出税务模板失败')
+            }
+            rememberTaxTemplateOutputFile(db, context.actor.id, result.data.filePath)
+
+            return {
+              success: true,
+              ...result.data
+            }
+          } catch (error) {
+            return toTaxTemplateExceptionFailure(error)
           }
         }
       )

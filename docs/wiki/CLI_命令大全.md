@@ -12,6 +12,7 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 - 交互式完整帮助：`help all` / `帮助 all`
 - 交互式帮助导出：`help all --output <filePath>` / `帮助 all --output <filePath>`
 - 复杂 JSON 输入推荐 `--payload-file <path>` 或 `--payload-stdin`；payload 来源优先级为 `--payload-file` > `--payload-stdin` > `--payload-json`，显式参数覆盖 payload 同名字段。
+- 含中文的 payload 文件默认 `--encoding auto`，会先按 UTF-8 读取并在疑似乱码时尝试 GB18030；旧式 Windows 文件可显式使用 `--encoding gbk`。
 
 ## 交互式内建命令
 
@@ -105,7 +106,7 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `voucher renumber` | 整理凭证号 | 整理有效凭证号；已删除凭证保留历史编号 | 是 | 否 |
 | `voucher batch` | 批量处理凭证 | 批量处理凭证 | 是 | 否 |
 
-凭证修改建议流程：先执行 `voucher export-edit-payload --voucherId <id> --filePath <json路径>` 导出可编辑 JSON，修改文件后执行 `voucher update --payload-file <json路径>` 提交。`voucher update` 只允许更新未审核且当前期间可写的凭证。
+凭证修改建议流程：先执行 `voucher export-edit-payload --voucherId <id> --filePath <json路径>` 导出可编辑 JSON，修改文件后执行 `voucher update --payload-file <json路径>` 提交。`voucher update` 只允许更新未审核且当前期间可写的凭证。含中文摘要/描述时，推荐用 PowerShell `ConvertTo-Json | Out-File -Encoding UTF8` 生成文件；若旧文件为 GBK，可加 `--encoding gbk`。
 
 凭证列表默认返回状态 `0/1/2` 的凭证，不包含已删除凭证；如需包含已删除凭证，传入 `status=all`；如只查询已删除凭证，传入 `status=3`。
 
@@ -145,8 +146,11 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `report delete` | 删除报表快照 | 删除报表快照 | 是 | 否 |
 | `report export` | 导出报表快照 | 导出报表快照；PDF 与 HTML 版式同源 | 是 | 否 |
 | `report export-batch` | 批量导出报表快照 | 批量导出报表快照；PDF 与 HTML 版式同源 | 是 | 否 |
+| `report export-tax-template` | 税务模板导出 | 导出民非税务申报 Excel 模板 | 是 | 否 |
 
 说明：`report generate` 生成 `balance_sheet` 时推荐传 `month=YYYY-MM`；同时兼容 `startPeriod` 与 `endPeriod` 相同的同月输入。利润表、业务活动表、现金流量表和所有者权益变动表继续使用 `startPeriod` / `endPeriod` 区间。`report export format=pdf` 与 HTML 导出复用同一份 HTML/CSS 版式，并通过 Electron/Chromium 生成 PDF；桌面 PDF 引擎不可用时会返回结构化错误。
+
+税务模板导出：`report export-tax-template --ledger-id <账套ID> --declaration-type monthly|quarterly|annual --year <YYYY> --output <xlsx路径>`。月报需加 `--month <1-12>`，季报需加 `--quarter <1-4>`；默认不覆盖已有文件，需显式加 `--overwrite`。
 
 ## book
 

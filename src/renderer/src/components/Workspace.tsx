@@ -17,6 +17,7 @@ import PLSettle from '../pages/PLSettle'
 import Backup from '../pages/Backup'
 import ReportWorkspacePage from '../pages/ReportWorkspacePage'
 import ReportQuery from '../pages/ReportQuery'
+import TaxTemplatePage from '../pages/TaxTemplatePage'
 import SubjectBalance from '../pages/SubjectBalance'
 import DetailLedger from '../pages/DetailLedger'
 import Journal from '../pages/Journal'
@@ -52,6 +53,7 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   CashFlowStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   EquityStatement: ReportWorkspacePage as React.ComponentType<WorkspaceComponentProps>,
   ReportQuery: ReportQuery as React.ComponentType<WorkspaceComponentProps>,
+  TaxTemplate: TaxTemplatePage as React.ComponentType<WorkspaceComponentProps>,
   SubjectBalance: SubjectBalance as React.ComponentType<WorkspaceComponentProps>,
   DetailLedger: DetailLedger as React.ComponentType<WorkspaceComponentProps>,
   Journal: Journal as React.ComponentType<WorkspaceComponentProps>,

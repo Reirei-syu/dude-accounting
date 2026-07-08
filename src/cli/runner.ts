@@ -8,7 +8,8 @@ import {
 } from './interactive'
 import { renderCommandOutput } from './output'
 import { parseCliArgs } from './parse'
-import { resolveCliPayload } from './payload'
+import { resolveCliPayloadWithWarnings, type PayloadWarning } from './payload'
+import { normalizeCliCommandTokens } from './commandAliases'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
@@ -65,7 +66,7 @@ function buildHelpResult(showAll = false): CommandResult<{
       product: 'dude-accounting',
       aliases: ['dudeacc'],
       usage:
-        'dudeacc|dude-accounting <domain> <action> [--payload-file path | --payload-stdin | --payload-json json | --key value]',
+        'dudeacc|dude-accounting <domain> <action> [--payload-file path | --payload-stdin | --payload-json json] [--encoding auto|utf8|gbk] [--key value]',
       interactiveEntry: '无参数且当前终端为 TTY 时，直接进入 dudeacc 交互式命令壳',
       commands: listCommands(),
       builtinCommands: showAll ? listShellBuiltInCommands() : undefined,
@@ -108,7 +109,7 @@ async function writeCommandResultToFile(
   }
 }
 
-async function readStdinPayloadJson(): Promise<string> {
+async function readStdinPayload(): Promise<string | Buffer> {
   const envPayload = process.env.DUDEACC_PAYLOAD_STDIN_JSON
   if (typeof envPayload === 'string') {
     if (!envPayload.trim()) {
@@ -121,11 +122,17 @@ async function readStdinPayloadJson(): Promise<string> {
   for await (const chunk of process.stdin) {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
   }
-  const raw = Buffer.concat(chunks).toString('utf8')
-  if (!raw.trim()) {
+  const raw = Buffer.concat(chunks)
+  if (!raw.toString('utf8').trim()) {
     throw new CommandError('VALIDATION_ERROR', '--payload-stdin 未读取到 JSON 输入', null, 2)
   }
   return raw
+}
+
+function printPayloadWarnings(warnings: PayloadWarning[]): void {
+  for (const warning of warnings) {
+    console.error(warning.message)
+  }
 }
 
 function detectInteractiveTerminalState(): {
@@ -143,6 +150,7 @@ function detectInteractiveTerminalState(): {
 export async function runCliBatch(runtime: RuntimeContext, argv: string[]): Promise<number> {
   let result: CommandResult<unknown>
   let outputMode: CommandOutputMode = 'json'
+  const payloadWarnings: PayloadWarning[] = []
 
   try {
     if (argv.length === 0 || argv.includes('--help')) {
@@ -153,22 +161,25 @@ export async function runCliBatch(runtime: RuntimeContext, argv: string[]): Prom
         result = await writeCommandResultToFile(helpOutputPath, result, outputMode)
       }
     } else {
-      const parsed = parseCliArgs(argv)
+      const parsed = parseCliArgs(normalizeCliCommandTokens(argv))
       outputMode = parsed.outputMode
-      const payloadStdinJson = parsed.payloadStdin ? await readStdinPayloadJson() : undefined
-      const payload = resolveCliPayload({
+      const payloadStdin = parsed.payloadStdin ? await readStdinPayload() : undefined
+      const payloadResolution = resolveCliPayloadWithWarnings({
         payloadFile: parsed.payloadFile,
-        payloadStdinJson,
+        payloadEncoding: parsed.payloadEncoding,
+        payloadStdinJson: typeof payloadStdin === 'string' ? payloadStdin : undefined,
+        payloadStdinBuffer: Buffer.isBuffer(payloadStdin) ? payloadStdin : undefined,
         payloadJson: parsed.payloadJson,
         flags: parsed.flags
       })
+      payloadWarnings.push(...payloadResolution.warnings)
 
       result = await executeCliCommand(runtime, {
         outputMode,
         token: parsed.token,
         domain: parsed.domain,
         action: parsed.action,
-        payload
+        payload: payloadResolution.payload
       })
     }
   } catch (error) {
@@ -196,6 +207,7 @@ export async function runCliBatch(runtime: RuntimeContext, argv: string[]): Prom
   }
 
   const output = renderCommandOutput(result, outputMode)
+  printPayloadWarnings(payloadWarnings)
   if (result.status === 'success') {
     console.log(output)
   } else {

@@ -10,6 +10,7 @@ type LedgerRow = {
   id: number
   name: string
   standard_type: 'enterprise' | 'npo'
+  taxpayer_identification_number: string
   start_period: string
   current_period: string
   created_at: string
@@ -49,21 +50,36 @@ class FakeLedgerLifecycleDb {
 
     if (
       normalized ===
-      'INSERT INTO ledgers (name, standard_type, start_period, current_period) VALUES (?, ?, ?, ?)'
+      'INSERT INTO ledgers (name, standard_type, taxpayer_identification_number, start_period, current_period) VALUES (?, ?, ?, ?, ?)'
     ) {
       return {
         get: () => undefined,
-        run: (name, standardType, startPeriod, currentPeriod) => {
+        run: (name, standardType, taxpayerIdentificationNumber, startPeriod, currentPeriod) => {
           const id = this.nextLedgerId++
           this.ledgers.push({
             id,
             name: String(name),
             standard_type: String(standardType) as 'enterprise' | 'npo',
+            taxpayer_identification_number: String(taxpayerIdentificationNumber),
             start_period: String(startPeriod),
             current_period: String(currentPeriod),
             created_at: '2026-03-19 12:00:00'
           })
           return { lastInsertRowid: id, changes: 1 }
+        }
+      }
+    }
+
+    if (normalized === 'UPDATE ledgers SET taxpayer_identification_number = ? WHERE id = ?') {
+      return {
+        get: () => undefined,
+        run: (taxpayerIdentificationNumber, ledgerId) => {
+          const ledger = this.ledgers.find((item) => item.id === Number(ledgerId))
+          if (!ledger) {
+            return { lastInsertRowid: 0, changes: 0 }
+          }
+          ledger.taxpayer_identification_number = String(taxpayerIdentificationNumber)
+          return { lastInsertRowid: 0, changes: 1 }
         }
       }
     }
@@ -265,6 +281,7 @@ describe('ledgerLifecycle service', () => {
       {
         name: '  新账套  ',
         standardType: 'enterprise',
+        taxpayerIdentificationNumber: '  91310000TEST001  ',
         startPeriod: '2026-03',
         operatorUserId: 8,
         operatorIsAdmin: false
@@ -281,6 +298,7 @@ describe('ledgerLifecycle service', () => {
       id: 1,
       name: '新账套',
       standard_type: 'enterprise',
+      taxpayer_identification_number: '91310000TEST001',
       start_period: '2026-03',
       current_period: '2026-03'
     })
@@ -294,6 +312,7 @@ describe('ledgerLifecycle service', () => {
       id: 1,
       name: '旧账套',
       standard_type: 'enterprise',
+      taxpayer_identification_number: '',
       start_period: '2026-03',
       current_period: '2026-03',
       created_at: '2026-03-19 12:00:00'
@@ -302,16 +321,19 @@ describe('ledgerLifecycle service', () => {
     const result = updateLedgerConfiguration(db as never, {
       ledgerId: 1,
       name: '新账套',
-      currentPeriod: '2026-01'
+      currentPeriod: '2026-01',
+      taxpayerIdentificationNumber: '  91310000TEST002  '
     })
 
     expect(result).toEqual({
       normalizedName: '新账套',
       currentPeriod: '2026-01',
-      nextStartPeriod: '2026-01'
+      nextStartPeriod: '2026-01',
+      taxpayerIdentificationNumber: '91310000TEST002'
     })
     expect(db.ledgers[0]).toMatchObject({
       name: '新账套',
+      taxpayer_identification_number: '91310000TEST002',
       start_period: '2026-01',
       current_period: '2026-01'
     })
@@ -324,6 +346,7 @@ describe('ledgerLifecycle service', () => {
       id: 1,
       name: '旧账套',
       standard_type: 'enterprise',
+      taxpayer_identification_number: '',
       start_period: '2026-03',
       current_period: '2026-03',
       created_at: '2026-03-19 12:00:00'
@@ -348,6 +371,7 @@ describe('ledgerLifecycle service', () => {
       id: 1,
       name: '旧账套',
       standard_type: 'enterprise',
+      taxpayer_identification_number: '',
       start_period: '2026-03',
       current_period: '2026-03',
       created_at: '2026-03-19 12:00:00'

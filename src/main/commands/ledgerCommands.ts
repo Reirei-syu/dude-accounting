@@ -45,6 +45,11 @@ function normalizeCreateLedgerPayload(payload: unknown) {
   return {
     name: normalizeStringField(rawPayload.name, 'name', '账套名称不能为空'),
     standardType: normalizeStringField(rawPayload.standardType, 'standardType', '账套准则类型不能为空'),
+    taxpayerIdentificationNumber: normalizeOptionalStringField(
+      rawPayload.taxpayerIdentificationNumber,
+      'taxpayerIdentificationNumber',
+      'taxpayerIdentificationNumber 必须为字符串'
+    ),
     startPeriod: normalizeStringField(rawPayload.startPeriod, 'startPeriod', '账套启用期间不能为空')
   }
 }
@@ -58,6 +63,11 @@ function normalizeUpdateLedgerPayload(payload: unknown) {
       rawPayload.currentPeriod,
       'currentPeriod',
       'currentPeriod 必须为字符串'
+    ),
+    taxpayerIdentificationNumber: normalizeOptionalStringField(
+      rawPayload.taxpayerIdentificationNumber,
+      'taxpayerIdentificationNumber',
+      'taxpayerIdentificationNumber 必须为字符串'
     )
   }
 }
@@ -96,6 +106,7 @@ export async function createLedgerCommand(
     name: string
     standardType: string
     startPeriod: string
+    taxpayerIdentificationNumber?: string
   }
 ): Promise<CommandResult<{ id: number }>> {
   return withCommandResult(context, () => {
@@ -104,6 +115,7 @@ export async function createLedgerCommand(
     const result = createLedgerWithTemplate(context.db, {
       name: normalizedPayload.name,
       standardType: assertStandardType(normalizedPayload.standardType),
+      taxpayerIdentificationNumber: normalizedPayload.taxpayerIdentificationNumber,
       startPeriod: normalizedPayload.startPeriod,
       operatorUserId: actor.id,
       operatorIsAdmin: actor.isAdmin
@@ -118,6 +130,9 @@ export async function createLedgerCommand(
       details: {
         standardType: normalizedPayload.standardType,
         startPeriod: normalizedPayload.startPeriod,
+        hasTaxpayerIdentificationNumber: Boolean(
+          normalizedPayload.taxpayerIdentificationNumber?.trim()
+        ),
         customSubjectCount: result.customSubjectCount
       }
     })
@@ -128,6 +143,9 @@ export async function createLedgerCommand(
         ledgerId: result.ledgerId,
         ledgerName: normalizedPayload.name,
         standardType: normalizedPayload.standardType,
+        hasTaxpayerIdentificationNumber: Boolean(
+          normalizedPayload.taxpayerIdentificationNumber?.trim()
+        ),
         startPeriod: normalizedPayload.startPeriod,
         status: 'success'
       }
@@ -139,7 +157,7 @@ export async function createLedgerCommand(
 
 export async function updateLedgerCommand(
   context: CommandContext,
-  payload: { id: number; name?: string; currentPeriod?: string }
+  payload: { id: number; name?: string; currentPeriod?: string; taxpayerIdentificationNumber?: string }
 ): Promise<CommandResult<{ id: number }>> {
   return withCommandResult(context, () => {
     const normalizedPayload = normalizeUpdateLedgerPayload(payload)
@@ -148,7 +166,8 @@ export async function updateLedgerCommand(
     updateLedgerConfiguration(context.db, {
       ledgerId: normalizedPayload.id,
       name: normalizedPayload.name,
-      currentPeriod: normalizedPayload.currentPeriod
+      currentPeriod: normalizedPayload.currentPeriod,
+      taxpayerIdentificationNumber: normalizedPayload.taxpayerIdentificationNumber
     })
 
     appendActorOperationLog(context, {
@@ -159,7 +178,11 @@ export async function updateLedgerCommand(
       targetId: normalizedPayload.id,
       details: {
         name: normalizedPayload.name,
-        currentPeriod: normalizedPayload.currentPeriod
+        currentPeriod: normalizedPayload.currentPeriod,
+        hasTaxpayerIdentificationNumber:
+          normalizedPayload.taxpayerIdentificationNumber === undefined
+            ? undefined
+            : Boolean(normalizedPayload.taxpayerIdentificationNumber.trim())
       }
     })
 

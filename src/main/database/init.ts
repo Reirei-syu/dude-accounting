@@ -75,6 +75,7 @@ export function initializeDatabase(): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       standard_type TEXT NOT NULL DEFAULT 'enterprise' CHECK(standard_type IN ('enterprise', 'npo')),
+      taxpayer_identification_number TEXT NOT NULL DEFAULT '',
       start_period TEXT NOT NULL,
       current_period TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -393,6 +394,7 @@ export function initializeDatabase(): void {
       ON report_snapshots(ledger_id, report_type, period);
   `)
 
+  ensureLedgerSchema(db)
   ensureSubjectSchema(db)
   ensureVoucherSchema(db)
   ensureInitialBalanceSchema(db)
@@ -417,6 +419,18 @@ export function initializeDatabase(): void {
   )
   insertSetting.run('allow_same_maker_auditor', '0')
   insertSetting.run('wallpaper_path', '')
+}
+
+export function ensureLedgerSchema(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info('ledgers')").all() as Array<{ name: string }>
+  if (columns.length === 0) return
+
+  const hasTaxpayerIdentificationNumber = columns.some(
+    (column) => column.name === 'taxpayer_identification_number'
+  )
+  if (!hasTaxpayerIdentificationNumber) {
+    db.exec("ALTER TABLE ledgers ADD COLUMN taxpayer_identification_number TEXT NOT NULL DEFAULT '';")
+  }
 }
 
 export function ensureUserLedgerAccessSchema(db: Database.Database): void {

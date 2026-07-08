@@ -78,6 +78,7 @@ const REPORT_SUB_MENUS: Record<AccountingStandardType, SubMenuItem[]> = {
   ],
   npo: [
     { id: 'report-query', title: '报表查询', componentType: 'ReportQuery' },
+    { id: 'tax-template', title: '税务模板', componentType: 'TaxTemplate' },
     { id: 'balance-sheet', title: '资产负债表', componentType: 'BalanceSheet' },
     { id: 'activity-statement', title: '业务活动表', componentType: 'ActivityStatement' },
     { id: 'cashflow-statement', title: '现金流量表', componentType: 'CashFlowStatement' }

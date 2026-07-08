@@ -34,6 +34,7 @@ Dude Accounting 的目标不是做“泛用型会计平台”，而是做一套*
 - 凭证录入、审核、记账、批量处理、位置交换
 - 期初余额、损益结转、结账 / 反结账
 - 财务报表快照生成、查询、删除、导出
+- 民非税务申报模板导出
 - 账簿查询与导出
 - 账套级备份包、电子档案导出、电子凭证处理底座
 - 关键操作日志
@@ -176,6 +177,12 @@ dude-accounting <domain> <action>
 
 ```bash
 dude-accounting <domain> <action>
+```
+
+民非税务模板导出示例：
+
+```bash
+dude-accounting report export-tax-template --ledger-id 1 --declaration-type monthly --year 2026 --month 7 --output D:\exports\npo-tax-template.xlsx
 ```
 
 特点：

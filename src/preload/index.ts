@@ -25,9 +25,19 @@ const api = {
   },
   ledger: {
     getAll: () => ipcRenderer.invoke('ledger:getAll'),
-    create: (data: { name: string; standardType: 'enterprise' | 'npo'; startPeriod: string }) =>
+    create: (data: {
+      name: string
+      standardType: 'enterprise' | 'npo'
+      startPeriod: string
+      taxpayerIdentificationNumber?: string
+    }) =>
       ipcRenderer.invoke('ledger:create', data),
-    update: (data: { id: number; name?: string; currentPeriod?: string }) =>
+    update: (data: {
+      id: number
+      name?: string
+      currentPeriod?: string
+      taxpayerIdentificationNumber?: string
+    }) =>
       ipcRenderer.invoke('ledger:update', data),
     delete: (payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
       ipcRenderer.invoke('ledger:delete', payload),
@@ -386,6 +396,18 @@ const api = {
         showCashflowPreviousAmount?: boolean
       }
     }) => ipcRenderer.invoke('reporting:exportBatch', payload),
+    chooseTaxTemplateOutputDirectory: () =>
+      ipcRenderer.invoke('reporting:chooseTaxTemplateOutputDirectory'),
+    exportTaxTemplate: (payload: {
+      ledgerId: number
+      declarationType: 'monthly' | 'quarterly' | 'annual'
+      year: number
+      month?: number
+      quarter?: number
+      directoryPath?: string
+      outputPath?: string
+      overwrite?: boolean
+    }) => ipcRenderer.invoke('reporting:exportTaxTemplate', payload),
     delete: (payload: { snapshotId: number; ledgerId: number }) =>
       ipcRenderer.invoke('reporting:delete', payload)
   },

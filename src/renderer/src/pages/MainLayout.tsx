@@ -63,7 +63,8 @@ export default function MainLayout(): JSX.Element {
   const [createForm, setCreateForm] = useState({
     name: '',
     startPeriod: '',
-    standardType: 'enterprise' as 'enterprise' | 'npo'
+    standardType: 'enterprise' as 'enterprise' | 'npo',
+    taxpayerIdentificationNumber: ''
   })
   const [isDeletingLedger, setIsDeletingLedger] = useState(false)
   const [deleteValidationCode, setDeleteValidationCode] = useState('')
@@ -135,13 +136,18 @@ export default function MainLayout(): JSX.Element {
   const openCreateLedger = (): void => {
     const now = new Date()
     const defaultPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-    setCreateForm({ name: '', startPeriod: defaultPeriod, standardType: 'enterprise' })
+    setCreateForm({
+      name: '',
+      startPeriod: defaultPeriod,
+      standardType: 'enterprise',
+      taxpayerIdentificationNumber: ''
+    })
     setIsCreatingLedger(true)
   }
 
   const submitCreateLedger = async (): Promise<void> => {
     if (!window.electron) return
-    const { name, startPeriod, standardType } = createForm
+    const { name, startPeriod, standardType, taxpayerIdentificationNumber } = createForm
     const normalizedName = name.trim()
 
     if (!normalizedName) {
@@ -163,7 +169,8 @@ export default function MainLayout(): JSX.Element {
       const result = await window.api.ledger.create({
         name: normalizedName,
         standardType,
-        startPeriod
+        startPeriod,
+        taxpayerIdentificationNumber: taxpayerIdentificationNumber.trim()
       })
       if (!result.success) {
         window.alert(result.error || '创建账套失败')
@@ -448,6 +455,23 @@ export default function MainLayout(): JSX.Element {
                     className="glass-input"
                     value={createForm.startPeriod}
                     onChange={(e) => setCreateForm({ ...createForm, startPeriod: e.target.value })}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-sm font-semibold text-slate-600">
+                    纳税人识别号/统一社会信用代码
+                  </label>
+                  <input
+                    className="glass-input"
+                    placeholder="民非税务模板导出时使用"
+                    value={createForm.taxpayerIdentificationNumber}
+                    onChange={(e) =>
+                      setCreateForm({
+                        ...createForm,
+                        taxpayerIdentificationNumber: e.target.value
+                      })
+                    }
                   />
                 </div>
 

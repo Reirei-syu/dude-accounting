@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import * as iconv from 'iconv-lite'
 import { afterEach, describe, expect, it } from 'vitest'
+import { parseCliArgs } from './parse'
 import { normalizeCliPayloadFilePath, resolveCliPayload } from './payload'
 
 const tempFiles: string[] = []
@@ -31,6 +33,51 @@ describe('resolveCliPayload', () => {
       username: 'admin',
       password: ''
     })
+  })
+
+  it('recovers gb18030 payload files in auto mode before JSON fields are used', () => {
+    const filePath = path.join(os.tmpdir(), `dude-cli-payload-gbk-${Date.now()}.json`)
+    tempFiles.push(filePath)
+
+    const payload = {
+      ledgerId: 5,
+      description: '收到基本户利息',
+      entries: [
+        {
+          summary: '支付对账单手续费',
+          subjectCode: '1002',
+          debit: 3.8,
+          credit: 0
+        }
+      ]
+    }
+    fs.writeFileSync(filePath, iconv.encode(JSON.stringify(payload), 'gb18030'))
+
+    expect(
+      resolveCliPayload({
+        payloadFile: filePath,
+        flags: {}
+      })
+    ).toEqual(payload)
+  })
+
+  it('honors explicit gbk payload encoding', () => {
+    const filePath = path.join(os.tmpdir(), `dude-cli-payload-explicit-gbk-${Date.now()}.json`)
+    tempFiles.push(filePath)
+
+    const payload = {
+      ledgerId: 5,
+      description: '收到基本户利息'
+    }
+    fs.writeFileSync(filePath, iconv.encode(JSON.stringify(payload), 'gb18030'))
+
+    expect(
+      resolveCliPayload({
+        payloadFile: filePath,
+        payloadEncoding: 'gbk',
+        flags: {}
+      } as Parameters<typeof resolveCliPayload>[0] & { payloadEncoding: 'gbk' })
+    ).toEqual(payload)
   })
 
   it('keeps numeric-looking CLI flag values as strings by default', () => {
@@ -164,6 +211,26 @@ describe('resolveCliPayload', () => {
           isCashFlow: false
         }
       ]
+    })
+  })
+})
+
+describe('parseCliArgs payload encoding', () => {
+  it('parses --encoding for payload decoding without treating it as a business flag', () => {
+    const parsed = parseCliArgs([
+      'voucher',
+      'save',
+      '--payload-file',
+      'D:\\tmp\\payload.json',
+      '--encoding',
+      'gbk',
+      '--ledgerId',
+      '5'
+    ])
+
+    expect(parsed.payloadEncoding).toBe('gbk')
+    expect(parsed.flags).toEqual({
+      ledgerId: '5'
     })
   })
 })

@@ -4,6 +4,7 @@ export interface LedgerCatalogRow {
   id: number
   name: string
   standard_type: 'enterprise' | 'npo'
+  taxpayer_identification_number: string
   start_period: string
   current_period: string
   created_at: string

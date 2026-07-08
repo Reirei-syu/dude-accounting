@@ -71,6 +71,7 @@ import {
   exportBookQueryCommand,
   exportReportCommand,
   exportReportsBatchCommand,
+  exportTaxTemplateCommand,
   generateReportCommand,
   getAuxiliaryBalancesCommand,
   getAuxiliaryDetailCommand,
@@ -492,7 +493,9 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     export: async (runtime, payload, outputMode, token) =>
       exportReportCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     'export-batch': async (runtime, payload, outputMode, token) =>
-      exportReportsBatchCommand(createAuthedContext(runtime, outputMode, token), payload as never)
+      exportReportsBatchCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    'export-tax-template': async (runtime, payload, outputMode, token) =>
+      exportTaxTemplateCommand(createAuthedContext(runtime, outputMode, token), payload)
   },
   book: {
     'subject-balances': async (runtime, payload, outputMode, token) =>

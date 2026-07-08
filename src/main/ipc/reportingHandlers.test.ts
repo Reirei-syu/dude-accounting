@@ -18,13 +18,28 @@ const reportingMocks = vi.hoisted(() => {
     getReportExportFilters: vi.fn(),
     rememberReportExportBatchDir: vi.fn(),
     rememberReportExportDir: vi.fn(),
+    buildNpoTaxTemplateFileName: vi.fn(),
+    buildUniqueTaxTemplateOutputPath: vi.fn(),
+    getPreferredTaxTemplateOutputDir: vi.fn(),
+    rememberTaxTemplateOutputDirectory: vi.fn(),
+    rememberTaxTemplateOutputFile: vi.fn(),
+    resolveNpoTaxTemplatePeriod: vi.fn(),
     withIpcTelemetry: vi.fn(
       async (_options: unknown, operation: () => unknown) => await operation()
     ),
+    getSessionByEvent: vi.fn(() => ({
+      id: 7,
+      username: 'tester',
+      realName: '测试用户',
+      permissions: {},
+      isAdmin: true,
+      ledgerIds: []
+    })),
     listReportsCommand: vi.fn(),
     getReportDetailCommand: vi.fn(),
     exportReportCommand: vi.fn(),
     exportReportsBatchCommand: vi.fn(),
+    exportTaxTemplateCommand: vi.fn(),
     generateReportCommand: vi.fn(),
     deleteReportCommand: vi.fn()
   }
@@ -57,8 +72,21 @@ vi.mock('../services/reportExport', () => ({
   rememberReportExportDir: reportingMocks.rememberReportExportDir
 }))
 
+vi.mock('../services/npoTaxTemplateExport', () => ({
+  buildNpoTaxTemplateFileName: reportingMocks.buildNpoTaxTemplateFileName,
+  buildUniqueTaxTemplateOutputPath: reportingMocks.buildUniqueTaxTemplateOutputPath,
+  getPreferredTaxTemplateOutputDir: reportingMocks.getPreferredTaxTemplateOutputDir,
+  rememberTaxTemplateOutputDirectory: reportingMocks.rememberTaxTemplateOutputDirectory,
+  rememberTaxTemplateOutputFile: reportingMocks.rememberTaxTemplateOutputFile,
+  resolveNpoTaxTemplatePeriod: reportingMocks.resolveNpoTaxTemplatePeriod
+}))
+
 vi.mock('../services/runtimeLogger', () => ({
   withIpcTelemetry: reportingMocks.withIpcTelemetry
+}))
+
+vi.mock('./session', () => ({
+  getSessionByEvent: reportingMocks.getSessionByEvent
 }))
 
 vi.mock('../commands/reportingCommands', () => ({
@@ -66,6 +94,7 @@ vi.mock('../commands/reportingCommands', () => ({
   getReportDetailCommand: reportingMocks.getReportDetailCommand,
   exportReportCommand: reportingMocks.exportReportCommand,
   exportReportsBatchCommand: reportingMocks.exportReportsBatchCommand,
+  exportTaxTemplateCommand: reportingMocks.exportTaxTemplateCommand,
   generateReportCommand: reportingMocks.generateReportCommand,
   deleteReportCommand: reportingMocks.deleteReportCommand
 }))
@@ -112,8 +141,31 @@ describe('reporting IPC handlers', () => {
   beforeEach(() => {
     reportingMocks.handlers.clear()
     vi.clearAllMocks()
+    const fakeDb = {
+      tag: 'db',
+      prepare: vi.fn(() => ({
+        get: vi.fn(() => ({ name: '演示民非' }))
+      }))
+    }
+    reportingMocks.getDatabase.mockReturnValue(fakeDb)
     reportingMocks.getPreferredReportExportDir.mockReturnValue('D:/exports')
     reportingMocks.getPreferredReportExportBatchDir.mockReturnValue('D:/batch-exports')
+    reportingMocks.getPreferredTaxTemplateOutputDir.mockReturnValue('D:/tax-exports')
+    reportingMocks.resolveNpoTaxTemplatePeriod.mockReturnValue({
+      declarationType: 'monthly',
+      year: 2026,
+      month: 7,
+      startPeriod: '2026-07',
+      endPeriod: '2026-07',
+      startDate: '2026-07-01',
+      endDate: '2026-07-31'
+    })
+    reportingMocks.buildNpoTaxTemplateFileName.mockReturnValue(
+      '演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx'
+    )
+    reportingMocks.buildUniqueTaxTemplateOutputPath.mockReturnValue(
+      'D:/tax-exports/演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx'
+    )
     reportingMocks.buildReportExportDefaultPath.mockReturnValue('D:/exports/default-report.pdf')
     reportingMocks.getReportExportFilters.mockReturnValue([
       { name: 'PDF 文档', extensions: ['pdf'] }
@@ -133,6 +185,18 @@ describe('reporting IPC handlers', () => {
       data: {
         directoryPath: 'D:/exports',
         filePaths: ['D:/exports/one.pdf', 'D:/exports/two.pdf']
+      },
+      error: null
+    })
+    reportingMocks.exportTaxTemplateCommand.mockResolvedValue({
+      status: 'success',
+      data: {
+        filePath: 'D:/tax-exports/演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx',
+        ledgerId: 1,
+        declarationType: 'monthly',
+        startDate: '2026-07-01',
+        endDate: '2026-07-31',
+        templateVersion: 'npo-tax-template-v1'
       },
       error: null
     })
@@ -354,5 +418,97 @@ describe('reporting IPC handlers', () => {
       expect.anything(),
       'D:/exports'
     )
+  })
+
+  it('remembers the selected tax template output directory for the current user', async () => {
+    reportingMocks.showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: ['D:/tax-exports']
+    })
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:chooseTaxTemplateOutputDirectory')
+
+    const result = await handler?.(event)
+
+    expect(reportingMocks.showOpenDialog).toHaveBeenCalledTimes(1)
+    expect(reportingMocks.showOpenDialog.mock.calls[0]?.[1]).toMatchObject({
+      defaultPath: 'D:/tax-exports',
+      properties: ['openDirectory', 'createDirectory']
+    })
+    expect(reportingMocks.rememberTaxTemplateOutputDirectory).toHaveBeenCalledWith(
+      expect.anything(),
+      7,
+      'D:/tax-exports'
+    )
+    expect(result).toEqual({
+      success: true,
+      directoryPath: 'D:/tax-exports'
+    })
+  })
+
+  it('builds a unique tax template path and delegates export through the reporting command', async () => {
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:exportTaxTemplate')
+
+    const result = await handler?.(event, {
+      ledgerId: 1,
+      declarationType: 'monthly',
+      year: 2026,
+      month: 7
+    })
+
+    expect(reportingMocks.resolveNpoTaxTemplatePeriod).toHaveBeenCalledWith({
+      ledgerId: 1,
+      declarationType: 'monthly',
+      year: 2026,
+      month: 7
+    })
+    expect(reportingMocks.buildUniqueTaxTemplateOutputPath).toHaveBeenCalledWith(
+      'D:/tax-exports',
+      '演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx'
+    )
+    expect(reportingMocks.exportTaxTemplateCommand).toHaveBeenCalledWith(expect.anything(), {
+      ledgerId: 1,
+      declarationType: 'monthly',
+      year: 2026,
+      month: 7,
+      outputPath: 'D:/tax-exports/演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx'
+    })
+    expect(reportingMocks.rememberTaxTemplateOutputFile).toHaveBeenCalledWith(
+      expect.anything(),
+      7,
+      'D:/tax-exports/演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx'
+    )
+    expect(result).toEqual({
+      success: true,
+      filePath: 'D:/tax-exports/演示民非_税务模板_月报_2026-07-01_2026-07-31.xlsx',
+      ledgerId: 1,
+      declarationType: 'monthly',
+      startDate: '2026-07-01',
+      endDate: '2026-07-31',
+      templateVersion: 'npo-tax-template-v1'
+    })
+  })
+
+  it('returns validation errors when tax template period input is invalid before export', async () => {
+    reportingMocks.resolveNpoTaxTemplatePeriod.mockImplementationOnce(() => {
+      throw new Error('月报需要指定 1-12 的月份')
+    })
+    const event = { sender: { id: 1 } }
+    const handler = reportingMocks.handlers.get('reporting:exportTaxTemplate')
+
+    const result = await handler?.(event, {
+      ledgerId: 1,
+      declarationType: 'monthly',
+      year: 2026
+    })
+
+    expect(reportingMocks.exportTaxTemplateCommand).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      success: false,
+      error: '月报需要指定 1-12 的月份',
+      errorCode: 'VALIDATION_ERROR',
+      errorDetails: null
+    })
   })
 })

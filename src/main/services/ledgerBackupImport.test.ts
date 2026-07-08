@@ -27,6 +27,7 @@ function createLedgerSchema(db: Database.Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       standard_type TEXT NOT NULL,
+      taxpayer_identification_number TEXT NOT NULL DEFAULT '',
       start_period TEXT NOT NULL,
       current_period TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT ''
@@ -254,8 +255,8 @@ describe('ledger backup import', () => {
       VALUES
         (1, 'admin', '管理员', '', '{}', 1, '2026-04-02 09:00:00'),
         (2, 'maker', '制单员', '', '{}', 0, '2026-04-02 09:00:00');
-      INSERT INTO ledgers (id, name, standard_type, start_period, current_period, created_at)
-      VALUES (8, '华北客户', 'enterprise', '2026-01', '2026-03', '2026-04-02 09:00:00');
+      INSERT INTO ledgers (id, name, standard_type, taxpayer_identification_number, start_period, current_period, created_at)
+      VALUES (8, '华北客户', 'enterprise', '91310000IMPORT001', '2026-01', '2026-03', '2026-04-02 09:00:00');
       INSERT INTO periods (ledger_id, period, is_closed, closed_at) VALUES (8, '2026-03', 1, '2026-03-31 23:59:59');
       INSERT INTO subjects (id, ledger_id, code, name, category, balance_direction) VALUES
         (81, 8, '1001', '库存现金', 'asset', 'debit');
@@ -328,11 +329,16 @@ describe('ledger backup import', () => {
     ).toEqual({ count: 2 })
     expect(
       importedDb
-        .prepare('SELECT id, name FROM ledgers WHERE id = ?')
-        .get(result.importedLedgerId) as { id: number; name: string }
+        .prepare('SELECT id, name, taxpayer_identification_number FROM ledgers WHERE id = ?')
+        .get(result.importedLedgerId) as {
+        id: number
+        name: string
+        taxpayer_identification_number: string
+      }
     ).toEqual({
       id: result.importedLedgerId,
-      name: '华北客户（导入）'
+      name: '华北客户（导入）',
+      taxpayer_identification_number: '91310000IMPORT001'
     })
     expect(
       importedDb

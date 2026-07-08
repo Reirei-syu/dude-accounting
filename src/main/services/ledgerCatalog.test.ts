@@ -5,6 +5,7 @@ type FakeLedgerRow = {
   id: number
   name: string
   standard_type: 'enterprise' | 'npo'
+  taxpayer_identification_number: string
   start_period: string
   current_period: string
   created_at: string
@@ -75,6 +76,7 @@ describe('ledgerCatalog service', () => {
         id: 1,
         name: '甲账套',
         standard_type: 'enterprise',
+        taxpayer_identification_number: '91310000A',
         start_period: '2026-01',
         current_period: '2026-03',
         created_at: '2026-03-19 09:00:00'
@@ -83,6 +85,7 @@ describe('ledgerCatalog service', () => {
         id: 2,
         name: '乙账套',
         standard_type: 'npo',
+        taxpayer_identification_number: '91310000B',
         start_period: '2026-02',
         current_period: '2026-03',
         created_at: '2026-03-19 10:00:00'
@@ -96,6 +99,12 @@ describe('ledgerCatalog service', () => {
         isAdmin: true
       }).map((ledger) => ledger.id)
     ).toEqual([2, 1])
+    expect(
+      listAccessibleLedgers(db as never, {
+        userId: 1,
+        isAdmin: true
+      }).map((ledger) => ledger.taxpayer_identification_number)
+    ).toEqual(['91310000B', '91310000A'])
 
     expect(
       listAccessibleLedgers(db as never, {

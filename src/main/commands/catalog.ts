@@ -744,6 +744,19 @@ const commandMetadata: CommandMetadata[] = [
     promptHints: []
   },
   {
+    domain: 'report',
+    action: 'export-tax-template',
+    description: '导出民非税务申报 Excel 模板',
+    aliases: ['税务模板导出'],
+    batchSafe: true,
+    desktopAssisted: false,
+    requiresSession: true,
+    sessionEffect: 'none',
+    uiMethods: ['window.api.reporting.exportTaxTemplate'],
+    uiAssistedMethods: ['window.api.reporting.chooseTaxTemplateOutputDirectory'],
+    promptHints: ['ledgerId']
+  },
+  {
     domain: 'book',
     action: 'subject-balances',
     description: '查询科目余额表',

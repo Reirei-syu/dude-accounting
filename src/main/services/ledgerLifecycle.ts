@@ -15,6 +15,7 @@ export interface LedgerLifecycleRow {
   id: number
   name: string
   standard_type: LedgerStandardType
+  taxpayer_identification_number: string
   start_period: string
   current_period: string
   created_at?: string
@@ -23,6 +24,7 @@ export interface LedgerLifecycleRow {
 export interface CreateLedgerInput {
   name: string
   standardType: LedgerStandardType
+  taxpayerIdentificationNumber?: string
   startPeriod: string
   operatorUserId: number
   operatorIsAdmin: boolean
@@ -38,12 +40,14 @@ export interface UpdateLedgerInput {
   ledgerId: number
   name?: string
   currentPeriod?: string
+  taxpayerIdentificationNumber?: string
 }
 
 export interface UpdateLedgerResult {
   normalizedName?: string
   currentPeriod?: string
   nextStartPeriod?: string
+  taxpayerIdentificationNumber?: string
 }
 
 export interface ApplyStandardTemplateInput {
@@ -81,14 +85,21 @@ export function createLedgerWithTemplate(
   dependencies: LedgerLifecycleDependencies = defaultLedgerLifecycleDependencies
 ): CreateLedgerResult {
   const normalizedName = normalizeLedgerName(input.name)
+  const taxpayerIdentificationNumber = input.taxpayerIdentificationNumber?.trim() ?? ''
   assertLedgerNameAvailable(db, normalizedName)
 
   const result = db
     .prepare(
-      `INSERT INTO ledgers (name, standard_type, start_period, current_period)
-       VALUES (?, ?, ?, ?)`
+      `INSERT INTO ledgers (name, standard_type, taxpayer_identification_number, start_period, current_period)
+       VALUES (?, ?, ?, ?, ?)`
     )
-    .run(normalizedName, input.standardType, input.startPeriod, input.startPeriod)
+    .run(
+      normalizedName,
+      input.standardType,
+      taxpayerIdentificationNumber,
+      input.startPeriod,
+      input.startPeriod
+    )
 
   const ledgerId = Number(result.lastInsertRowid)
   dependencies.seedSubjectsForLedger(db, ledgerId, input.standardType)
@@ -127,6 +138,15 @@ export function updateLedgerConfiguration(
     assertLedgerNameAvailable(db, normalizedName, input.ledgerId)
     db.prepare('UPDATE ledgers SET name = ? WHERE id = ?').run(normalizedName, input.ledgerId)
     result.normalizedName = normalizedName
+  }
+
+  if (input.taxpayerIdentificationNumber !== undefined) {
+    const taxpayerIdentificationNumber = input.taxpayerIdentificationNumber.trim()
+    db.prepare('UPDATE ledgers SET taxpayer_identification_number = ? WHERE id = ?').run(
+      taxpayerIdentificationNumber,
+      input.ledgerId
+    )
+    result.taxpayerIdentificationNumber = taxpayerIdentificationNumber
   }
 
   if (input.currentPeriod !== undefined) {

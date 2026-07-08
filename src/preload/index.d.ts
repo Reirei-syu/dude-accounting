@@ -50,6 +50,7 @@ interface LedgerAPI {
       id: number
       name: string
       standard_type: 'enterprise' | 'npo'
+      taxpayer_identification_number: string
       start_period: string
       current_period: string
       created_at: string
@@ -59,11 +60,13 @@ interface LedgerAPI {
     name: string
     standardType: 'enterprise' | 'npo'
     startPeriod: string
+    taxpayerIdentificationNumber?: string
   }) => Promise<{ success: boolean; id?: number; error?: string }>
   update: (data: {
     id: number
     name?: string
     currentPeriod?: string
+    taxpayerIdentificationNumber?: string
   }) => Promise<{ success: boolean; error?: string }>
   delete: (payload: { ledgerId: number; riskAcknowledged?: boolean }) => Promise<{
     success: boolean
@@ -108,6 +111,7 @@ interface LedgerAPI {
       id: number
       name: string
       standard_type: 'enterprise' | 'npo'
+      taxpayer_identification_number: string
       start_period: string
       current_period: string
       created_at: string
@@ -1327,6 +1331,35 @@ interface ReportingAPI {
     errorDetails?: Record<string, unknown> | null
     directoryPath?: string
     filePaths?: string[]
+  }>
+  chooseTaxTemplateOutputDirectory: () => Promise<{
+    success: boolean
+    cancelled?: boolean
+    error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
+    directoryPath?: string
+  }>
+  exportTaxTemplate: (payload: {
+    ledgerId: number
+    declarationType: 'monthly' | 'quarterly' | 'annual'
+    year: number
+    month?: number
+    quarter?: number
+    directoryPath?: string
+    outputPath?: string
+    overwrite?: boolean
+  }) => Promise<{
+    success: boolean
+    error?: string
+    errorCode?: string
+    errorDetails?: Record<string, unknown> | null
+    filePath?: string
+    ledgerId?: number
+    declarationType?: 'monthly' | 'quarterly' | 'annual'
+    startDate?: string
+    endDate?: string
+    templateVersion?: string
   }>
   delete: (payload: { snapshotId: number; ledgerId: number }) => Promise<{
     success: boolean

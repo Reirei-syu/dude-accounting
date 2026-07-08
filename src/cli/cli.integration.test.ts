@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
+import * as iconv from 'iconv-lite'
 import { afterAll, describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
@@ -11,6 +12,8 @@ const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
 const loginPayloadPath = path.join(tempRoot, 'dude-cli-login-payload.json')
 const ledgerCreatePayloadPath = path.join(tempRoot, 'dude-cli-ledger-create.json')
 const voucherAliasPayloadPath = path.join(tempRoot, 'dude-cli-voucher-alias.json')
+const voucherGbkPayloadPath = path.join(tempRoot, 'dude-cli-voucher-gbk.json')
+const voucherBrokenPayloadPath = path.join(tempRoot, 'dude-cli-voucher-broken.json')
 const voucherEditPayloadPath = path.join(tempRoot, 'dude-cli-voucher-edit.json')
 const voucherRenumberPayloadPath = path.join(tempRoot, 'dude-cli-voucher-renumber.json')
 const voucherBatchPayloadPath = path.join(tempRoot, 'dude-cli-voucher-batch.json')
@@ -77,6 +80,22 @@ async function runCli(args: string[]): Promise<{ status: string; data: unknown; 
   )
 
   return extractCommandResult(`${stdout}\n${stderr}`)
+}
+
+async function runCliAllowError(
+  args: string[]
+): Promise<{ status: string; data: unknown; error: unknown }> {
+  try {
+    return await runCli(args)
+  } catch (error) {
+    const output =
+      error && typeof error === 'object'
+        ? `${String((error as { stdout?: unknown }).stdout ?? '')}\n${String(
+            (error as { stderr?: unknown }).stderr ?? ''
+          )}`
+        : String(error)
+    return extractCommandResult(output)
+  }
 }
 
 async function runCliWithStdin(
@@ -388,6 +407,7 @@ describe('embedded cli integration', () => {
       expect(entriesResult.data).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
+            summary: '收到客户付款活动款（张三）',
             subject_code: '1002',
             cash_flow_code: 'CF01'
           }),
@@ -401,6 +421,102 @@ describe('embedded cli integration', () => {
           })
         ])
       )
+
+      const gbkPayload = {
+        ledgerId,
+        period: '2026-01',
+        date: '2026-01-05',
+        description: '收到基本户利息',
+        entries: [
+          {
+            subjectCode: 1002,
+            debit: 3.8,
+            credit: 0,
+            cashflowItemCode: 'CF01'
+          },
+          {
+            subjectCode: '430101',
+            debit: 0,
+            credit: 3.8
+          }
+        ]
+      }
+      fs.writeFileSync(voucherGbkPayloadPath, iconv.encode(JSON.stringify(gbkPayload), 'gb18030'))
+
+      const gbkSaveResult = await runCli([
+        'voucher',
+        'save',
+        '--payload-file',
+        voucherGbkPayloadPath
+      ])
+      expect(gbkSaveResult.status).toBe('success')
+      const gbkVoucherId = (gbkSaveResult.data as { voucherId: number }).voucherId
+      const gbkEntriesResult = await runCli([
+        'voucher',
+        'entries',
+        '--voucherId',
+        String(gbkVoucherId)
+      ])
+      expect(gbkEntriesResult.status).toBe('success')
+      expect(gbkEntriesResult.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            summary: '收到基本户利息',
+            subject_code: '1002'
+          })
+        ])
+      )
+      const gbkListResult = await runCli([
+        'voucher',
+        'list',
+        '--ledgerId',
+        String(ledgerId),
+        '--voucherId',
+        String(gbkVoucherId)
+      ])
+      expect(gbkListResult.status).toBe('success')
+      expect(gbkListResult.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: gbkVoucherId,
+            first_summary: '收到基本户利息'
+          })
+        ])
+      )
+
+      fs.writeFileSync(
+        voucherBrokenPayloadPath,
+        JSON.stringify({
+          ledgerId,
+          period: '2026-01',
+          date: '2026-01-06',
+          description: '�յ���������Ϣ',
+          entries: [
+            {
+              subjectCode: 1002,
+              debit: 3.8,
+              credit: 0
+            },
+            {
+              subjectCode: '430101',
+              debit: 0,
+              credit: 3.8
+            }
+          ]
+        }),
+        'utf8'
+      )
+      const brokenSaveResult = await runCliAllowError([
+        'voucher',
+        'save',
+        '--payload-file',
+        voucherBrokenPayloadPath
+      ])
+      expect(brokenSaveResult.status).toBe('error')
+      expect(brokenSaveResult.error).toMatchObject({
+        code: 'VALIDATION_ERROR',
+        message: expect.stringContaining('疑似包含中文乱码')
+      })
 
       const exportEditPayloadResult = await runCli([
         'voucher',

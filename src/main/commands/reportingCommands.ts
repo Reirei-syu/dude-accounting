@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import {
   buildReportExportDefaultPath,
   exportReportSnapshotToFile,
@@ -31,6 +33,12 @@ import {
   type BookQueryExportPayload
 } from '../services/bookQueryExport'
 import {
+  exportNpoTaxTemplate,
+  normalizeTaxTemplateOutputPath,
+  type ExportNpoTaxTemplateResult,
+  type TaxTemplateDeclarationType
+} from '../services/npoTaxTemplateExport'
+import {
   getAuxiliaryBalances,
   getAuxiliaryDetail,
   getDetailLedger,
@@ -44,6 +52,13 @@ import {
 } from '../services/bookQuery'
 import { requireCommandActor, requireCommandLedgerAccess } from './authz'
 import { appendActorOperationLog } from './operationLog'
+import {
+  asCommandPayloadRecord,
+  normalizeBooleanField,
+  normalizeOptionalPositiveInteger,
+  normalizePositiveInteger,
+  normalizeStringField
+} from './payloadNormalizers'
 import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
@@ -76,6 +91,44 @@ function resolveBookExportPath(
     getPreferredBookQueryExportDir(context.db, context.runtime.documentsPath) ||
     getDefaultBookQueryExportRootDir(context.runtime.documentsPath)
   return buildBookQueryExportDefaultPath(preferredDir, payload)
+}
+
+function assertTaxTemplateDeclarationType(value: string): TaxTemplateDeclarationType {
+  if (value === 'monthly' || value === 'quarterly' || value === 'annual') {
+    return value
+  }
+  throw new CommandError('VALIDATION_ERROR', '申报类型必须是 monthly、quarterly 或 annual', {
+    declarationType: value
+  }, 2)
+}
+
+function normalizeExportTaxTemplatePayload(payload: unknown) {
+  const rawPayload = asCommandPayloadRecord(payload, '税务模板导出 payload 格式不正确')
+  const outputPath = normalizeStringField(
+    rawPayload.output ?? rawPayload.outputPath ?? rawPayload['output-path'] ?? rawPayload.filePath,
+    'output',
+    '税务模板输出路径不能为空'
+  )
+
+  return {
+    ledgerId: normalizePositiveInteger(
+      rawPayload.ledgerId ?? rawPayload['ledger-id'],
+      'ledgerId',
+      '缺少账套 ledgerId'
+    ),
+    declarationType: assertTaxTemplateDeclarationType(
+      normalizeStringField(
+        rawPayload.declarationType ?? rawPayload['declaration-type'],
+        'declarationType',
+        '申报类型不能为空'
+      )
+    ),
+    year: normalizePositiveInteger(rawPayload.year, 'year', '申报年度不能为空'),
+    month: normalizeOptionalPositiveInteger(rawPayload.month, 'month', '月报月份必须为正整数'),
+    quarter: normalizeOptionalPositiveInteger(rawPayload.quarter, 'quarter', '季报季度必须为正整数'),
+    outputPath: normalizeTaxTemplateOutputPath(outputPath),
+    overwrite: normalizeBooleanField(rawPayload.overwrite, 'overwrite', false)
+  }
 }
 
 export async function listReportsCommand(
@@ -260,6 +313,79 @@ export async function exportReportsBatchCommand(
       directoryPath: payload.directoryPath,
       filePaths
     }
+  })
+}
+
+export async function exportTaxTemplateCommand(
+  context: CommandContext,
+  payload: unknown
+): Promise<CommandResult<ExportNpoTaxTemplateResult>> {
+  return withCommandResult(context, async () => {
+    const actor = requireCommandActor(context.actor)
+    const normalizedPayload = normalizeExportTaxTemplatePayload(payload)
+    requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
+
+    if (path.extname(normalizedPayload.outputPath).toLowerCase() !== '.xlsx') {
+      throw new CommandError('VALIDATION_ERROR', '税务模板输出路径必须是 .xlsx 文件', null, 2)
+    }
+    if (!normalizedPayload.overwrite && fs.existsSync(normalizedPayload.outputPath)) {
+      throw new CommandError('CONFLICT', '输出文件已存在，请更换文件名或传入 overwrite=true', {
+        outputPath: normalizedPayload.outputPath
+      }, 6)
+    }
+
+    let result: ExportNpoTaxTemplateResult
+    try {
+      result = await exportNpoTaxTemplate(context.db, {
+        ...normalizedPayload,
+        now: context.now
+      })
+    } catch (error) {
+      if (error instanceof Error) {
+        const validationMessages = [
+          '账套不存在',
+          '税务模板仅支持民间非营利组织账套',
+          '纳税人名称不能为空',
+          '纳税人识别号不能为空',
+          '月报需要指定 1-12 的月份',
+          '季报需要指定 1-4 的季度',
+          '申报年度不合法',
+          '税务模板输出路径必须是 .xlsx 文件'
+        ]
+        if (validationMessages.some((message) => error.message.includes(message))) {
+          throw new CommandError('VALIDATION_ERROR', error.message, null, 2)
+        }
+        if (error.message.includes('输出文件已存在')) {
+          throw new CommandError('CONFLICT', error.message, {
+            outputPath: normalizedPayload.outputPath
+          }, 6)
+        }
+      }
+      throw error
+    }
+
+    appendActorOperationLog(
+      {
+        ...context,
+        actor
+      },
+      {
+        ledgerId: normalizedPayload.ledgerId,
+        module: 'reporting',
+        action: 'export_tax_template',
+        targetType: 'tax_template',
+        targetId: result.filePath,
+        details: {
+          declarationType: result.declarationType,
+          startDate: result.startDate,
+          endDate: result.endDate,
+          templateVersion: result.templateVersion,
+          outputPath: result.filePath
+        }
+      }
+    )
+
+    return result
   })
 }
 

@@ -182,9 +182,11 @@ CLI -> src/main/commands -> src/main/services -> core/database
 - `--payload-file <path>`：推荐的复杂输入方式，优先级最高
 - `--payload-stdin`：从标准输入读取 JSON，适合管道、Python subprocess 和跨 shell 自动化
 - `--payload-json "<json>"`：适合简单 JSON；跨 shell 的复杂 JSON 建议改用 `--payload-file` 或 `--payload-stdin`
+- `--encoding auto|utf8|gbk`：payload 编码，默认 `auto`；旧式 Windows GBK/GB18030 文件可显式使用 `gbk`
 - payload 来源优先级为 `--payload-file` > `--payload-stdin` > `--payload-json`
 - 显式参数优先于 payload 字段和交互式上下文
 - 完整帮助可通过 `--help --all --output <filePath>`、`help all --output <filePath>` 或 `帮助 all --output <filePath>` 导出到文件
+- 中文 payload 推荐由 PowerShell `ConvertTo-Json | Out-File -Encoding UTF8` 生成，不要在 Windows/ssh 下直接 `echo` 中文 JSON；凭证摘要、描述等字段若仍疑似乱码会拒绝写入
 
 ## 9. CLI 会话与数据位置
 
@@ -216,7 +218,7 @@ CLI 登录态会持久化到：
 | `initial-balance` | `list` / `save` | 期初余额维护 |
 | `period` | `status` / `close` / `reopen` | 会计期间控制 |
 | `carry-forward` | `rules` / `preview` / `execute` | 损益结转 |
-| `report` | `generate` / `list` / `export` | 报表快照与导出 |
+| `report` | `generate` / `list` / `export` / `export-tax-template` | 报表快照、导出与民非税务模板 |
 | `book` | `subject-balances` / `detail-ledger` / `export` | 账簿查询与导出 |
 | `backup` | `create` / `validate` / `import` / `restore` | 账套备份与恢复 |
 | `archive` | `export` / `validate` / `manifest` | 电子会计档案 |
@@ -254,6 +256,7 @@ CLI 登录态会持久化到：
 报表导出补充：
 
 - `report export format=pdf` 与 HTML 导出复用同一份 HTML/CSS 版式，通过 Electron/Chromium 输出 PDF；如桌面 PDF 引擎不可用，应按结构化错误处理，不应假设会自动降级到 PDFKit。
+- `report export-tax-template` 仅用于民非账套税务申报模板导出，需显式传入账套、申报类型、年度和 `.xlsx` 输出路径。
 
 ## 12. 桌面辅助型 CLI 命令
 

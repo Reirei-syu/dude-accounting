@@ -57,6 +57,7 @@ import {
 import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
+import { MojibakeTextError, normalizeUserTextOrThrow } from '../../shared/mojibake'
 
 interface SaveVoucherInput {
   ledgerId: number
@@ -223,8 +224,37 @@ function normalizeVoucherWordField(payload: Record<string, unknown>): string | u
   if (typeof rawValue !== 'string') {
     return undefined
   }
-  const voucherWord = rawValue.trim()
+  const voucherWord = normalizeVoucherUserText(rawValue, 'voucherWord', '凭证字号')
   return voucherWord ? voucherWord : undefined
+}
+
+function normalizeVoucherUserText(rawValue: string, field: string, label: string): string {
+  const trimmed = rawValue.trim()
+  if (!trimmed) {
+    return ''
+  }
+
+  try {
+    return normalizeUserTextOrThrow(trimmed, { field, label })
+  } catch (error) {
+    if (error instanceof MojibakeTextError) {
+      throw new CommandError('VALIDATION_ERROR', error.message, error.details, 2)
+    }
+    throw error
+  }
+}
+
+function normalizeOptionalVoucherUserText(
+  value: unknown,
+  field: string,
+  label: string
+): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const normalized = normalizeVoucherUserText(value, field, label)
+  return normalized ? normalized : undefined
 }
 
 function normalizeAmountField(
@@ -305,7 +335,7 @@ function normalizeVoucherEntriesField(
 
   const defaultSummary =
     typeof payload.description === 'string' && payload.description.trim()
-      ? payload.description.trim()
+      ? normalizeVoucherUserText(payload.description, 'description', '凭证描述')
       : ''
 
   return payload.entries.map((rawEntry, index) => {
@@ -316,7 +346,9 @@ function normalizeVoucherEntriesField(
 
     const rawSummary = entry.summary
     const summary =
-      typeof rawSummary === 'string' && rawSummary.trim() ? rawSummary.trim() : defaultSummary
+      typeof rawSummary === 'string' && rawSummary.trim()
+        ? normalizeVoucherUserText(rawSummary, `entries[${index}].summary`, `第${rowNumber}行摘要`)
+        : defaultSummary
 
     const rawSubjectCode = entry.subjectCode ?? entry.subject_code ?? entry.subject
     if (
@@ -477,8 +509,12 @@ function normalizeVoucherBatchPayload(payload: unknown): {
   return {
     action: normalizeStringField(rawPayload.action, 'action', '缺少批量操作 action') as VoucherBatchAction,
     voucherIds: normalizePositiveIntegerArray(rawPayload.voucherIds, 'voucherIds'),
-    reason: normalizeOptionalStringField(rawPayload.reason, 'reason'),
-    approvalTag: normalizeOptionalStringField(rawPayload.approvalTag, 'approvalTag')
+    reason: normalizeOptionalVoucherUserText(rawPayload.reason, 'reason', '批量操作原因'),
+    approvalTag: normalizeOptionalVoucherUserText(
+      rawPayload.approvalTag,
+      'approvalTag',
+      '批量操作审批标记'
+    )
   }
 }
 

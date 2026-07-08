@@ -314,6 +314,74 @@ describe('voucherCommands', () => {
     )
   })
 
+  it('recovers classic mojibake voucher descriptions before invoking lifecycle', async () => {
+    const result = await createVoucherCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01',
+      date: '2026-01-03',
+      description: '鏀粯瀵硅处鍗曟墜缁垂',
+      entries: [
+        {
+          subjectCode: 1002,
+          debit: 3.8,
+          credit: 0,
+          cashflowItemCode: 'CF01'
+        },
+        {
+          subjectCode: '430101',
+          debit: 0,
+          credit: 3.8
+        }
+      ]
+    } as never)
+
+    expect(result.status).toBe('success')
+    expect(voucherCommandMocks.createVoucherWithEntries).toHaveBeenCalledWith(
+      context.db,
+      expect.objectContaining({
+        entries: [
+          expect.objectContaining({
+            summary: '支付对账单手续费',
+            subjectCode: '1002'
+          }),
+          expect.objectContaining({
+            summary: '支付对账单手续费',
+            subjectCode: '430101'
+          })
+        ]
+      })
+    )
+  })
+
+  it('rejects unrecoverable corrupted voucher summaries before invoking lifecycle', async () => {
+    const result = await createVoucherCommand(context as never, {
+      ledgerId: 8,
+      period: '2026-01',
+      date: '2026-01-03',
+      entries: [
+        {
+          summary: '�յ���������Ϣ',
+          subjectCode: 1002,
+          debit: 3.8,
+          credit: 0
+        },
+        {
+          summary: '�յ���������Ϣ',
+          subjectCode: '430101',
+          debit: 0,
+          credit: 3.8
+        }
+      ]
+    } as never)
+
+    expect(result.status).toBe('error')
+    expect(result.error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('疑似包含中文乱码')
+    })
+    expect(voucherCommandMocks.createVoucherWithEntries).not.toHaveBeenCalled()
+  })
+
   it('returns a clear validation error when voucherDate/date is missing', async () => {
     const result = await createVoucherCommand(context as never, {
       ledgerId: 8,

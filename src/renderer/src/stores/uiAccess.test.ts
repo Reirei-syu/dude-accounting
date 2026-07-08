@@ -124,6 +124,25 @@ describe('ui access control', () => {
     ).toContain('backup')
   })
 
+  it('shows tax template submenu only for npo reports', () => {
+    const getVisibleModuleSubMenus = (
+      uiStore as {
+        getVisibleModuleSubMenus?: (
+          module: string,
+          standardType: 'enterprise' | 'npo',
+          user: typeof regularUser
+        ) => Array<{ id: string }>
+      }
+    ).getVisibleModuleSubMenus
+
+    expect(
+      getVisibleModuleSubMenus?.('reports', 'npo', regularUser).map((item) => item.id)
+    ).toContain('tax-template')
+    expect(
+      getVisibleModuleSubMenus?.('reports', 'enterprise', regularUser).map((item) => item.id)
+    ).not.toContain('tax-template')
+  })
+
   it('keeps all modules visible for administrators', () => {
     const getVisibleMainModules = (
       uiStore as {

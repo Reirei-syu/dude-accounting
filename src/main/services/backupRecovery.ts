@@ -626,6 +626,11 @@ function requireMappedId(
   return targetId
 }
 
+function hasLedgerColumn(db: Database.Database, columnName: string): boolean {
+  const columns = db.prepare("PRAGMA table_info('ledgers')").all() as Array<{ name: string }>
+  return columns.some((column) => column.name === columnName)
+}
+
 export function importLedgerBackupArtifact(input: {
   backupPath: string
   manifestPath: string
@@ -655,6 +660,7 @@ export function importLedgerBackupArtifact(input: {
           standard_type: string
           start_period: string
           current_period: string
+          taxpayer_identification_number?: string | null
           created_at: string
         }
       | undefined
@@ -664,18 +670,33 @@ export function importLedgerBackupArtifact(input: {
     }
 
     const importedLedgerName = resolveImportedLedgerName(targetDb, sourceLedger.name)
-    const importedLedgerResult = targetDb
-      .prepare(
-        `INSERT INTO ledgers (name, standard_type, start_period, current_period, created_at)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(
-        importedLedgerName,
-        sourceLedger.standard_type,
-        sourceLedger.start_period,
-        sourceLedger.current_period,
-        sourceLedger.created_at
-      )
+    const importedLedgerResult = hasLedgerColumn(targetDb, 'taxpayer_identification_number')
+      ? targetDb
+          .prepare(
+            `INSERT INTO ledgers (
+               name, standard_type, taxpayer_identification_number, start_period, current_period, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            importedLedgerName,
+            sourceLedger.standard_type,
+            sourceLedger.taxpayer_identification_number ?? '',
+            sourceLedger.start_period,
+            sourceLedger.current_period,
+            sourceLedger.created_at
+          )
+      : targetDb
+          .prepare(
+            `INSERT INTO ledgers (name, standard_type, start_period, current_period, created_at)
+             VALUES (?, ?, ?, ?, ?)`
+          )
+          .run(
+            importedLedgerName,
+            sourceLedger.standard_type,
+            sourceLedger.start_period,
+            sourceLedger.current_period,
+            sourceLedger.created_at
+          )
     const importedLedgerId = Number(importedLedgerResult.lastInsertRowid)
 
     if (!input.operatorIsAdmin) {

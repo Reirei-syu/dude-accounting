@@ -5,8 +5,9 @@ import { stdin as processStdin, stdout as processStdout } from 'node:process'
 import type { Readable, Writable } from 'node:stream'
 import { renderCommandOutput } from './output'
 import { parseCliArgs } from './parse'
-import { resolveCliPayload } from './payload'
+import { resolveCliPayloadWithWarnings, type PayloadWarning } from './payload'
 import { loadCliSession } from './sessionStore'
+import { normalizeCliCommandTokens } from './commandAliases'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
@@ -50,6 +51,7 @@ export interface ResolvedInteractiveCommand {
   domain: string
   action: string
   payload: Record<string, unknown>
+  payloadWarnings?: PayloadWarning[]
   outputMode: CommandOutputMode
   token?: string
   tokens: string[]
@@ -223,16 +225,7 @@ function normalizeBuiltinTokens(tokens: string[]): string[] {
 }
 
 function normalizeCommandTokens(tokens: string[]): string[] {
-  if (tokens.length === 0) {
-    return tokens
-  }
-
-  const matched = commandSpecs.find((spec) => spec.aliases.includes(tokens[0]))
-  if (!matched) {
-    return tokens
-  }
-
-  return [matched.domain, matched.action, ...tokens.slice(1)]
+  return normalizeCliCommandTokens(tokens)
 }
 
 function detectBuiltinName(tokens: string[]): string | null {
@@ -360,7 +353,9 @@ function buildInteractiveHelpText(showAll = false): string {
     '  1. 无参数且终端为 TTY 时进入交互态。',
     '  2. 也可以直接输入英文原始命令，例如：ledger list',
     '  3. 输入 help all 或 帮助 all 可查看完整命令大全。',
-    '  4. 账套和期间上下文只在当前交互会话内有效。'
+    '  4. 账套和期间上下文只在当前交互会话内有效。',
+    '  5. 含中文的 payload 文件推荐使用 PowerShell ConvertTo-Json | Out-File -Encoding UTF8；Windows/ssh 下不要直接 echo 中文 JSON。',
+    '  6. 如需读取旧式 GBK 文件，可使用 --encoding gbk；默认 --encoding auto 会先按 UTF-8 读取并尝试自动恢复。'
   ].join('\n')
 }
 
@@ -458,15 +453,18 @@ export function resolveInteractiveCommand(line: string): ResolvedInteractiveInpu
       2
     )
   }
+  const payloadResolution = resolveCliPayloadWithWarnings({
+    payloadFile: parsed.payloadFile,
+    payloadEncoding: parsed.payloadEncoding,
+    payloadJson: parsed.payloadJson,
+    flags: parsed.flags
+  })
   return {
     kind: 'command',
     domain: parsed.domain,
     action: parsed.action,
-    payload: resolveCliPayload({
-      payloadFile: parsed.payloadFile,
-      payloadJson: parsed.payloadJson,
-      flags: parsed.flags
-    }) as Record<string, unknown>,
+    payload: payloadResolution.payload as Record<string, unknown>,
+    payloadWarnings: payloadResolution.warnings,
     outputMode: parsed.outputMode,
     token: parsed.token,
     tokens: commandTokens
@@ -1175,6 +1173,9 @@ export async function runInteractiveCli(
         }
 
         const commandInput: ResolvedInteractiveCommand = resolved
+        for (const warning of commandInput.payloadWarnings ?? []) {
+          output.write(`${warning.message}\n`)
+        }
         let prepared = applyInteractiveContext(commandInput, state)
         const promptPlan = getInteractivePromptPlan(prepared, state)
 

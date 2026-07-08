@@ -10,6 +10,7 @@ describe('ledger preference helpers', () => {
             id: number
             name: string
             standard_type: 'enterprise' | 'npo'
+            taxpayer_identification_number: string
             start_period: string
             current_period: string
             created_at: string
@@ -19,6 +20,7 @@ describe('ledger preference helpers', () => {
           id: number
           name: string
           standard_type: 'enterprise' | 'npo'
+          taxpayer_identification_number: string
           start_period: string
           current_period: string
           created_at: string
@@ -33,6 +35,7 @@ describe('ledger preference helpers', () => {
         id: 11,
         name: '账套 A',
         standard_type: 'enterprise' as const,
+        taxpayer_identification_number: '',
         start_period: '2026-01',
         current_period: '2026-03',
         created_at: '2026-03-12T00:00:00.000Z'
@@ -41,6 +44,7 @@ describe('ledger preference helpers', () => {
         id: 12,
         name: '账套 B',
         standard_type: 'enterprise' as const,
+        taxpayer_identification_number: '',
         start_period: '2026-01',
         current_period: '2026-03',
         created_at: '2026-03-12T00:00:00.000Z'
@@ -60,6 +64,7 @@ describe('ledger preference helpers', () => {
             id: number
             name: string
             standard_type: 'enterprise' | 'npo'
+            taxpayer_identification_number: string
             start_period: string
             current_period: string
             created_at: string
@@ -70,6 +75,7 @@ describe('ledger preference helpers', () => {
           id: number
           name: string
           standard_type: 'enterprise' | 'npo'
+          taxpayer_identification_number: string
           start_period: string
           current_period: string
           created_at: string
@@ -84,6 +90,7 @@ describe('ledger preference helpers', () => {
         id: 21,
         name: '账套 A',
         standard_type: 'enterprise' as const,
+        taxpayer_identification_number: '',
         start_period: '2026-01',
         current_period: '2026-03',
         created_at: '2026-03-12T00:00:00.000Z'
@@ -92,6 +99,7 @@ describe('ledger preference helpers', () => {
         id: 22,
         name: '账套 B',
         standard_type: 'npo' as const,
+        taxpayer_identification_number: '',
         start_period: '2026-01',
         current_period: '2026-03',
         created_at: '2026-03-13T00:00:00.000Z'

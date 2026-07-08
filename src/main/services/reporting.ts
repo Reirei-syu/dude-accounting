@@ -114,6 +114,10 @@ export interface GenerateReportSnapshotParams {
   now?: string | Date
 }
 
+export interface BuildReportSnapshotContentOptions {
+  activityCurrentPeriod?: string | null
+}
+
 export interface DuplicateReportSnapshotRow {
   id: number
 }
@@ -2090,7 +2094,8 @@ function buildNgoActivityStatementSnapshot(
   db: Database.Database,
   ledger: LedgerRow,
   scope: ReportSnapshotScope,
-  generatedAt: string
+  generatedAt: string,
+  currentPeriod: string | null = scope.endPeriod
 ): ReportSnapshotContent {
   const selectedEntries = listEffectiveEntries(
     db,
@@ -2150,7 +2155,7 @@ function buildNgoActivityStatementSnapshot(
     rowOf(
       `income-${group.prefixes[0]}`,
       group.label,
-      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'income', scope.endPeriod),
+      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'income', currentPeriod ?? undefined),
       sumEntriesByPrefixes(cumulativeEntries, group.prefixes, 'income')
     )
   )
@@ -2158,11 +2163,11 @@ function buildNgoActivityStatementSnapshot(
     rowOf(
       `expense-${group.prefixes[0]}`,
       group.label,
-      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'expense', scope.endPeriod),
+      sumEntriesByPrefixes(selectedEntries, group.prefixes, 'expense', currentPeriod ?? undefined),
       sumEntriesByPrefixes(cumulativeEntries, group.prefixes, 'expense')
     )
   )
-  const currentTransfers = sumNgoNetAssetTransfers(selectedEntries, scope.endPeriod)
+  const currentTransfers = sumNgoNetAssetTransfers(selectedEntries, currentPeriod ?? undefined)
   const cumulativeTransfers = sumNgoNetAssetTransfers(cumulativeEntries)
   const restrictedToUnrestrictedCurrent = {
     unrestricted: currentTransfers.restrictedToUnrestricted,
@@ -3582,7 +3587,8 @@ function buildSnapshotContent(
   ledger: LedgerRow,
   scope: ReportSnapshotScope,
   reportType: ReportType,
-  generatedAt: string
+  generatedAt: string,
+  options: BuildReportSnapshotContentOptions = {}
 ): ReportSnapshotContent {
   const title = getReportTitle(reportType, ledger.standard_type)
   if (reportType === 'balance_sheet') {
@@ -3592,7 +3598,13 @@ function buildSnapshotContent(
     return buildEnterpriseEquityStatementSnapshot(db, ledger, scope, generatedAt)
   }
   if (ledger.standard_type === 'npo' && reportType === 'activity_statement') {
-    return buildNgoActivityStatementSnapshot(db, ledger, scope, generatedAt)
+    return buildNgoActivityStatementSnapshot(
+      db,
+      ledger,
+      scope,
+      generatedAt,
+      options.activityCurrentPeriod
+    )
   }
   if (reportType === 'cashflow_statement') {
     if (ledger.standard_type === 'npo') {
@@ -3601,6 +3613,24 @@ function buildSnapshotContent(
     return buildCashFlowSnapshot(db, ledger, scope, generatedAt)
   }
   return buildProfitLossSnapshot(db, ledger, scope, generatedAt, title)
+}
+
+export function buildReportSnapshotContentForExport(
+  db: Database.Database,
+  params: GenerateReportSnapshotParams,
+  options: BuildReportSnapshotContentOptions = {}
+): ReportSnapshotContent {
+  const ledger = getLedger(db, params.ledgerId)
+  const generatedAt = normalizeTimestamp(params.now)
+  const includeUnpostedVouchers = params.includeUnpostedVouchers === true
+  const scope = buildScope(
+    params.reportType,
+    params.month,
+    params.startPeriod,
+    params.endPeriod,
+    includeUnpostedVouchers
+  )
+  return buildSnapshotContent(db, ledger, scope, params.reportType, generatedAt, options)
 }
 
 function buildReportName(title: string, scope: ReportSnapshotScope): string {

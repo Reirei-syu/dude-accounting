@@ -74,6 +74,11 @@ describe('UI / CLI semantics catalog', () => {
       uiAssistedMethods: ['window.api.reporting.exportBatch']
     })
 
+    expect(getMetadata('report', 'export-tax-template')).toMatchObject({
+      uiMethods: ['window.api.reporting.exportTaxTemplate'],
+      uiAssistedMethods: ['window.api.reporting.chooseTaxTemplateOutputDirectory']
+    })
+
     expect(getMetadata('book', 'export')).toMatchObject({
       uiMethods: [],
       uiAssistedMethods: ['window.api.bookQuery.export']
