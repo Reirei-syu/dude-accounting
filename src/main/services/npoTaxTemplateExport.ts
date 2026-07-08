@@ -308,11 +308,13 @@ function tableRowsByLabel(content: ReportSnapshotContent): Map<string, ReportSna
   const map = new Map<string, ReportSnapshotTableRow>()
   for (const table of content.tables ?? []) {
     for (const row of table.rows) {
-      const label = row.cells[0]?.value
-      if (typeof label !== 'string' || !label.trim()) {
-        continue
+      for (const cell of row.cells) {
+        const label = cell.value
+        if (typeof label !== 'string' || !label.trim()) {
+          continue
+        }
+        map.set(normalizeLabel(label), row)
       }
-      map.set(normalizeLabel(label), row)
     }
   }
   return map

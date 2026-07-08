@@ -26,13 +26,16 @@ function parsePeriod(period: string): { year: number; month: number; quarter: nu
 }
 
 export default function TaxTemplatePage({ title }: Props): JSX.Element {
-  const { currentLedger, currentPeriod } = useLedgerStore()
+  const { currentLedger, currentPeriod, setCurrentLedger, setLedgers } = useLedgerStore()
   const periodDefaults = useMemo(() => parsePeriod(currentPeriod), [currentPeriod])
   const [declarationType, setDeclarationType] = useState<DeclarationType>('monthly')
   const [year, setYear] = useState(periodDefaults.year)
   const [month, setMonth] = useState(periodDefaults.month)
   const [quarter, setQuarter] = useState(periodDefaults.quarter)
   const [outputDirectory, setOutputDirectory] = useState('')
+  const [taxpayerIdentificationNumberDraft, setTaxpayerIdentificationNumberDraft] = useState(
+    currentLedger?.taxpayer_identification_number?.trim() ?? ''
+  )
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
 
@@ -46,11 +49,73 @@ export default function TaxTemplatePage({ title }: Props): JSX.Element {
     setMessage(null)
   }, [currentLedger?.id])
 
+  useEffect(() => {
+    setTaxpayerIdentificationNumberDraft(currentLedger?.taxpayer_identification_number?.trim() ?? '')
+  }, [currentLedger?.id, currentLedger?.taxpayer_identification_number])
+
   const isNpoLedger = currentLedger?.standard_type === 'npo'
   const savedTaxpayerIdentificationNumber =
     currentLedger?.taxpayer_identification_number?.trim() ?? ''
+  const normalizedTaxpayerIdentificationNumber = taxpayerIdentificationNumberDraft.trim()
+  const taxpayerIdentificationNumberDirty =
+    normalizedTaxpayerIdentificationNumber !== savedTaxpayerIdentificationNumber
   const monthOptions = Array.from({ length: 12 }, (_, index) => index + 1)
   const quarterOptions = [1, 2, 3, 4]
+
+  const persistTaxpayerIdentificationNumber = async (showSuccessMessage: boolean): Promise<boolean> => {
+    if (!window.electron) {
+      setMessage({ type: 'error', text: '浏览器预览模式不支持保存纳税人识别号' })
+      return false
+    }
+    if (!currentLedger) {
+      setMessage({ type: 'error', text: '请先选择账套' })
+      return false
+    }
+    if (!taxpayerIdentificationNumberDirty) {
+      return true
+    }
+
+    try {
+      const result = await window.api.ledger.update({
+        id: currentLedger.id,
+        taxpayerIdentificationNumber: normalizedTaxpayerIdentificationNumber
+      })
+      if (!result.success) {
+        setMessage({ type: 'error', text: result.error || '保存纳税人识别号失败' })
+        return false
+      }
+
+      const finalLedgers = await window.api.ledger.getAll()
+      const updatedLedger =
+        finalLedgers.find((ledger) => ledger.id === currentLedger.id) ?? {
+          ...currentLedger,
+          taxpayer_identification_number: normalizedTaxpayerIdentificationNumber
+        }
+      setLedgers(finalLedgers)
+      setCurrentLedger(updatedLedger)
+      setTaxpayerIdentificationNumberDraft(updatedLedger.taxpayer_identification_number.trim())
+      if (showSuccessMessage) {
+        setMessage({ type: 'success', text: '纳税人识别号已保存' })
+      }
+      return true
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : '保存纳税人识别号失败'
+      })
+      return false
+    }
+  }
+
+  const saveTaxpayerIdentificationNumber = async (): Promise<void> => {
+    setMessage(null)
+    setBusy(true)
+    try {
+      await persistTaxpayerIdentificationNumber(true)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const chooseDirectory = async (): Promise<void> => {
     setMessage(null)
@@ -95,8 +160,12 @@ export default function TaxTemplatePage({ title }: Props): JSX.Element {
       setMessage({ type: 'error', text: '税务模板仅支持民间非营利组织账套' })
       return
     }
-    if (!savedTaxpayerIdentificationNumber) {
-      setMessage({ type: 'error', text: '请先在账套资料中维护纳税人识别号/统一社会信用代码' })
+    if (!normalizedTaxpayerIdentificationNumber) {
+      setMessage({ type: 'error', text: '请先填写纳税人识别号/统一社会信用代码' })
+      return
+    }
+    if (taxpayerIdentificationNumberDirty) {
+      setMessage({ type: 'error', text: '请先保存纳税人识别号后再导出税务模板' })
       return
     }
 
@@ -147,12 +216,22 @@ export default function TaxTemplatePage({ title }: Props): JSX.Element {
           <label className="flex flex-col gap-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
             纳税人识别号/统一社会信用代码
             <input
+              name="taxpayerIdentificationNumber"
               className="glass-input px-3 py-2"
-              value={savedTaxpayerIdentificationNumber}
-              readOnly
-              disabled
+              value={taxpayerIdentificationNumberDraft}
+              onChange={(event) => setTaxpayerIdentificationNumberDraft(event.target.value)}
+              disabled={busy || !currentLedger}
             />
           </label>
+
+          <button
+            type="button"
+            className="glass-btn-secondary px-4 py-2 text-sm font-semibold"
+            onClick={() => void saveTaxpayerIdentificationNumber()}
+            disabled={busy || !currentLedger || !taxpayerIdentificationNumberDirty}
+          >
+            保存纳税人识别号
+          </button>
 
           <div className="grid grid-cols-3 gap-2">
             {(['monthly', 'quarterly', 'annual'] as DeclarationType[]).map((type) => (

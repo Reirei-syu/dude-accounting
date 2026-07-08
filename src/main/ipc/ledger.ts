@@ -41,6 +41,7 @@ export function registerLedgerHandlers(): void {
         name: string
         standardType: 'enterprise' | 'npo'
         startPeriod: string
+        taxpayerIdentificationNumber?: string
       }
     ) =>
       withIpcTelemetry(
@@ -63,7 +64,15 @@ export function registerLedgerHandlers(): void {
 
   ipcMain.handle(
     'ledger:update',
-    (event, data: { id: number; name?: string; currentPeriod?: string }) =>
+    (
+      event,
+      data: {
+        id: number
+        name?: string
+        currentPeriod?: string
+        taxpayerIdentificationNumber?: string
+      }
+    ) =>
       withIpcTelemetry(
         {
           channel: 'ledger:update',
@@ -71,7 +80,8 @@ export function registerLedgerHandlers(): void {
           context: {
             ledgerId: data.id,
             hasName: data.name !== undefined,
-            hasCurrentPeriod: data.currentPeriod !== undefined
+            hasCurrentPeriod: data.currentPeriod !== undefined,
+            hasTaxpayerIdentificationNumber: data.taxpayerIdentificationNumber !== undefined
           }
         },
         async () => {

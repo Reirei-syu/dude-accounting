@@ -511,6 +511,8 @@ describe('npoTaxTemplateExport service', () => {
     expect(balanceSheet?.getCell('C4').value).toBe('2026-01-01')
     expect(balanceSheet?.getCell('G4').value).toBe('2026-03-31')
     expect(balanceSheet?.getCell('D15').value).toMatchObject({ formula: expect.stringContaining('ROUND') })
+    expect(balanceSheet?.getCell('H32').value).toBe(500)
+    expect(balanceSheet?.getCell('I32').value).toBe(750)
 
     expect(activitySheet?.getCell('D10').value).toBe(300)
     expect(activitySheet?.getCell('G10').value).toBe(300)
