@@ -127,6 +127,8 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `period close` | 结账 | 结账 | 是 | 否 |
 | `period reopen` | 反结账 | 反结账 | 是 | 否 |
 
+`period close` 成功后会在同一事务中把账套 `current_period` 至少推进到返回的 `nextPeriod`；重复结账已关闭期间可修复落后的 `current_period`，但不会改写原结账时间。`period reopen` 会把 `current_period` 切回重新打开的期间。
+
 ## carry-forward
 
 | 英文命令 | 中文命令 | 功能说明 | 需登录 | 桌面辅助 |

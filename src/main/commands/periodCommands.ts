@@ -242,22 +242,29 @@ export async function closePeriodCommand(
       const status = context.db
         .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
         .get(normalizedPayload.ledgerId, normalizedPayload.period) as { is_closed: number } | undefined
-      if (status?.is_closed === 1) {
-        return
+      if (status?.is_closed !== 1) {
+        context.db
+          .prepare(
+            `UPDATE periods
+             SET is_closed = 1, closed_at = datetime('now')
+             WHERE ledger_id = ? AND period = ?`
+          )
+          .run(normalizedPayload.ledgerId, normalizedPayload.period)
+
+        if (month === 12) {
+          const result = carryForwardYear(context, normalizedPayload.ledgerId, ledger.start_period, year)
+          carriedForward = true
+          carriedCount = result.carriedCount
+        }
       }
+
       context.db
         .prepare(
-          `UPDATE periods
-           SET is_closed = 1, closed_at = datetime('now')
-           WHERE ledger_id = ? AND period = ?`
+          `UPDATE ledgers
+           SET current_period = ?
+           WHERE id = ? AND current_period <= ?`
         )
-        .run(normalizedPayload.ledgerId, normalizedPayload.period)
-
-      if (month === 12) {
-        const result = carryForwardYear(context, normalizedPayload.ledgerId, ledger.start_period, year)
-        carriedForward = true
-        carriedCount = result.carriedCount
-      }
+        .run(nextPeriod, normalizedPayload.ledgerId, normalizedPayload.period)
     })()
 
     appendActorOperationLog(
@@ -298,13 +305,18 @@ export async function reopenPeriodCommand(
     getPeriodParts(normalizedPayload.period)
     assertPeriodReopenAllowed(context.db, normalizedPayload.ledgerId, normalizedPayload.period)
 
-    context.db
-      .prepare(
-        `UPDATE periods
-         SET is_closed = 0, closed_at = NULL
-         WHERE ledger_id = ? AND period = ?`
-      )
-      .run(normalizedPayload.ledgerId, normalizedPayload.period)
+    context.db.transaction(() => {
+      context.db
+        .prepare(
+          `UPDATE periods
+           SET is_closed = 0, closed_at = NULL
+           WHERE ledger_id = ? AND period = ?`
+        )
+        .run(normalizedPayload.ledgerId, normalizedPayload.period)
+      context.db
+        .prepare('UPDATE ledgers SET current_period = ? WHERE id = ?')
+        .run(normalizedPayload.period, normalizedPayload.ledgerId)
+    })()
 
     appendActorOperationLog(context, {
       ledgerId: normalizedPayload.ledgerId,
