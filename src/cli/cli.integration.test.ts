@@ -1,12 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile, spawn } from 'node:child_process'
-import { promisify } from 'node:util'
 import * as iconv from 'iconv-lite'
 import { afterAll, describe, expect, it } from 'vitest'
+import { assertCliTestDatabase, cleanupCliTestRoot, runCliTestCommand } from './cliTestEnvironment'
 
-const execFileAsync = promisify(execFile)
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-login-'))
 const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
 const loginPayloadPath = path.join(tempRoot, 'dude-cli-login-payload.json')
@@ -65,21 +63,13 @@ function extractCommandResult(output: string): { status: string; data: unknown; 
 }
 
 async function runCli(args: string[]): Promise<{ status: string; data: unknown; error: unknown }> {
-  const { stdout, stderr } = await execFileAsync(
-    'node',
-    ['scripts/run-cli.mjs', ...args],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        APPDATA: appDataPath
-      },
-      windowsHide: true,
-      maxBuffer: 10 * 1024 * 1024
-    }
-  )
+  const { stdout, stderr } = await runCliTestCommand(tempRoot, appDataPath, args)
 
-  return extractCommandResult(`${stdout}\n${stderr}`)
+  const result = extractCommandResult(`${stdout}\n${stderr}`)
+  if (args[0] === 'auth' && args[1] === 'login' && result.status === 'success') {
+    assertCliTestDatabase(appDataPath)
+  }
+  return result
 }
 
 async function runCliAllowError(
@@ -102,45 +92,16 @@ async function runCliWithStdin(
   args: string[],
   stdinText: string
 ): Promise<{ status: string; data: unknown; error: unknown }> {
-  const output = await new Promise<string>((resolve, reject) => {
-    const child = spawn('node', ['scripts/run-cli.mjs', ...args], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        APPDATA: appDataPath
-      },
-      windowsHide: true
-    })
-
-    let stdout = ''
-    let stderr = ''
-    child.stdout.setEncoding('utf8')
-    child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk
-    })
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      const combined = `${stdout}\n${stderr}`
-      if (code === 0) {
-        resolve(combined)
-      } else {
-        reject(new Error(`CLI exited with ${String(code)}:\n${combined}`))
-      }
-    })
-    child.stdin.end(stdinText)
-  })
-
-  return extractCommandResult(output)
+  const { stdout, stderr } = await runCliTestCommand(tempRoot, appDataPath, args, stdinText)
+  const result = extractCommandResult(`${stdout}\n${stderr}`)
+  if (result.status === 'success') assertCliTestDatabase(appDataPath)
+  return result
 }
 
 describe('embedded cli integration', () => {
   afterAll(() => {
     if (fs.existsSync(tempRoot)) {
-      fs.rmSync(tempRoot, { recursive: true, force: true })
+      cleanupCliTestRoot(tempRoot, appDataPath)
     }
   })
 

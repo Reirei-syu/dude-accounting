@@ -1,15 +1,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
+import { assertCliTestDatabase, cleanupCliTestRoot, runCliTestCommand } from './cliTestEnvironment'
 
-const execFileAsync = promisify(execFile)
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-parity-'))
 const appDataPath = path.join(tempRoot, 'AppData', 'Roaming')
-const tscCliPath = path.join(process.cwd(), 'node_modules', 'typescript', 'bin', 'tsc')
-const electronViteCliPath = path.join(process.cwd(), 'node_modules', 'electron-vite', 'bin', 'electron-vite.js')
 const loginPayloadPath = path.join(tempRoot, 'dude-cli-parity-login-payload.json')
 const preferencesPayloadPath = path.join(tempRoot, 'dude-cli-parity-preferences.json')
 const wallpaperAnalyzePayloadPath = path.join(tempRoot, 'dude-cli-parity-wallpaper-analyze.json')
@@ -74,45 +70,8 @@ function extractCommandResult(output: string): CliCommandResult {
   return matches[matches.length - 1]
 }
 
-let buildArtifactsReady: Promise<void> | null = null
-
-async function ensureBuildArtifacts(): Promise<void> {
-  if (!buildArtifactsReady) {
-    buildArtifactsReady = (async () => {
-      await execFileAsync(process.execPath, [tscCliPath, '-p', 'tsconfig.cli.json'], {
-        cwd: process.cwd(),
-        windowsHide: true,
-        maxBuffer: 20 * 1024 * 1024
-      })
-
-      await execFileAsync(process.execPath, [electronViteCliPath, 'build'], {
-        cwd: process.cwd(),
-        windowsHide: true,
-        maxBuffer: 20 * 1024 * 1024
-      })
-    })()
-  }
-
-  await buildArtifactsReady
-}
-
 async function runCli(args: string[]): Promise<CliCommandResult> {
-  await ensureBuildArtifacts()
-
-  const { stdout, stderr } = await execFileAsync(
-    'node',
-    ['scripts/run-cli.mjs', ...args],
-    {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        APPDATA: appDataPath,
-        DUDEACC_SKIP_BUILD: '1'
-      },
-      windowsHide: true,
-      maxBuffer: 20 * 1024 * 1024
-    }
-  )
+  const { stdout, stderr } = await runCliTestCommand(tempRoot, appDataPath, args)
 
   return extractCommandResult(`${stdout}\n${stderr}`)
 }
@@ -133,10 +92,6 @@ async function waitForPrintReady(jobId: string): Promise<CliCommandResult<PrintS
 }
 
 describe('cli parity integration', () => {
-  beforeAll(async () => {
-    await ensureBuildArtifacts()
-  }, 240_000)
-
   afterAll(() => {
     for (const filePath of [
       loginPayloadPath,
@@ -154,7 +109,7 @@ describe('cli parity integration', () => {
     }
 
     if (fs.existsSync(tempRoot)) {
-      fs.rmSync(tempRoot, { recursive: true, force: true })
+      cleanupCliTestRoot(tempRoot, appDataPath)
     }
   })
 
@@ -165,6 +120,7 @@ describe('cli parity integration', () => {
 
       const loginResult = await runCli(['auth', 'login', '--payload-file', loginPayloadPath])
       expect(loginResult.status).toBe('success')
+      assertCliTestDatabase(appDataPath)
 
       const systemGetResult = await runCli(['settings', 'system-get'])
       expect(systemGetResult.status).toBe('success')
@@ -242,6 +198,8 @@ describe('cli parity integration', () => {
         id: number
         start_period: string
       }>
+
+      expect(ledgers).toEqual([])
 
       let ledgerId: number
       let startPeriod: string
