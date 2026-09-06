@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useState,
   type FormEvent,
@@ -160,6 +161,10 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
     }
   }
 
+  // 自动查询只响应账套/外部查询请求，不随手工编辑筛选项重新触发。
+  const onAutoQuery = useEffectEvent(executeQuery)
+  const ledgerId = currentLedger?.id
+
   useEffect(() => {
     let cancelled = false
 
@@ -183,7 +188,7 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
       setIsPreviewOpen(false)
       setError('')
 
-      if (!currentLedger || !window.electron) {
+      if (ledgerId == null || !window.electron) {
         if (!cancelled) {
           setSubjectOptions([])
         }
@@ -192,8 +197,8 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
 
       try {
         const [rawSubjects, rawAuxiliaryItems] = await Promise.all([
-          window.api.subject.getAll(currentLedger.id),
-          window.api.auxiliary.getAll(currentLedger.id)
+          window.api.subject.getAll(ledgerId),
+          window.api.auxiliary.getAll(ledgerId)
         ])
 
         if (cancelled) {
@@ -231,7 +236,7 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
         setSubjectOptions(nextSubjectOptions)
 
         if (props.autoQuery) {
-          void executeQuery({
+          void onAutoQuery({
             dateFrom: nextDateFrom,
             dateTo: nextDateTo,
             subjectCodeStart: nextSubjectCodeStart,
@@ -254,7 +259,7 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
       cancelled = true
     }
   }, [
-    currentLedger?.id,
+    ledgerId,
     currentLedger?.current_period,
     props.autoQuery,
     props.presetEndDate,

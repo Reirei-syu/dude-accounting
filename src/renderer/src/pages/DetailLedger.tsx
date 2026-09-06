@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useState,
   type FormEvent,
@@ -153,7 +154,13 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
     }
   }
 
+  // 自动查询只响应账套/外部查询请求，不随手工编辑筛选项重新触发。
+  const onAutoQuery = useEffectEvent(executeQuery)
+  const ledgerId = currentLedger?.id
+  const readSelectedSubjectCode = useEffectEvent(() => subjectCode)
+
   useEffect(() => {
+    const previousSubjectCode = readSelectedSubjectCode()
     let cancelled = false
 
     const run = async (): Promise<void> => {
@@ -173,7 +180,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       setIsPreviewOpen(false)
       setError('')
 
-      if (!currentLedger || !window.electron) {
+      if (ledgerId == null || !window.electron) {
         if (!cancelled) {
           setSubjects([])
           setSubjectCode(props.presetSubjectCode ?? '')
@@ -182,7 +189,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       }
 
       try {
-        const rawSubjects = (await window.api.subject.getAll(currentLedger.id)) as SubjectOption[]
+        const rawSubjects = (await window.api.subject.getAll(ledgerId)) as SubjectOption[]
         const nextSubjects = rawSubjects
           .map((item) => ({
             code: item.code,
@@ -198,14 +205,14 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
 
         const nextSubjectCode =
           props.presetSubjectCode ??
-          nextSubjects.find((item) => item.code === subjectCode)?.code ??
+          nextSubjects.find((item) => item.code === previousSubjectCode)?.code ??
           nextSubjects[0]?.code ??
           ''
 
         setSubjectCode(nextSubjectCode)
 
         if (props.autoQuery && nextSubjectCode) {
-          void executeQuery({
+          void onAutoQuery({
             subjectCode: nextSubjectCode,
             dateFrom: nextDateFrom,
             dateTo: nextDateTo,
@@ -228,7 +235,7 @@ export default function DetailLedger(props: DetailLedgerProps): JSX.Element {
       cancelled = true
     }
   }, [
-    currentLedger?.id,
+    ledgerId,
     currentLedger?.current_period,
     props.autoQuery,
     props.presetEndDate,

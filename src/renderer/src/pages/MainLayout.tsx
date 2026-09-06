@@ -77,7 +77,7 @@ export default function MainLayout(): JSX.Element {
   }, [user?.id])
 
   useEffect(() => {
-    if (!window.electron || !user) {
+    if (!window.electron || user?.id == null) {
       resetWallpaper()
       return
     }
@@ -295,7 +295,7 @@ export default function MainLayout(): JSX.Element {
         )
         if (
           nextLedger?.id !== currentLedger?.id ||
-          (nextLedger === null && currentLedger !== null)
+          (nextLedger === null && currentLedger?.id != null)
         ) {
           setCurrentLedger(nextLedger)
         }

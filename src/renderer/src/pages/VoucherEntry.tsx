@@ -1061,7 +1061,7 @@ export default function VoucherEntry({
     setMessage({ type: 'success', text: '现金流量分配已更新' })
   }
 
-  const loadNavigableVoucherRows = async (
+  const loadNavigableVoucherRows = useCallback(async (
     ledgerId: number,
     period?: string
   ): Promise<VoucherListItem[]> => {
@@ -1070,9 +1070,9 @@ export default function VoucherEntry({
       period
     })
     return sortVouchersForDisplay(allList as VoucherListItem[])
-  }
+  }, [])
 
-  const refreshNavigableVouchers = async (
+  const refreshNavigableVouchers = useCallback(async (
     ledgerId: number,
     period?: string
   ): Promise<VoucherListItem[]> => {
@@ -1085,7 +1085,7 @@ export default function VoucherEntry({
       setNavigableVouchers([])
       return []
     }
-  }
+  }, [loadNavigableVoucherRows])
 
   useEffect(() => {
     const ledgerId = currentLedger?.id
@@ -1117,7 +1117,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [activePeriod, currentLedger?.id, editingVoucherId, navigableVoucherPeriod, newVoucherDateStrategy])
+  }, [activePeriod, currentLedger?.id, editingVoucherId, loadNavigableVoucherRows, navigableVoucherPeriod, newVoucherDateStrategy])
 
   const loadVoucherForEdit = async (voucherId: number): Promise<boolean> => {
     if (!currentLedger || !window.electron) return false
@@ -1321,6 +1321,7 @@ export default function VoucherEntry({
       date,
       newVoucherDateStrategy,
       periodStatus,
+      refreshNavigableVouchers,
       resetVoucher
     ]
   )
@@ -1370,7 +1371,7 @@ export default function VoucherEntry({
     return () => {
       cancelled = true
     }
-  }, [activePeriod, activeTabId, currentLedger, date, editingVoucherId, loadingVoucher, prepareNewVoucherState])
+  }, [activePeriod, activeTabId, currentLedger, date, editingVoucherId, loadingVoucher, loadNavigableVoucherRows, prepareNewVoucherState])
 
   const saveVoucher = async (mode: 'newAfterSave' | 'stay'): Promise<boolean> => {
     setMessage(null)

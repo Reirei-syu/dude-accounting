@@ -502,7 +502,9 @@ export function buildNpoTaxTemplateFileName(
       : period.declarationType === 'quarterly'
         ? `${period.year}年第${period.quarter}季度`
         : `${period.year}年年报`
-  const safeLedgerName = ledgerName.trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+  const safeLedgerName = Array.from(ledgerName.trim(), (character) =>
+    character.charCodeAt(0) < 32 || /[<>:"/\\|?*]/.test(character) ? '_' : character
+  ).join('')
   return `${safeLedgerName}_税务模板_${declarationLabel}_${period.startDate}_${period.endDate}.xlsx`
 }
 

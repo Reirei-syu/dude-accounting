@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type JSX } from 'react'
+import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { useLedgerStore } from '../stores/ledgerStore'
 import {
   formatArchiveCardTitle,
@@ -115,8 +115,9 @@ export default function Backup(): JSX.Element {
     }
   }, [archiveYear, archiveYearOptions, periods])
 
-  const loadData = async (): Promise<void> => {
-    if (!currentLedger || !window.electron) {
+  const ledgerId = currentLedger?.id
+  const loadData = useCallback(async (): Promise<void> => {
+    if (ledgerId == null || !window.electron) {
       setBackups([])
       setArchives([])
       setPeriods([])
@@ -126,9 +127,9 @@ export default function Backup(): JSX.Element {
     setLoading(true)
     try {
       const [backupRows, archiveRows, ledgerPeriods] = await Promise.all([
-        window.api.backup.list(currentLedger.id),
-        window.api.archive.list(currentLedger.id),
-        window.api.ledger.getPeriods(currentLedger.id)
+        window.api.backup.list(ledgerId),
+        window.api.archive.list(ledgerId),
+        window.api.ledger.getPeriods(ledgerId)
       ])
 
       setBackups(backupRows as BackupRow[])
@@ -147,11 +148,11 @@ export default function Backup(): JSX.Element {
     } finally {
       setLoading(false)
     }
-  }
+  }, [ledgerId])
 
   useEffect(() => {
     void loadData()
-  }, [currentLedger?.id])
+  }, [loadData])
 
   useEffect(() => {
     setRecordBrowser(null)

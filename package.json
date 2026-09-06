@@ -1,13 +1,15 @@
 {
   "name": "dude-app",
   "version": "2.0.5",
+  "packageManager": "npm@11.6.2",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
   "author": "Reirei",
   "homepage": "https://electron-vite.org",
   "scripts": {
     "format": "prettier --write .",
-    "lint": "eslint --cache .",
+    "format:check": "prettier --check .",
+    "lint": "eslint --cache --max-warnings 0 .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",

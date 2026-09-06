@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useState,
   type FormEvent,
@@ -181,6 +182,10 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
     }
   }
 
+  // 自动查询只响应账套/外部查询请求，不随手工编辑筛选项重新触发。
+  const onAutoQuery = useEffectEvent(executeQuery)
+  const ledgerId = currentLedger?.id
+
   useEffect(() => {
     let cancelled = false
 
@@ -202,7 +207,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
       setIsPreviewOpen(false)
       setError('')
 
-      if (!currentLedger || !window.electron) {
+      if (ledgerId == null || !window.electron) {
         if (!cancelled) {
           setSubjects([])
           setAllAuxiliaryItems([])
@@ -214,8 +219,8 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
 
       try {
         const [rawSubjects, rawAuxiliaryItems] = await Promise.all([
-          window.api.subject.getAll(currentLedger.id),
-          window.api.auxiliary.getAll(currentLedger.id)
+          window.api.subject.getAll(ledgerId),
+          window.api.auxiliary.getAll(ledgerId)
         ])
 
         if (cancelled) {
@@ -264,7 +269,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
         setAuxiliaryItemId(nextAuxiliaryItemId)
 
         if (props.autoQuery && nextSubjectCode && nextAuxiliaryItemId) {
-          void executeQuery({
+          void onAutoQuery({
             subjectCode: nextSubjectCode,
             auxiliaryItemId: nextAuxiliaryItemId,
             dateFrom: nextDateFrom,
@@ -290,7 +295,7 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
       cancelled = true
     }
   }, [
-    currentLedger?.id,
+    ledgerId,
     currentLedger?.current_period,
     props.autoQuery,
     props.presetAuxiliaryItemId,

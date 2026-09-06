@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useState,
   type FormEvent,
@@ -138,6 +139,10 @@ export default function Journal(props: JournalProps): JSX.Element {
     }
   }
 
+  // 自动查询只响应账套/外部查询请求，不随手工编辑筛选项重新触发。
+  const onAutoQuery = useEffectEvent(executeQuery)
+  const ledgerId = currentLedger?.id
+
   useEffect(() => {
     let cancelled = false
 
@@ -161,7 +166,7 @@ export default function Journal(props: JournalProps): JSX.Element {
       setIsPreviewOpen(false)
       setError('')
 
-      if (!currentLedger || !window.electron) {
+      if (ledgerId == null || !window.electron) {
         if (!cancelled) {
           setSubjectOptions([])
         }
@@ -169,7 +174,7 @@ export default function Journal(props: JournalProps): JSX.Element {
       }
 
       try {
-        const rawSubjects = (await window.api.subject.getAll(currentLedger.id)) as SubjectOption[]
+        const rawSubjects = (await window.api.subject.getAll(ledgerId)) as SubjectOption[]
         const nextSubjectOptions = rawSubjects
           .map((subject) => ({
             code: subject.code,
@@ -184,7 +189,7 @@ export default function Journal(props: JournalProps): JSX.Element {
         setSubjectOptions(nextSubjectOptions)
 
         if (props.autoQuery) {
-          void executeQuery({
+          void onAutoQuery({
             dateFrom: nextDateFrom,
             dateTo: nextDateTo,
             subjectCodeStart: nextSubjectCodeStart,
@@ -207,7 +212,7 @@ export default function Journal(props: JournalProps): JSX.Element {
       cancelled = true
     }
   }, [
-    currentLedger?.id,
+    ledgerId,
     currentLedger?.current_period,
     props.autoQuery,
     props.presetEndDate,

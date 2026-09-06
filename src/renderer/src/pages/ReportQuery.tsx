@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -127,12 +128,15 @@ export default function ReportQuery(): JSX.Element {
     { length: endDateParts.year && endDateParts.month ? getLastDay(Number(endDateParts.year), Number(endDateParts.month)) : 31 },
     (_, index) => pad2(index + 1)
   )
-  const exportTargetIds =
-    selectedSnapshotIds.length > 0
-      ? selectedSnapshotIds
-      : selectedSnapshotId !== null
-        ? [selectedSnapshotId]
-        : []
+  const exportTargetIds = useMemo(
+    () =>
+      selectedSnapshotIds.length > 0
+        ? selectedSnapshotIds
+        : selectedSnapshotId !== null
+          ? [selectedSnapshotId]
+          : [],
+    [selectedSnapshotIds, selectedSnapshotId]
+  )
   const deleteTargetIds =
     selectedSnapshotIds.length > 0
       ? selectedSnapshotIds
@@ -240,7 +244,8 @@ export default function ReportQuery(): JSX.Element {
     </div>
   )
 
-  const loadRows = async (): Promise<void> => {
+  const ledgerId = currentLedger?.id
+  const loadRows = useCallback(async (): Promise<void> => {
     setError('')
     setSuccessMessage('')
     setDetail(null)
@@ -249,7 +254,7 @@ export default function ReportQuery(): JSX.Element {
     setSelectedSnapshotIds([])
     setShowCashflowPreviousAmount(false)
 
-    if (!currentLedger) {
+    if (ledgerId == null) {
       setRows([])
       return
     }
@@ -261,7 +266,7 @@ export default function ReportQuery(): JSX.Element {
 
     setLoadingList(true)
     try {
-      const summaries = await window.api.reporting.list({ ledgerId: currentLedger.id })
+      const summaries = await window.api.reporting.list({ ledgerId })
       setRows(summaries)
     } catch (err) {
       setRows([])
@@ -269,7 +274,7 @@ export default function ReportQuery(): JSX.Element {
     } finally {
       setLoadingList(false)
     }
-  }
+  }, [ledgerId])
 
   const loadDetail = async (snapshotId: number | null): Promise<void> => {
     setError('')
@@ -497,7 +502,7 @@ export default function ReportQuery(): JSX.Element {
 
   useEffect(() => {
     void loadRows()
-  }, [currentLedger?.id])
+  }, [loadRows])
 
   useEffect(() => {
     setSelectedReportTypes([])
@@ -511,7 +516,7 @@ export default function ReportQuery(): JSX.Element {
       month: pad2(currentMonth),
       day: pad2(currentMonthLastDay)
     })
-  }, [currentLedger?.id])
+  }, [currentLedger?.id, currentYear, currentMonth, currentMonthLastDay])
 
   useEffect(() => {
     if (

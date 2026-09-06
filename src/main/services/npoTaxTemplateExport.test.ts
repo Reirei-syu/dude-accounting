@@ -4,6 +4,7 @@ import path from 'node:path'
 import ExcelJS from 'exceljs'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  buildNpoTaxTemplateFileName,
   exportNpoTaxTemplate,
   getDefaultTaxTemplateOutputDir,
   getPreferredTaxTemplateOutputDir,
@@ -388,6 +389,15 @@ function expectWorksheetStructurePreserved(
 }
 
 describe('npoTaxTemplateExport service', () => {
+  it('替换文件名禁用字符和全部 C0 控制字符，保留中文与 Unicode', () => {
+    const period = resolveNpoTaxTemplatePeriod({ declarationType: 'annual', year: 2026 })
+    const forbidden = '<>:"/\\|?*' + Array.from({ length: 32 }, (_, index) =>
+      String.fromCharCode(index)
+    ).join('')
+    const name = buildNpoTaxTemplateFileName(`  账套🐶${forbidden}末尾  `, period)
+    expect(name).toBe(`账套🐶${'_'.repeat(41)}末尾_税务模板_2026年年报_2026-01-01_2026-12-31.xlsx`)
+  })
+
   let tempDir = ''
 
   afterEach(() => {

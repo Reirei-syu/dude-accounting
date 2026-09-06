@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type JSX } from 'react'
+import { useEffect, useEffectEvent, useMemo, useState, type FormEvent, type JSX } from 'react'
 import Decimal from 'decimal.js'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
@@ -113,6 +113,9 @@ export default function VoucherQuery(props: VoucherQueryProps): JSX.Element {
     }
   }
 
+  // 自动查询只响应账套/外部查询请求，不随手工编辑筛选项重新触发。
+  const onAutoQuery = useEffectEvent(executeQuery)
+
   useEffect(() => {
     const nextDateFrom = props.presetDateFrom ?? from
     const nextDateTo = props.presetDateTo ?? to
@@ -124,7 +127,7 @@ export default function VoucherQuery(props: VoucherQueryProps): JSX.Element {
     setVoucherId(props.presetVoucherId)
 
     if (props.autoQuery) {
-      void executeQuery({
+      void onAutoQuery({
         dateFrom: nextDateFrom,
         dateTo: nextDateTo,
         keyword: nextKeyword,

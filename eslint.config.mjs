@@ -64,5 +64,11 @@ export default defineConfig(
       '@typescript-eslint/explicit-function-return-type': 'off'
     }
   },
-  eslintConfigPrettier
+  eslintConfigPrettier,
+  {
+    rules: {
+      // 格式检查独立运行，避免存量格式差异淹没代码问题；不关闭语义规则。
+      'prettier/prettier': 'off'
+    }
+  }
 )
