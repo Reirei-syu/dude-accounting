@@ -5,6 +5,7 @@ directories:
   buildResources: build
 afterPack: scripts/after-pack-win-icon.cjs
 files:
+  - '!.tmp/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
