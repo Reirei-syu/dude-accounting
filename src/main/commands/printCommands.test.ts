@@ -14,8 +14,8 @@ const printCommandMocks = vi.hoisted(() => ({
   requireCommandActor: vi.fn((actor) => actor)
 }))
 
-vi.mock('../ipc/print', async () => {
-  const actual = await vi.importActual('../ipc/print')
+vi.mock('../services/printJobs', async () => {
+  const actual = await vi.importActual('../services/printJobs')
   return {
     ...(actual as object),
     getPrintJobStatusForActor: printCommandMocks.getPrintJobStatusForActor,

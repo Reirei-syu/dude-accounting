@@ -305,7 +305,12 @@ export async function listLedgerTemplatesCommand(
 export async function applyLedgerTemplateCommand(
   context: CommandContext,
   payload: { ledgerId: number; standardType: string }
-): Promise<CommandResult<{ ledger: unknown; subjectCount: number }>> {
+): Promise<
+  CommandResult<{
+    ledger: ReturnType<typeof applyLedgerStandardTemplate>['updatedLedger'] | null
+    subjectCount: number
+  }>
+> {
   return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeApplyLedgerTemplatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')

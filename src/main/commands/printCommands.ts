@@ -8,18 +8,16 @@ import {
   preparePrintJobForActor,
   printPreparedJobForActor,
   type PrintCommandPayload,
+  type PrintJobAccess,
   type PrintPreparePayload
-} from '../ipc/print'
+} from '../services/printJobs'
 import { requireCommandActor } from './authz'
 import { withCommandResult } from './result'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 import type { PrintPreviewSettings } from '../services/print'
-import { updatePrintPreviewSettingsForActor } from '../ipc/print'
-import {
-  appendCliE2eEvent,
-  shouldDryRunCliE2eDesktopActions
-} from '../runtime/cliE2eEvents'
+import { updatePrintPreviewSettingsForActor } from '../services/printJobs'
+import { appendCliE2eEvent, shouldDryRunCliE2eDesktopActions } from '../runtime/cliE2eEvents'
 
 type PrintJobStatusResult = NonNullable<ReturnType<typeof getPrintJobStatusForActor>>
 
@@ -52,11 +50,12 @@ function requirePrintJobReady(jobId: string, status: PrintJobStatusResult): void
 
 export async function preparePrintCommand(
   context: CommandContext,
-  payload: PrintPreparePayload
+  payload: PrintPreparePayload,
+  access: PrintJobAccess = context.actor
 ): Promise<CommandResult<{ jobId: string }>> {
   return withCommandResult(context, () => {
     requireCommandActor(context.actor)
-    return preparePrintJobForActor(context.db, context.actor, payload)
+    return preparePrintJobForActor(context.db, context.actor, payload, access)
   })
 }
 
@@ -136,8 +135,8 @@ export async function printPreparedJobCommand(
 
     appendCliE2eEvent('print.print.requested', {
       jobId,
-      silent: typeof payload === 'string' ? null : payload.silent ?? null,
-      deviceName: typeof payload === 'string' ? null : payload.deviceName ?? null
+      silent: typeof payload === 'string' ? null : (payload.silent ?? null),
+      deviceName: typeof payload === 'string' ? null : (payload.deviceName ?? null)
     })
     if (shouldDryRunCliE2eDesktopActions()) {
       return { success: true }

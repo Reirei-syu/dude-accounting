@@ -1,121 +1,34 @@
-export type PrintOrientation = 'portrait' | 'landscape'
-export type PrintJobType = 'report' | 'book' | 'voucher' | 'batch'
-
-export interface PrintTableColumn {
-  key: string
-  label: string
-  align?: 'left' | 'center' | 'right'
-}
-
-export interface PrintTableCell {
-  value: string | number | null
-  isAmount?: boolean
-  indentLevel?: number
-  fitMode?: 'wrap-shrink'
-}
-
-export interface PrintTableRow {
-  key: string
-  rowType?: 'data' | 'subtotal' | 'total'
-  cells: PrintTableCell[]
-}
-
-export interface PrintTableSegment {
-  kind: 'table'
-  title: string
-  ledgerName: string
-  periodLabel?: string
-  unitLabel?: string
-  subjectLabel?: string
-  titleMetaLines?: string[]
-  headerMode?: 'default' | 'book'
-  metaLines?: string[]
-  forceSinglePage?: boolean
-  columns: PrintTableColumn[]
-  rows: PrintTableRow[]
-}
-
-export interface PrintVoucherEntryLine {
-  summary: string
-  subjectCode: string
-  subjectName: string
-  debitAmount: number
-  creditAmount: number
-}
-
-export interface PrintVoucherRecord {
-  id: number
-  voucherWord: string
-  voucherNumber: number
-  voucherDate: string
-  creatorName?: string | null
-  auditorName?: string | null
-  bookkeeperName?: string | null
-  totalDebit: number
-  totalCredit: number
-  entries: PrintVoucherEntryLine[]
-}
-
-export interface PrintVoucherSegment {
-  kind: 'voucher'
-  title: string
-  ledgerName: string
-  periodLabel?: string
-  layout: 'single' | 'double'
-  doubleGapPx: number
-  vouchers: PrintVoucherRecord[]
-}
-
-export type PrintDocumentSegment = PrintTableSegment | PrintVoucherSegment
-
-export interface PrintDocument {
-  title: string
-  orientation: PrintOrientation
-  showPageNumber: boolean
-  segments: PrintDocumentSegment[]
-}
-
-export interface PrintPageModel {
-  kind: PrintDocumentSegment['kind']
-  pageNumber: number
-  firstRowKey: string | null
-  lastRowKey: string | null
-  pageHtml: string
-}
-
-export interface PrintLayoutDiagnostics {
-  engine: 'page-model'
-  overflowDetected: boolean
-  oversizeRowKeys: string[]
-  pageRowCounts: number[]
-}
-
-export interface PrintLayoutResult {
-  title: string
-  orientation: PrintOrientation
-  settings: PrintPreviewSettings
-  pageCount: number
-  pages: PrintPageModel[]
-  diagnostics: PrintLayoutDiagnostics
-}
-
-export interface PrintPreviewModel extends PrintLayoutResult {
-  layoutVersion: number
-  controlLocks?: {
-    orientation?: boolean
-    scalePercent?: boolean
-  }
-}
-
-export type PrintPreviewMarginPreset = 'default' | 'narrow' | 'extra-narrow'
-export type PrintPreviewDensityPreset = 'default' | 'compact' | 'ultra-compact'
-
-export interface PrintPreviewSettings {
-  orientation: PrintOrientation
-  scalePercent: number
-  marginPreset: PrintPreviewMarginPreset
-  densityPreset: PrintPreviewDensityPreset
-}
+import type {
+  PrintOrientation,
+  PrintTableColumn,
+  PrintTableCell,
+  PrintTableRow,
+  PrintTableSegment,
+  PrintVoucherRecord,
+  PrintVoucherSegment,
+  PrintDocument,
+  PrintPreviewSettings
+} from '../../shared/contracts/print'
+export type {
+  PrintOrientation,
+  PrintJobType,
+  PrintTableColumn,
+  PrintTableCell,
+  PrintTableRow,
+  PrintTableSegment,
+  PrintVoucherEntryLine,
+  PrintVoucherRecord,
+  PrintVoucherSegment,
+  PrintDocumentSegment,
+  PrintDocument,
+  PrintPageModel,
+  PrintLayoutDiagnostics,
+  PrintLayoutResult,
+  PrintPreviewModel,
+  PrintPreviewMarginPreset,
+  PrintPreviewDensityPreset,
+  PrintPreviewSettings
+} from '../../shared/contracts/print'
 
 const PRINT_PREVIEW_SCALE_OPTIONS = new Set(
   Array.from({ length: 15 }, (_, index) => 100 - index * 5).filter((value) => value >= 30)
@@ -311,7 +224,7 @@ export function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boo
     segment.periodLabel ? `会计期间：${segment.periodLabel}` : '',
     `单位：${segment.unitLabel || '元'}`
   ]
-    .concat(isBookHeader ? [] : segment.metaLines ?? [])
+    .concat(isBookHeader ? [] : (segment.metaLines ?? []))
     .filter(Boolean)
 
   const headerHtml = segment.columns
@@ -354,7 +267,11 @@ export function buildTableSegmentHtml(segment: PrintTableSegment, pageBreak: boo
   const theadHtml = isBookHeader
     ? `${buildBookRepeatedHeaderHtml(segment)}<tr class="print-book-thead-column-row">${headerHtml}</tr>`
     : `<tr>${headerHtml}</tr>`
-  const sectionClassName = ['print-segment', isBookHeader ? 'print-segment-book' : '', pageBreak ? 'page-break' : '']
+  const sectionClassName = [
+    'print-segment',
+    isBookHeader ? 'print-segment-book' : '',
+    pageBreak ? 'page-break' : ''
+  ]
     .filter(Boolean)
     .join(' ')
 
@@ -515,7 +432,10 @@ export function buildPrintPreviewHtml(
   initialSettings: PrintPreviewSettings,
   persistPreferenceKey: string | null = null
 ): string {
-  const defaultSettings = normalizePrintPreviewSettings(initialSettings, initialSettings.orientation)
+  const defaultSettings = normalizePrintPreviewSettings(
+    initialSettings,
+    initialSettings.orientation
+  )
   return `<!doctype html>
 <html lang="zh-CN">
   <head>

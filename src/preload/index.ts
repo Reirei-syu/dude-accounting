@@ -1,18 +1,21 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { TypedInvoke } from './invoke'
+import type { DudeAPI } from '../shared/contracts/desktopApi'
+
+const invoke: TypedInvoke = ipcRenderer.invoke.bind(ipcRenderer)
 
 const api = {
   auth: {
-    login: (username: string, password: string) =>
-      ipcRenderer.invoke('auth:login', username, password),
-    logout: () => ipcRenderer.invoke('auth:logout'),
-    getUsers: () => ipcRenderer.invoke('auth:getUsers'),
+    login: (username: string, password: string) => invoke('auth:login', username, password),
+    logout: () => invoke('auth:logout'),
+    getUsers: () => invoke('auth:getUsers'),
     createUser: (data: {
       username: string
       realName: string
       password: string
       permissions: Record<string, boolean>
       ledgerIds?: number[]
-    }) => ipcRenderer.invoke('auth:createUser', data),
+    }) => invoke('auth:createUser', data),
     updateUser: (data: {
       id: number
       isAdmin?: boolean
@@ -21,35 +24,34 @@ const api = {
       password?: string
       permissions?: Record<string, boolean>
       ledgerIds?: number[]
-    }) => ipcRenderer.invoke('auth:updateUser', data),
-    deleteUser: (userId: number) => ipcRenderer.invoke('auth:deleteUser', userId)
+    }) => invoke('auth:updateUser', data),
+    deleteUser: (userId: number) => invoke('auth:deleteUser', userId)
   },
   ledger: {
-    getAll: () => ipcRenderer.invoke('ledger:getAll'),
+    getAll: () => invoke('ledger:getAll'),
     create: (data: {
       name: string
       standardType: 'enterprise' | 'npo'
       startPeriod: string
       taxpayerIdentificationNumber?: string
-    }) => ipcRenderer.invoke('ledger:create', data),
+    }) => invoke('ledger:create', data),
     update: (data: {
       id: number
       name?: string
       currentPeriod?: string
       taxpayerIdentificationNumber?: string
-    }) => ipcRenderer.invoke('ledger:update', data),
+    }) => invoke('ledger:update', data),
     delete: (payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
-      ipcRenderer.invoke('ledger:delete', payload),
-    getDeletionRisk: (ledgerId: number) => ipcRenderer.invoke('ledger:getDeletionRisk', ledgerId),
-    getPeriods: (ledgerId: number) => ipcRenderer.invoke('ledger:getPeriods', ledgerId),
-    getStandardTemplates: () => ipcRenderer.invoke('ledger:getStandardTemplates'),
+      invoke('ledger:delete', payload),
+    getDeletionRisk: (ledgerId: number) => invoke('ledger:getDeletionRisk', ledgerId),
+    getPeriods: (ledgerId: number) => invoke('ledger:getPeriods', ledgerId),
+    getStandardTemplates: () => invoke('ledger:getStandardTemplates'),
     applyStandardTemplate: (data: { ledgerId: number; standardType: 'enterprise' | 'npo' }) =>
-      ipcRenderer.invoke('ledger:applyStandardTemplate', data)
+      invoke('ledger:applyStandardTemplate', data)
   },
   subject: {
-    getAll: (ledgerId: number) => ipcRenderer.invoke('subject:getAll', ledgerId),
-    search: (ledgerId: number, keyword: string) =>
-      ipcRenderer.invoke('subject:search', ledgerId, keyword),
+    getAll: (ledgerId: number) => invoke('subject:getAll', ledgerId),
+    search: (ledgerId: number, keyword: string) => invoke('subject:search', ledgerId, keyword),
     create: (data: {
       ledgerId: number
       parentCode: string | null
@@ -58,62 +60,62 @@ const api = {
       auxiliaryCategories: string[]
       customAuxiliaryItemIds?: number[]
       isCashFlow: boolean
-    }) => ipcRenderer.invoke('subject:create', data),
+    }) => invoke('subject:create', data),
     update: (data: {
       subjectId: number
       name?: string
       auxiliaryCategories?: string[]
       customAuxiliaryItemIds?: number[]
       isCashFlow?: boolean
-    }) => ipcRenderer.invoke('subject:update', data),
-    delete: (id: number) => ipcRenderer.invoke('subject:delete', id)
+    }) => invoke('subject:update', data),
+    delete: (id: number) => invoke('subject:delete', id)
   },
   auxiliary: {
-    getAll: (ledgerId: number) => ipcRenderer.invoke('auxiliary:getAll', ledgerId),
+    getAll: (ledgerId: number) => invoke('auxiliary:getAll', ledgerId),
     getByCategory: (ledgerId: number, category: string) =>
-      ipcRenderer.invoke('auxiliary:getByCategory', ledgerId, category),
+      invoke('auxiliary:getByCategory', ledgerId, category),
     create: (data: { ledgerId: number; category: string; code: string; name: string }) =>
-      ipcRenderer.invoke('auxiliary:create', data),
+      invoke('auxiliary:create', data),
     update: (data: { id: number; code?: string; name?: string }) =>
-      ipcRenderer.invoke('auxiliary:update', data),
-    delete: (id: number) => ipcRenderer.invoke('auxiliary:delete', id)
+      invoke('auxiliary:update', data),
+    delete: (id: number) => invoke('auxiliary:delete', id)
   },
   cashflow: {
-    getItems: (ledgerId: number) => ipcRenderer.invoke('cashflow:getItems', ledgerId),
-    getMappings: (ledgerId: number) => ipcRenderer.invoke('cashflow:getMappings', ledgerId),
+    getItems: (ledgerId: number) => invoke('cashflow:getItems', ledgerId),
+    getMappings: (ledgerId: number) => invoke('cashflow:getMappings', ledgerId),
     createMapping: (data: {
       ledgerId: number
       subjectCode: string
       counterpartSubjectCode: string
       entryDirection: 'inflow' | 'outflow'
       cashFlowItemId: number
-    }) => ipcRenderer.invoke('cashflow:createMapping', data),
+    }) => invoke('cashflow:createMapping', data),
     updateMapping: (data: {
       id: number
       subjectCode: string
       counterpartSubjectCode: string
       entryDirection: 'inflow' | 'outflow'
       cashFlowItemId: number
-    }) => ipcRenderer.invoke('cashflow:updateMapping', data),
-    deleteMapping: (id: number) => ipcRenderer.invoke('cashflow:deleteMapping', id)
+    }) => invoke('cashflow:updateMapping', data),
+    deleteMapping: (id: number) => invoke('cashflow:deleteMapping', id)
   },
   plCarryForward: {
-    listRules: (ledgerId: number) => ipcRenderer.invoke('plCarryForward:listRules', ledgerId),
+    listRules: (ledgerId: number) => invoke('plCarryForward:listRules', ledgerId),
     saveRules: (data: {
       ledgerId: number
       rules: Array<{
         fromSubjectCode: string
         toSubjectCode: string
       }>
-    }) => ipcRenderer.invoke('plCarryForward:saveRules', data),
+    }) => invoke('plCarryForward:saveRules', data),
     preview: (data: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) =>
-      ipcRenderer.invoke('plCarryForward:preview', data),
+      invoke('plCarryForward:preview', data),
     execute: (data: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) =>
-      ipcRenderer.invoke('plCarryForward:execute', data)
+      invoke('plCarryForward:execute', data)
   },
   voucher: {
     getNextNumber: (ledgerId: number, period: string) =>
-      ipcRenderer.invoke('voucher:getNextNumber', ledgerId, period),
+      invoke('voucher:getNextNumber', ledgerId, period),
     list: (query: {
       ledgerId: number
       voucherId?: number
@@ -122,8 +124,8 @@ const api = {
       dateTo?: string
       keyword?: string
       status?: 'all' | 0 | 1 | 2 | 3
-    }) => ipcRenderer.invoke('voucher:list', query),
-    getEntries: (voucherId: number) => ipcRenderer.invoke('voucher:getEntries', voucherId),
+    }) => invoke('voucher:list', query),
+    getEntries: (voucherId: number) => invoke('voucher:getEntries', voucherId),
     batchAction: (payload: {
       action:
         | 'audit'
@@ -136,11 +138,11 @@ const api = {
       voucherIds: number[]
       reason?: string
       approvalTag?: string
-    }) => ipcRenderer.invoke('voucher:batchAction', payload),
+    }) => invoke('voucher:batchAction', payload),
     swapPositions: (payload: { voucherIds: [number, number] | number[] }) =>
-      ipcRenderer.invoke('voucher:swapPositions', payload),
+      invoke('voucher:swapPositions', payload),
     renumber: (payload: { ledgerId: number; period: string }) =>
-      ipcRenderer.invoke('voucher:renumber', payload),
+      invoke('voucher:renumber', payload),
     save: (data: {
       ledgerId: number
       voucherDate: string
@@ -153,7 +155,7 @@ const api = {
         creditAmount: string
         cashFlowItemId: number | null
       }>
-    }) => ipcRenderer.invoke('voucher:save', data),
+    }) => invoke('voucher:save', data),
     update: (data: {
       voucherId: number
       ledgerId: number
@@ -165,11 +167,10 @@ const api = {
         creditAmount: string
         cashFlowItemId: number | null
       }>
-    }) => ipcRenderer.invoke('voucher:update', data)
+    }) => invoke('voucher:update', data)
   },
   initialBalance: {
-    list: (ledgerId: number, period: string) =>
-      ipcRenderer.invoke('initialBalance:list', ledgerId, period),
+    list: (ledgerId: number, period: string) => invoke('initialBalance:list', ledgerId, period),
     save: (data: {
       ledgerId: number
       period: string
@@ -178,26 +179,23 @@ const api = {
         debitAmount: string
         creditAmount: string
       }>
-    }) => ipcRenderer.invoke('initialBalance:save', data)
+    }) => invoke('initialBalance:save', data)
   },
   period: {
-    getStatus: (ledgerId: number, period: string) =>
-      ipcRenderer.invoke('period:getStatus', ledgerId, period),
-    close: (data: { ledgerId: number; period: string }) => ipcRenderer.invoke('period:close', data),
-    reopen: (data: { ledgerId: number; period: string }) =>
-      ipcRenderer.invoke('period:reopen', data)
+    getStatus: (ledgerId: number, period: string) => invoke('period:getStatus', ledgerId, period),
+    close: (data: { ledgerId: number; period: string }) => invoke('period:close', data),
+    reopen: (data: { ledgerId: number; period: string }) => invoke('period:reopen', data)
   },
   settings: {
-    getSystemParams: () => ipcRenderer.invoke('settings:getSystemParams'),
-    getRuntimeDefaults: () => ipcRenderer.invoke('settings:getRuntimeDefaults'),
-    getUserPreferences: () => ipcRenderer.invoke('settings:getUserPreferences'),
-    getWallpaperState: () => ipcRenderer.invoke('settings:getWallpaperState'),
-    getLoginWallpaperState: () => ipcRenderer.invoke('settings:getLoginWallpaperState'),
-    getErrorLogStatus: () => ipcRenderer.invoke('settings:getErrorLogStatus'),
-    chooseDiagnosticsLogDirectory: () =>
-      ipcRenderer.invoke('settings:chooseDiagnosticsLogDirectory'),
+    getSystemParams: () => invoke('settings:getSystemParams'),
+    getRuntimeDefaults: () => invoke('settings:getRuntimeDefaults'),
+    getUserPreferences: () => invoke('settings:getUserPreferences'),
+    getWallpaperState: () => invoke('settings:getWallpaperState'),
+    getLoginWallpaperState: () => invoke('settings:getLoginWallpaperState'),
+    getErrorLogStatus: () => invoke('settings:getErrorLogStatus'),
+    chooseDiagnosticsLogDirectory: () => invoke('settings:chooseDiagnosticsLogDirectory'),
     restoreDefaultDiagnosticsLogDirectory: () =>
-      ipcRenderer.invoke('settings:restoreDefaultDiagnosticsLogDirectory'),
+      invoke('settings:restoreDefaultDiagnosticsLogDirectory'),
     setSystemParam: (
       key:
         | 'allow_same_maker_auditor'
@@ -205,13 +203,13 @@ const api = {
         | 'new_voucher_date_strategy'
         | 'voucher_list_default_status',
       value: string
-    ) => ipcRenderer.invoke('settings:setSystemParam', key, value),
+    ) => invoke('settings:setSystemParam', key, value),
     setUserPreferences: (preferences: Record<string, string>) =>
-      ipcRenderer.invoke('settings:setUserPreferences', preferences),
-    openErrorLogDirectory: () => ipcRenderer.invoke('settings:openErrorLogDirectory'),
+      invoke('settings:setUserPreferences', preferences),
+    openErrorLogDirectory: () => invoke('settings:openErrorLogDirectory'),
     exportDiagnosticsLogs: (payload?: { directoryPath?: string }) =>
-      ipcRenderer.invoke('settings:exportDiagnosticsLogs', payload),
-    chooseWallpaper: () => ipcRenderer.invoke('settings:chooseWallpaper'),
+      invoke('settings:exportDiagnosticsLogs', payload),
+    chooseWallpaper: () => invoke('settings:chooseWallpaper'),
     applyWallpaperCrop: (
       payload:
         | { extension: string; bytes: number[]; sourcePath?: string }
@@ -227,18 +225,18 @@ const api = {
             }
             useSuggestedViewport?: boolean
           }
-    ) => ipcRenderer.invoke('settings:applyWallpaperCrop', payload),
-    restoreDefaultWallpaper: () => ipcRenderer.invoke('settings:restoreDefaultWallpaper'),
+    ) => invoke('settings:applyWallpaperCrop', payload),
+    restoreDefaultWallpaper: () => invoke('settings:restoreDefaultWallpaper'),
     getSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:getSubjectTemplate', standardType),
+      invoke('settings:getSubjectTemplate', standardType),
     getSubjectTemplateReference: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:getSubjectTemplateReference', standardType),
+      invoke('settings:getSubjectTemplateReference', standardType),
     listIndependentCustomSubjectTemplates: () =>
-      ipcRenderer.invoke('settings:listIndependentCustomSubjectTemplates'),
+      invoke('settings:listIndependentCustomSubjectTemplates'),
     getIndependentCustomSubjectTemplate: (templateId: string) =>
-      ipcRenderer.invoke('settings:getIndependentCustomSubjectTemplate', templateId),
+      invoke('settings:getIndependentCustomSubjectTemplate', templateId),
     parseSubjectTemplateImport: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:parseSubjectTemplateImport', standardType),
+      invoke('settings:parseSubjectTemplateImport', standardType),
     saveSubjectTemplate: (payload: {
       standardType: 'enterprise' | 'npo'
       templateName?: string
@@ -254,7 +252,7 @@ const api = {
         carryForwardTargetCode: string | null
         note: string | null
       }>
-    }) => ipcRenderer.invoke('settings:saveSubjectTemplate', payload),
+    }) => invoke('settings:saveSubjectTemplate', payload),
     saveIndependentCustomSubjectTemplate: (payload: {
       templateId?: string
       baseStandardType: 'enterprise' | 'npo'
@@ -271,17 +269,17 @@ const api = {
         carryForwardTargetCode: string | null
         note: string | null
       }>
-    }) => ipcRenderer.invoke('settings:saveIndependentCustomSubjectTemplate', payload),
+    }) => invoke('settings:saveIndependentCustomSubjectTemplate', payload),
     downloadSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:downloadSubjectTemplate', standardType),
+      invoke('settings:downloadSubjectTemplate', standardType),
     importSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:importSubjectTemplate', standardType),
+      invoke('settings:importSubjectTemplate', standardType),
     clearSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
-      ipcRenderer.invoke('settings:clearSubjectTemplate', standardType),
+      invoke('settings:clearSubjectTemplate', standardType),
     clearIndependentCustomSubjectTemplateEntries: (templateId: string) =>
-      ipcRenderer.invoke('settings:clearIndependentCustomSubjectTemplateEntries', templateId),
+      invoke('settings:clearIndependentCustomSubjectTemplateEntries', templateId),
     deleteIndependentCustomSubjectTemplate: (templateId: string) =>
-      ipcRenderer.invoke('settings:deleteIndependentCustomSubjectTemplate', templateId)
+      invoke('settings:deleteIndependentCustomSubjectTemplate', templateId)
   },
   auditLog: {
     list: (filters?: {
@@ -291,7 +289,7 @@ const api = {
       userId?: number
       keyword?: string
       limit?: number
-    }) => ipcRenderer.invoke('auditLog:list', filters),
+    }) => invoke('auditLog:list', filters),
     export: (payload?: {
       filters?: {
         ledgerId?: number
@@ -303,28 +301,36 @@ const api = {
       }
       filePath?: string
       operationId?: string
-    }) => ipcRenderer.invoke('auditLog:export', payload)
+    }) => invoke('auditLog:export', payload)
   },
   backup: {
-    create: (payload: { operationId?: string; ledgerId: number; period?: string | null; directoryPath?: string }) =>
-      ipcRenderer.invoke('backup:create', payload),
-    list: (ledgerId?: number) => ipcRenderer.invoke('backup:list', ledgerId),
-    validate: (backupId: number) => ipcRenderer.invoke('backup:validate', backupId),
+    create: (payload: {
+      operationId?: string
+      ledgerId: number
+      period?: string | null
+      directoryPath?: string
+    }) => invoke('backup:create', payload),
+    list: (ledgerId?: number) => invoke('backup:list', ledgerId),
+    validate: (backupId: number) => invoke('backup:validate', backupId),
     import: (payload?: { operationId?: string; backupId?: number; packagePath?: string }) =>
-      ipcRenderer.invoke('backup:import', payload),
+      invoke('backup:import', payload),
     delete: (payload: { operationId?: string; backupId: number; deleteRecordOnly?: boolean }) =>
-      ipcRenderer.invoke('backup:delete', payload),
+      invoke('backup:delete', payload),
     restore: (payload?: { operationId?: string; backupId?: number; packagePath?: string }) =>
-      ipcRenderer.invoke('backup:restore', payload)
+      invoke('backup:restore', payload)
   },
   archive: {
-    export: (payload: { operationId?: string; ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
-      ipcRenderer.invoke('archive:export', payload),
-    list: (ledgerId?: number) => ipcRenderer.invoke('archive:list', ledgerId),
-    validate: (exportId: number) => ipcRenderer.invoke('archive:validate', exportId),
+    export: (payload: {
+      operationId?: string
+      ledgerId: number
+      fiscalYear: string
+      directoryPath?: string
+    }) => invoke('archive:export', payload),
+    list: (ledgerId?: number) => invoke('archive:list', ledgerId),
+    validate: (exportId: number) => invoke('archive:validate', exportId),
     delete: (payload: { operationId?: string; exportId: number; deleteRecordOnly?: boolean }) =>
-      ipcRenderer.invoke('archive:delete', payload),
-    getManifest: (exportId: number) => ipcRenderer.invoke('archive:getManifest', exportId)
+      invoke('archive:delete', payload),
+    getManifest: (exportId: number) => invoke('archive:getManifest', exportId)
   },
   eVoucher: {
     import: (payload: {
@@ -334,23 +340,23 @@ const api = {
       sourceNumber?: string | null
       sourceDate?: string | null
       amountCents?: number | null
-    }) => ipcRenderer.invoke('eVoucher:import', payload),
-    list: (ledgerId: number) => ipcRenderer.invoke('eVoucher:list', ledgerId),
+    }) => invoke('eVoucher:import', payload),
+    list: (ledgerId: number) => invoke('eVoucher:list', ledgerId),
     verify: (payload: {
       recordId: number
       verificationStatus?: 'verified' | 'failed'
       verificationMethod?: string
       verificationMessage?: string
-    }) => ipcRenderer.invoke('eVoucher:verify', payload),
+    }) => invoke('eVoucher:verify', payload),
     parse: (payload: {
       recordId: number
       sourceNumber?: string | null
       sourceDate?: string | null
       amountCents?: number | null
       counterpartName?: string | null
-    }) => ipcRenderer.invoke('eVoucher:parse', payload),
+    }) => invoke('eVoucher:parse', payload),
     convert: (payload: { recordId: number; voucherDate?: string; voucherWord?: string }) =>
-      ipcRenderer.invoke('eVoucher:convert', payload)
+      invoke('eVoucher:convert', payload)
   },
   reporting: {
     generate: (payload: {
@@ -365,7 +371,7 @@ const api = {
       startPeriod?: string
       endPeriod?: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('reporting:generate', payload),
+    }) => invoke('reporting:generate', payload),
     list: (filters: {
       ledgerId: number
       reportTypes?: Array<
@@ -376,9 +382,9 @@ const api = {
         | 'equity_statement'
       >
       periods?: string[]
-    }) => ipcRenderer.invoke('reporting:list', filters),
+    }) => invoke('reporting:list', filters),
     getDetail: (payload: { snapshotId: number; ledgerId?: number }) =>
-      ipcRenderer.invoke('reporting:getDetail', payload),
+      invoke('reporting:getDetail', payload),
     export: (payload: {
       snapshotId: number
       ledgerId?: number
@@ -386,7 +392,7 @@ const api = {
       renderOptions?: {
         showCashflowPreviousAmount?: boolean
       }
-    }) => ipcRenderer.invoke('reporting:export', payload),
+    }) => invoke('reporting:export', payload),
     exportBatch: (payload: {
       snapshotIds: number[]
       ledgerId?: number
@@ -395,9 +401,8 @@ const api = {
       renderOptions?: {
         showCashflowPreviousAmount?: boolean
       }
-    }) => ipcRenderer.invoke('reporting:exportBatch', payload),
-    chooseTaxTemplateOutputDirectory: () =>
-      ipcRenderer.invoke('reporting:chooseTaxTemplateOutputDirectory'),
+    }) => invoke('reporting:exportBatch', payload),
+    chooseTaxTemplateOutputDirectory: () => invoke('reporting:chooseTaxTemplateOutputDirectory'),
     exportTaxTemplate: (payload: {
       ledgerId: number
       declarationType: 'monthly' | 'quarterly' | 'annual'
@@ -407,15 +412,15 @@ const api = {
       directoryPath?: string
       outputPath?: string
       overwrite?: boolean
-    }) => ipcRenderer.invoke('reporting:exportTaxTemplate', payload),
+    }) => invoke('reporting:exportTaxTemplate', payload),
     delete: (payload: { snapshotId: number; ledgerId: number }) =>
-      ipcRenderer.invoke('reporting:delete', payload)
+      invoke('reporting:delete', payload)
   },
   print: {
-    prepare: (payload: Record<string, unknown>) => ipcRenderer.invoke('print:prepare', payload),
-    getJobStatus: (jobId: string) => ipcRenderer.invoke('print:getJobStatus', jobId),
-    getPreviewModel: (jobId: string) => ipcRenderer.invoke('print:getPreviewModel', jobId),
-    openPreview: (jobId: string) => ipcRenderer.invoke('print:openPreview', jobId),
+    prepare: (payload) => invoke('print:prepare', payload),
+    getJobStatus: (jobId: string) => invoke('print:getJobStatus', jobId),
+    getPreviewModel: (jobId: string) => invoke('print:getPreviewModel', jobId),
+    openPreview: (jobId: string) => invoke('print:openPreview', jobId),
     updatePreviewSettings: (payload: {
       jobId: string
       settings: {
@@ -424,11 +429,10 @@ const api = {
         marginPreset?: 'default' | 'narrow' | 'extra-narrow'
         densityPreset?: 'default' | 'compact' | 'ultra-compact'
       }
-    }) => ipcRenderer.invoke('print:updatePreviewSettings', payload),
-    print: (payload: string | { jobId: string }) => ipcRenderer.invoke('print:print', payload),
-    exportPdf: (payload: string | { jobId: string }) =>
-      ipcRenderer.invoke('print:exportPdf', payload),
-    dispose: (jobId: string) => ipcRenderer.invoke('print:dispose', jobId)
+    }) => invoke('print:updatePreviewSettings', payload),
+    print: (payload: string | { jobId: string }) => invoke('print:print', payload),
+    exportPdf: (payload: string | { jobId: string }) => invoke('print:exportPdf', payload),
+    dispose: (jobId: string) => invoke('print:dispose', jobId)
   },
   bookQuery: {
     listSubjectBalances: (query: {
@@ -438,14 +442,14 @@ const api = {
       keyword?: string
       includeUnpostedVouchers?: boolean
       includeZeroBalance?: boolean
-    }) => ipcRenderer.invoke('bookQuery:listSubjectBalances', query),
+    }) => invoke('bookQuery:listSubjectBalances', query),
     getDetailLedger: (query: {
       ledgerId: number
       subjectCode: string
       startDate: string
       endDate: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getDetailLedger', query),
+    }) => invoke('bookQuery:getDetailLedger', query),
     getJournal: (query: {
       ledgerId: number
       startDate: string
@@ -453,7 +457,7 @@ const api = {
       subjectCodeStart?: string
       subjectCodeEnd?: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getJournal', query),
+    }) => invoke('bookQuery:getJournal', query),
     getAuxiliaryBalances: (query: {
       ledgerId: number
       startDate: string
@@ -461,7 +465,7 @@ const api = {
       subjectCodeStart?: string
       subjectCodeEnd?: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getAuxiliaryBalances', query),
+    }) => invoke('bookQuery:getAuxiliaryBalances', query),
     getAuxiliaryDetail: (query: {
       ledgerId: number
       subjectCode: string
@@ -469,7 +473,7 @@ const api = {
       startDate: string
       endDate: string
       includeUnpostedVouchers?: boolean
-    }) => ipcRenderer.invoke('bookQuery:getAuxiliaryDetail', query),
+    }) => invoke('bookQuery:getAuxiliaryDetail', query),
     export: (payload: {
       ledgerId: number
       bookType: string
@@ -493,9 +497,9 @@ const api = {
         }>
       }>
       filePath?: string
-    }) => ipcRenderer.invoke('bookQuery:export', payload)
+    }) => invoke('bookQuery:export', payload)
   }
-}
+} satisfies DudeAPI
 
 if (typeof window !== 'undefined') {
   window.addEventListener('error', (event) => {

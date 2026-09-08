@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   BACKUP_CREATE_LAST_DIR_KEY,
@@ -61,7 +62,7 @@ async function pickDirectory(
 }
 
 export function registerBackupHandlers(): void {
-  ipcMain.handle(
+  handleInvoke(
     'backup:create',
     async (
       event,
@@ -137,7 +138,7 @@ export function registerBackupHandlers(): void {
       )
   )
 
-  ipcMain.handle('backup:list', (event, ledgerId?: number) =>
+  handleInvoke('backup:list', (event, ledgerId?: number) =>
     withIpcTelemetry(
       {
         channel: 'backup:list',
@@ -165,7 +166,7 @@ export function registerBackupHandlers(): void {
     )
   )
 
-  ipcMain.handle('backup:validate', (event, backupId: number) =>
+  handleInvoke('backup:validate', (event, backupId: number) =>
     withIpcTelemetry(
       {
         channel: 'backup:validate',
@@ -198,7 +199,7 @@ export function registerBackupHandlers(): void {
     )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'backup:import',
     async (
       event,
@@ -294,7 +295,7 @@ export function registerBackupHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'backup:delete',
     (
       event,
@@ -339,7 +340,7 @@ export function registerBackupHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'backup:restore',
     async (
       event,

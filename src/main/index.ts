@@ -9,24 +9,7 @@ import {
   getPendingRestoreLogPath,
   readPendingRestoreLog
 } from './services/pendingRestoreLog'
-import { registerAuthHandlers } from './ipc/auth'
-import { registerLedgerHandlers } from './ipc/ledger'
-import { registerSubjectHandlers } from './ipc/subject'
-import { registerAuxiliaryHandlers } from './ipc/auxiliary'
-import { registerSettingsHandlers } from './ipc/settings'
-import { registerVoucherHandlers } from './ipc/voucher'
-import { registerCashFlowHandlers } from './ipc/cashflow'
-import { registerInitialBalanceHandlers } from './ipc/initialBalance'
-import { registerPeriodHandlers } from './ipc/period'
-import { registerPLCarryForwardHandlers } from './ipc/plCarryForward'
-import { registerAuditLogHandlers } from './ipc/auditLog'
-import { registerBackupHandlers } from './ipc/backup'
-import { registerArchiveHandlers } from './ipc/archive'
-import { registerElectronicVoucherHandlers } from './ipc/eVoucher'
-import { registerReportingHandlers } from './ipc/reporting'
-import { registerBookQueryHandlers } from './ipc/bookQuery'
-import { registerPrintHandlers } from './ipc/print'
-import { registerDiagnosticsHandlers } from './ipc/diagnostics'
+import { registerIpcHandlers } from './ipc/register'
 import { installGlobalErrorLogging } from './services/errorLog'
 import { getRuntimeUserDataPath } from './services/runtimeAppPaths'
 import { setRuntimeContext } from './runtime/runtimeContext'
@@ -93,20 +76,22 @@ function flushPendingRestoreLog(): void {
   }
 
   appendOperationLog(getDatabase(), {
-      ledgerId: payload.ledgerId,
-      userId: payload.userId,
-      username: payload.username,
-      module: 'backup',
-      action: 'restore_legacy_unverified',
-      targetType: 'legacy_restore',
-      targetId: typeof payload.targetId === 'number' && Number.isSafeInteger(payload.targetId)
-        ? payload.targetId : null,
-      details: {
-        state: 'recovery_required',
-        errorCode: 'LEGACY_RESTORE_UNVERIFIED',
-        compensation: 'manual_review_required',
-        backupMode: payload.backupMode
-      }
+    ledgerId: payload.ledgerId,
+    userId: payload.userId,
+    username: payload.username,
+    module: 'backup',
+    action: 'restore_legacy_unverified',
+    targetType: 'legacy_restore',
+    targetId:
+      typeof payload.targetId === 'number' && Number.isSafeInteger(payload.targetId)
+        ? payload.targetId
+        : null,
+    details: {
+      state: 'recovery_required',
+      errorCode: 'LEGACY_RESTORE_UNVERIFIED',
+      compensation: 'manual_review_required',
+      backupMode: payload.backupMode
+    }
   })
   clearPendingRestoreLog(pendingLogPath)
 }
@@ -160,24 +145,7 @@ app.whenReady().then(() => {
   }
 
   // Register IPC handlers
-  registerAuthHandlers()
-  registerLedgerHandlers()
-  registerSubjectHandlers()
-  registerAuxiliaryHandlers()
-  registerSettingsHandlers()
-  registerVoucherHandlers()
-  registerCashFlowHandlers()
-  registerInitialBalanceHandlers()
-  registerPLCarryForwardHandlers()
-  registerPeriodHandlers()
-  registerAuditLogHandlers()
-  registerBackupHandlers()
-  registerArchiveHandlers()
-  registerElectronicVoucherHandlers()
-  registerReportingHandlers()
-  registerBookQueryHandlers()
-  registerPrintHandlers()
-  registerDiagnosticsHandlers()
+  registerIpcHandlers()
 
   createWindow()
 

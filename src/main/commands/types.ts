@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3'
 import type { RuntimeContext } from '../runtime/runtimeContext'
 import type { SessionIdentity } from '../security/sessionAuthority'
+import type { CommandErrorCode } from '../../shared/contracts/commandResult'
+export type { CommandFailure, CommandResult } from '../../shared/contracts/commandResult'
 
 export type PermissionKey =
   | 'voucher_entry'
@@ -29,25 +31,13 @@ export interface CommandContext {
   now: Date
 }
 
-export interface CommandFailure {
-  code: string
-  message: string
-  details: Record<string, unknown> | null
-}
-
-export interface CommandResult<T> {
-  status: 'success' | 'error'
-  data: T | null
-  error: CommandFailure | null
-}
-
 export class CommandError extends Error {
-  code: string
+  code: CommandErrorCode
   details: Record<string, unknown> | null
   exitCode: number
 
   constructor(
-    code: string,
+    code: CommandErrorCode,
     message: string,
     details: Record<string, unknown> | null = null,
     exitCode = 10

@@ -1,3 +1,9 @@
+import type { IpcChannel } from '../../shared/contracts/ipc'
+
+type UiMethodName<C = IpcChannel> = C extends `${infer Domain}:${infer Method}`
+  ? `window.api.${Domain}.${Method}`
+  : never
+
 export type CommandPromptHintKey = 'username' | 'password' | 'ledgerId' | 'period'
 export type CommandSessionEffect = 'login' | 'logout' | 'none'
 
@@ -11,8 +17,8 @@ export interface CommandMetadata {
   headlessAlternatives?: string[]
   requiresSession: boolean
   sessionEffect: CommandSessionEffect
-  uiMethods: string[]
-  uiAssistedMethods: string[]
+  uiMethods: UiMethodName[]
+  uiAssistedMethods: UiMethodName[]
   promptHints: CommandPromptHintKey[]
 }
 

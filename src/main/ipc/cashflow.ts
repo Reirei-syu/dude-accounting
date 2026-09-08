@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   createCashFlowMappingCommand,
@@ -12,7 +12,7 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 export function registerCashFlowHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('cashflow:getItems', async (event, ledgerId: number) => {
+  handleInvoke('cashflow:getItems', async (event, ledgerId: number) => {
     const result = await listCashFlowItemsCommand(createCommandContextFromEvent(event), {
       ledgerId
     })
@@ -23,7 +23,7 @@ export function registerCashFlowHandlers(): void {
     throw new Error(result.error?.message ?? '获取现金流量项目失败')
   })
 
-  ipcMain.handle('cashflow:getMappings', async (event, ledgerId: number) => {
+  handleInvoke('cashflow:getMappings', async (event, ledgerId: number) => {
     const result = await listCashFlowMappingsCommand(createCommandContextFromEvent(event), {
       ledgerId
     })
@@ -34,7 +34,7 @@ export function registerCashFlowHandlers(): void {
     throw new Error(result.error?.message ?? '获取现金流匹配规则失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'cashflow:createMapping',
     (
       event,
@@ -51,7 +51,7 @@ export function registerCashFlowHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'cashflow:updateMapping',
     (
       event,
@@ -68,7 +68,7 @@ export function registerCashFlowHandlers(): void {
       )
   )
 
-  ipcMain.handle('cashflow:deleteMapping', async (event, id: number) =>
+  handleInvoke('cashflow:deleteMapping', async (event, id: number) =>
     toLegacySuccess(
       await deleteCashFlowMappingCommand(createCommandContextFromEvent(event), { id }),
       () => ({})

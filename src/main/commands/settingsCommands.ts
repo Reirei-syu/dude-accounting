@@ -1,4 +1,7 @@
 import { shell } from 'electron'
+import type { WallpaperApplyInput } from '../../shared/contracts/wallpaperInput'
+import fsPromises from 'node:fs/promises'
+import type { SubjectTemplateEntryInput } from '../../shared/contracts/subjectTemplateInput'
 import {
   clearCustomTopLevelSubjectTemplate,
   clearIndependentCustomSubjectTemplateEntries,
@@ -13,7 +16,12 @@ import {
   writeCustomTopLevelSubjectImportTemplate,
   type CustomTopLevelSubjectTemplateEntry
 } from '../services/subjectTemplate'
-import { exportDiagnosticLogs, getErrorLogStatus } from '../services/errorLog'
+import {
+  exportDiagnosticLogs,
+  getErrorLogStatus,
+  listDiagnosticLogFiles
+} from '../services/errorLog'
+import { CommandError } from './types'
 import {
   resetDiagnosticsLogDirectory,
   setDiagnosticsLogDirectory
@@ -242,12 +250,32 @@ export async function resetDiagnosticsDirectoryCommand(
   })
 }
 
+function assertDiagnosticsExportAvailable(context: CommandContext): void {
+  requireCommandPermission(context.actor, 'system_settings')
+  if (listDiagnosticLogFiles(context.runtime.userDataPath).length === 0)
+    throw new CommandError(
+      'VALIDATION_ERROR',
+      '暂无可导出的日志文件',
+      { reason: 'NO_DIAGNOSTIC_LOGS' },
+      2
+    )
+}
+
+export async function checkDiagnosticsExportCommand(
+  context: CommandContext
+): Promise<CommandResult<{ available: true }>> {
+  return withCommandResult(context, () => {
+    assertDiagnosticsExportAvailable(context)
+    return { available: true as const }
+  })
+}
+
 export async function exportDiagnosticsLogsCommand(
   context: CommandContext,
   payload: { directoryPath: string }
 ): Promise<CommandResult<{ exportDirectory: string; filePaths: string[] }>> {
   return withCommandResult(context, () => {
-    requireCommandPermission(context.actor, 'system_settings')
+    assertDiagnosticsExportAvailable(context)
     const result = exportDiagnosticLogs(context.runtime.userDataPath, payload.directoryPath)
     rememberPathPreference(context.db, DIAGNOSTICS_EXPORT_LAST_DIR_KEY, payload.directoryPath)
     return result
@@ -264,6 +292,7 @@ export async function openDiagnosticsDirectoryCommand(
       logDirectory
     })
     if (!shouldDryRunCliE2eDesktopActions()) {
+      await fsPromises.mkdir(logDirectory, { recursive: true })
       const error = await shell.openPath(logDirectory)
       if (error) {
         throw new Error(error)
@@ -294,6 +323,15 @@ export async function getLoginWallpaperStateCommand(
   })
 }
 
+/** 登录页既有公共读取能力；不接受用户 ID 或扩大到其他偏好。 */
+export async function getPublicLoginWallpaperStateCommand(
+  context: CommandContext
+): Promise<CommandResult<ReturnType<typeof getLoginWallpaperState>>> {
+  return withCommandResult({ ...context, actor: null }, () =>
+    getLoginWallpaperState(context.db, context.runtime.userDataPath)
+  )
+}
+
 export async function analyzeWallpaperCommand(
   context: CommandContext,
   payload: { sourcePath: string }
@@ -306,23 +344,26 @@ export async function analyzeWallpaperCommand(
 
 export async function applyWallpaperCommand(
   context: CommandContext,
-  payload: {
-    sourcePath: string
-    extension?: string
-    viewport?: Partial<import('../../shared/wallpaperCrop').CropViewportState>
-    useSuggestedViewport?: boolean
-  }
+  payload: WallpaperApplyInput
 ): Promise<
   CommandResult<{
     state: ReturnType<typeof getUserWallpaperState>
-    analysis: WallpaperAnalyzeResult
-    viewport: import('../../shared/wallpaperCrop').CropViewportState
+    analysis: WallpaperAnalyzeResult | null
+    viewport: import('../../shared/wallpaperCrop').CropViewportState | null
     appliedExtension: string
   }>
 > {
   return withCommandResult(context, () => {
     const actor = requireCommandActor(context.actor)
-    const rendered = renderWallpaperCrop(payload)
+    const rendered =
+      'bytes' in payload
+        ? {
+            bytes: Buffer.from(payload.bytes),
+            appliedExtension: payload.extension,
+            analysis: payload.sourcePath ? analyzeWallpaperSource(payload.sourcePath) : null,
+            viewport: null
+          }
+        : renderWallpaperCrop(payload)
     const state = replaceUserWallpaperFromBuffer(
       context.db,
       context.runtime.userDataPath,
@@ -342,7 +383,7 @@ export async function applyWallpaperCommand(
         targetType: 'user_preference',
         targetId: actor.id,
         details: {
-          sourcePath: payload.sourcePath,
+          sourcePath: payload.sourcePath ?? null,
           wallpaperPath: state.wallpaperPath,
           appliedExtension: rendered.appliedExtension,
           viewport: rendered.viewport
@@ -413,7 +454,7 @@ export async function saveSubjectTemplateCommand(
     standardType: StandardType
     templateName?: string
     templateDescription?: string | null
-    entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
+    entries: SubjectTemplateEntryInput[]
   }
 ): Promise<CommandResult<{ template: ReturnType<typeof saveCustomTopLevelSubjectTemplate> }>> {
   return withAuditedCommandResult(context, () => {
@@ -564,7 +605,7 @@ export async function saveCustomTemplateCommand(
     baseStandardType: StandardType
     templateName: string
     templateDescription?: string | null
-    entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
+    entries: SubjectTemplateEntryInput[]
   }
 ): Promise<CommandResult<{ template: ReturnType<typeof saveIndependentCustomSubjectTemplate> }>> {
   return withAuditedCommandResult(context, () => {

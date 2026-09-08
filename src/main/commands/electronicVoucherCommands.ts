@@ -1,4 +1,6 @@
 import fs from 'node:fs'
+import type { IpcResult } from '../../shared/contracts/ipc'
+import type { ElectronicVoucherListRow } from '../../shared/contracts/electronicVoucher'
 import { fileOperationCommandError } from './fileOperationError'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
@@ -14,6 +16,7 @@ import {
   buildImportedVoucherMetadata,
   persistImportedElectronicVoucher
 } from '../services/electronicVoucher'
+import type { ImportElectronicVoucherResult } from '../services/electronicVoucher'
 import { requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
@@ -36,7 +39,13 @@ export async function importElectronicVoucherCommand(
     amountCents?: number | null
   }
 ): Promise<
-  CommandResult<{ operationId: string; fileId: number; recordId: number; voucherType: string; fingerprint: string }>
+  CommandResult<{
+    operationId: string
+    fileId: number
+    recordId: number
+    voucherType: ImportElectronicVoucherResult['voucherType']
+    fingerprint: string
+  }>
 > {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
@@ -148,7 +157,7 @@ export async function importElectronicVoucherCommand(
 export async function listElectronicVouchersCommand(
   context: CommandContext,
   payload: { ledgerId: number }
-): Promise<CommandResult<unknown[]>> {
+): Promise<CommandResult<ElectronicVoucherListRow[]>> {
   return withCommandResult(context, () => {
     requireCommandPermission(context.actor, 'voucher_entry')
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
@@ -172,7 +181,7 @@ export async function listElectronicVouchersCommand(
          WHERE r.ledger_id = ?
          ORDER BY r.id DESC`
       )
-      .all(payload.ledgerId) as unknown[]
+      .all(payload.ledgerId) as ElectronicVoucherListRow[]
   })
 }
 
@@ -349,7 +358,9 @@ export async function parseElectronicVoucherCommand(
 export async function convertElectronicVoucherCommand(
   context: CommandContext,
   payload: { recordId: number; voucherDate?: string; voucherWord?: string }
-): Promise<CommandResult<{ draftVoucher: Record<string, unknown> }>> {
+): Promise<
+  CommandResult<{ draftVoucher: NonNullable<IpcResult<'eVoucher:convert'>['draftVoucher']> }>
+> {
   return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const record = context.db

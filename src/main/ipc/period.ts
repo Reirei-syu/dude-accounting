@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   closePeriodCommand,
@@ -10,7 +10,7 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 export function registerPeriodHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('period:getStatus', (event, ledgerId: number, period: string) => {
+  handleInvoke('period:getStatus', (event, ledgerId: number, period: string) => {
     return getPeriodStatusCommand(createCommandContextFromEvent(event), {
       ledgerId,
       period
@@ -22,13 +22,13 @@ export function registerPeriodHandlers(): void {
     })
   })
 
-  ipcMain.handle('period:close', (event, payload: { ledgerId: number; period: string }) => {
+  handleInvoke('period:close', (event, payload: { ledgerId: number; period: string }) => {
     return closePeriodCommand(createCommandContextFromEvent(event), payload).then((result) =>
       toLegacySuccess(result, (data) => data)
     )
   })
 
-  ipcMain.handle('period:reopen', (event, payload: { ledgerId: number; period: string }) => {
+  handleInvoke('period:reopen', (event, payload: { ledgerId: number; period: string }) => {
     return reopenPeriodCommand(createCommandContextFromEvent(event), payload).then((result) =>
       toLegacySuccess(result, () => ({}))
     )

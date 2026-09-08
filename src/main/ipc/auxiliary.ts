@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   createAuxiliaryItemCommand,
@@ -11,7 +11,7 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 export function registerAuxiliaryHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('auxiliary:getAll', async (event, ledgerId: number) => {
+  handleInvoke('auxiliary:getAll', async (event, ledgerId: number) => {
     const result = await listAuxiliaryItemsCommand(createCommandContextFromEvent(event), {
       ledgerId
     })
@@ -22,7 +22,7 @@ export function registerAuxiliaryHandlers(): void {
     throw new Error(result.error?.message ?? '获取辅助项失败')
   })
 
-  ipcMain.handle('auxiliary:getByCategory', async (event, ledgerId: number, category: string) => {
+  handleInvoke('auxiliary:getByCategory', async (event, ledgerId: number, category: string) => {
     const result = await listAuxiliaryItemsCommand(createCommandContextFromEvent(event), {
       ledgerId,
       category
@@ -34,7 +34,7 @@ export function registerAuxiliaryHandlers(): void {
     throw new Error(result.error?.message ?? '获取辅助项失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'auxiliary:create',
     (
       event,
@@ -50,7 +50,7 @@ export function registerAuxiliaryHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'auxiliary:update',
     (
       event,
@@ -65,7 +65,7 @@ export function registerAuxiliaryHandlers(): void {
       )
   )
 
-  ipcMain.handle('auxiliary:delete', async (event, id: number) =>
+  handleInvoke('auxiliary:delete', async (event, id: number) =>
     toLegacySuccess(
       await deleteAuxiliaryItemCommand(createCommandContextFromEvent(event), { id }),
       () => ({})

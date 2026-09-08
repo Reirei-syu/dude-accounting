@@ -1,10 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import Database from 'better-sqlite3'
+import { runDatabaseMigrations } from '../database/migrations'
+import { issueSession, resolveSessionActor } from '../security/sessionAuthority'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const printHandlerMocks = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
-  const userDataDir = 'C:/Temp/dude-print-handler-test'
+  const userDataDir = `${process.cwd()}/.tmp/dude-print-handler-test`
 
   class BrowserWindowMock {
     static fromWebContents = vi.fn(() => null)
@@ -32,7 +35,8 @@ const printHandlerMocks = vi.hoisted(() => {
     }),
     showSaveDialog: vi.fn(),
     browserWindowMock: BrowserWindowMock,
-    getDatabase: vi.fn(() => ({ prepare: vi.fn() })),
+    getDatabase: vi.fn(),
+    getSessionByEvent: vi.fn(),
     getPathPreferenceWithFallback: vi.fn(),
     rememberPathPreference: vi.fn(),
     requireAuth: vi.fn(() => ({ id: 7, isAdmin: false })),
@@ -57,6 +61,7 @@ vi.mock('../services/pathPreference', () => ({
 }))
 
 vi.mock('./session', () => ({
+  getSessionByEvent: printHandlerMocks.getSessionByEvent,
   requireAuth: printHandlerMocks.requireAuth,
   requireLedgerAccess: printHandlerMocks.requireLedgerAccess
 }))
@@ -98,15 +103,27 @@ function writePrintJob(jobId: string, partial: Record<string, unknown>): void {
 }
 
 describe('print IPC handlers', () => {
+  let db: Database.Database
   beforeEach(() => {
     fs.rmSync(printHandlerMocks.userDataDir, { recursive: true, force: true })
     printHandlerMocks.handlers.clear()
     vi.clearAllMocks()
+    db = new Database(':memory:')
+    runDatabaseMigrations(db)
+    db.exec(
+      "INSERT INTO users(id,username,permissions,is_admin) VALUES(7,'print-handler','{}',0); INSERT INTO ledgers(id,name,start_period,current_period) VALUES(1,'隔离打印测试','2026-09','2026-09'); INSERT INTO user_ledger_permissions(user_id,ledger_id) VALUES(7,1)"
+    )
+    const identity = issueSession(db, 7)
+    printHandlerMocks.getDatabase.mockReturnValue(db)
+    printHandlerMocks.getSessionByEvent.mockImplementation(() =>
+      resolveSessionActor(db, identity, 'ipc')
+    )
     printHandlerMocks.getPathPreferenceWithFallback.mockReturnValue(null)
     registerPrintHandlers()
   })
 
   afterEach(() => {
+    db.close()
     fs.rmSync(printHandlerMocks.userDataDir, { recursive: true, force: true })
   })
 

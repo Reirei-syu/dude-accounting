@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   listInitialBalancesCommand,
@@ -10,7 +10,7 @@ import type { InitialBalanceEntryInput } from '../services/initialBalance'
 export function registerInitialBalanceHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('initialBalance:list', async (event, ledgerId: number, period: string) => {
+  handleInvoke('initialBalance:list', async (event, ledgerId: number, period: string) => {
     const result = await listInitialBalancesCommand(createCommandContextFromEvent(event), {
       ledgerId,
       period
@@ -22,7 +22,7 @@ export function registerInitialBalanceHandlers(): void {
     throw new Error(result.error?.message ?? '获取期初余额失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'initialBalance:save',
     (
       event,

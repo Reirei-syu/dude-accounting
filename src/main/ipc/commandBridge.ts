@@ -28,6 +28,27 @@ export function isCommandSuccess<T>(
   return result.status === 'success' && result.data !== null
 }
 
+export function toLegacySuccess<T, M extends Record<string, unknown>>(
+  result: CommandResult<T>,
+  mapData: (data: T) => M
+):
+  | ({ success: true } & M)
+  | {
+      success: false
+      error: string
+      errorCode: string
+      errorDetails: Record<string, unknown> | null
+    }
+export function toLegacySuccess<T>(
+  result: CommandResult<T>
+):
+  | ({ success: true } & T)
+  | {
+      success: false
+      error: string
+      errorCode: string
+      errorDetails: Record<string, unknown> | null
+    }
 export function toLegacySuccess<T = unknown>(
   result: CommandResult<T>,
   mapData?: (data: T) => Record<string, unknown>

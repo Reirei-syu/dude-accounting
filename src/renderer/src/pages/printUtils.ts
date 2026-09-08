@@ -1,9 +1,11 @@
+import type { PrintPreparePayload } from '../../../shared/contracts/print'
+
 async function sleep(milliseconds: number): Promise<void> {
   await new Promise((resolve) => window.setTimeout(resolve, milliseconds))
 }
 
 export async function prepareAndOpenPrintPreview(
-  payload: Record<string, unknown>,
+  payload: PrintPreparePayload,
   options?: {
     maxPollCount?: number
     pollIntervalMs?: number

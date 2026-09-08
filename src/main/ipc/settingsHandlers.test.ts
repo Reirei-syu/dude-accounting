@@ -2,6 +2,13 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import Database from 'better-sqlite3'
+import { runDatabaseMigrations } from '../database/migrations'
+import { issueSession, resolveSessionActor } from '../security/sessionAuthority'
+import {
+  createNodeRuntimeContext,
+  setRuntimeContext,
+  clearRuntimeContext
+} from '../runtime/runtimeContext'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const settingsMocks = vi.hoisted(() => {
@@ -108,6 +115,7 @@ vi.mock('../services/systemSettings', () => ({
 }))
 
 vi.mock('./session', () => ({
+  getSessionByEvent: (event: unknown) => settingsMocks.requireAuth(event),
   requireAuth: settingsMocks.requireAuth,
   requireAdmin: settingsMocks.requireAdmin,
   requirePermission: settingsMocks.requirePermission
@@ -123,12 +131,15 @@ describe('settings IPC handlers', () => {
     settingsMocks.handlers.clear()
     vi.clearAllMocks()
     db = new Database(':memory:')
+    runDatabaseMigrations(db)
+    db.exec("INSERT INTO users(id,username,is_admin) VALUES(1,'tester',1)")
     settingsMocks.getDatabase.mockReturnValue(db as never)
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-settings-log-'))
     settingsMocks.appGetPath.mockImplementation((name: string) =>
       name === 'documents' ? 'D:/Documents' : tempDir
     )
-    settingsMocks.requireAuth.mockReturnValue({ id: 1, username: 'tester' })
+    setRuntimeContext(createNodeRuntimeContext({ userDataPath: tempDir }))
+    settingsMocks.requireAuth.mockReturnValue(resolveSessionActor(db, issueSession(db, 1), 'ipc'))
     settingsMocks.requirePermission.mockReturnValue({ id: 1, username: 'tester' })
     settingsMocks.getErrorLogStatus.mockReturnValue({
       mode: 'default',
@@ -189,6 +200,7 @@ describe('settings IPC handlers', () => {
   })
 
   afterEach(() => {
+    clearRuntimeContext()
     db.close()
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true })
@@ -202,7 +214,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
-    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
+    expect(settingsMocks.requireAuth).toHaveBeenCalledWith(event)
     expect(settingsMocks.getErrorLogStatus).toHaveBeenCalledWith(tempDir)
     expect(result).toMatchObject({
       mode: 'default',
@@ -317,7 +329,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
-    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
+    expect(settingsMocks.requireAuth).toHaveBeenCalledWith(event)
     expect(settingsMocks.getSystemParamSnapshot).toHaveBeenCalledTimes(1)
     expect(result).toEqual({
       allow_same_maker_auditor: '0',
@@ -350,7 +362,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
-    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
+    expect(settingsMocks.requireAuth).toHaveBeenCalledWith(event)
     expect(fs.existsSync(logDirectory)).toBe(true)
     expect(settingsMocks.shellOpenPath).toHaveBeenCalledWith(logDirectory)
     expect(result).toEqual({
@@ -366,7 +378,7 @@ describe('settings IPC handlers', () => {
 
     const result = await handler?.(event)
 
-    expect(settingsMocks.requirePermission).toHaveBeenCalledWith(event, 'system_settings')
+    expect(settingsMocks.requireAuth).toHaveBeenCalledWith(event)
     expect(result).toEqual({
       success: false,
       error: 'failed to open directory'

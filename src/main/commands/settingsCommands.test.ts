@@ -4,6 +4,7 @@ const settingsCommandMocks = vi.hoisted(() => ({
   readCustomTopLevelSubjectTemplateImport: vi.fn(),
   writeCustomTopLevelSubjectImportTemplate: vi.fn(),
   exportDiagnosticLogs: vi.fn(),
+  listDiagnosticLogFiles: vi.fn(),
   rememberPathPreference: vi.fn(),
   saveIndependentCustomSubjectTemplate: vi.fn(),
   requireCommandAdmin: vi.fn((actor) => actor),
@@ -26,7 +27,8 @@ vi.mock('../services/errorLog', async () => {
   const actual = await vi.importActual('../services/errorLog')
   return {
     ...(actual as object),
-    exportDiagnosticLogs: settingsCommandMocks.exportDiagnosticLogs
+    exportDiagnosticLogs: settingsCommandMocks.exportDiagnosticLogs,
+    listDiagnosticLogFiles: settingsCommandMocks.listDiagnosticLogFiles
   }
 })
 
@@ -78,6 +80,7 @@ describe('settingsCommands', () => {
   beforeEach(() => {
     authenticateMockContext(context)
     vi.clearAllMocks()
+    settingsCommandMocks.listDiagnosticLogFiles.mockReturnValue(['runtime.jsonl'])
     settingsCommandMocks.readCustomTopLevelSubjectTemplateImport.mockResolvedValue({
       templateName: '导入模板',
       entries: [{ code: '1001', name: '库存现金' }]
@@ -141,6 +144,19 @@ describe('settingsCommands', () => {
     )
   })
 
+  it('无日志时返回与GUI一致的结构化预检错误，且不导出或记忆目录', async () => {
+    settingsCommandMocks.listDiagnosticLogFiles.mockReturnValue([])
+    const result = await exportDiagnosticsLogsCommand(context as never, {
+      directoryPath: 'D:/Exports'
+    })
+    expect(result.error).toEqual({
+      code: 'VALIDATION_ERROR',
+      message: '暂无可导出的日志文件',
+      details: { reason: 'NO_DIAGNOSTIC_LOGS' }
+    })
+    expect(settingsCommandMocks.exportDiagnosticLogs).not.toHaveBeenCalled()
+    expect(settingsCommandMocks.rememberPathPreference).not.toHaveBeenCalled()
+  })
   it('remembers diagnostics export directories after CLI export', async () => {
     const result = await exportDiagnosticsLogsCommand(context as never, {
       directoryPath: 'D:/Exports'

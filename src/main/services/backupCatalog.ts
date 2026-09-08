@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import type { PackageStatus } from '../../shared/contracts/status'
 
 export interface BackupPackageRecord {
   id: number
@@ -11,7 +12,7 @@ export interface BackupPackageRecord {
   manifest_path: string | null
   checksum: string
   file_size: number
-  status: string
+  status: PackageStatus
   created_by: number
   created_at: string
   validated_at: string | null
@@ -43,7 +44,7 @@ export function createBackupPackageRecord(
 ): number {
   const result = db
     .prepare(
-       `INSERT INTO backup_packages (
+      `INSERT INTO backup_packages (
           ledger_id,
           backup_period,
           fiscal_year,

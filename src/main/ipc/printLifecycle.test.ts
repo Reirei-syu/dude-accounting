@@ -88,7 +88,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 describe('打印任务会话与生命周期集成回归', () => {
   let db: Database.Database
   let actor: CommandActor
-  let print: typeof import('./print')
+  let print: typeof import('../services/printJobs')
   const settings = {
     orientation: 'portrait',
     scalePercent: 100,
@@ -150,8 +150,9 @@ describe('打印任务会话与生命周期集成回归', () => {
     runtime.load.mockReset().mockResolvedValue(undefined)
     runtime.pdf.mockReset().mockResolvedValue(Buffer.from('%PDF-test'))
     actor = resolveSessionActor(db, issueSession(db, 1), 'cli')
-    print = await import('./print')
-    print.registerPrintHandlers()
+    print = await import('../services/printJobs')
+    const { registerPrintHandlers } = await import('./print')
+    registerPrintHandlers()
   })
   afterEach(() => {
     for (const window of TestWindow.getAllWindows()) window.destroy()
@@ -173,6 +174,76 @@ describe('打印任务会话与生命周期集成回归', () => {
       success: false,
       errorCode: 'UNAUTHORIZED'
     })
+  })
+
+  it('GUI 发起窗口销毁后已打开预览失去访问授权', async () => {
+    const jobId = createJob()
+    const sender = new TestContents()
+    const { setSessionBySender } = await import('./session')
+    setSessionBySender(sender, actor)
+    expect(await runtime.handlers.get('print:openPreview')!({ sender }, jobId)).toEqual({
+      success: true
+    })
+    const preview = TestWindow.getAllWindows()[0].webContents
+    const event = { sender: preview, senderFrame: preview.mainFrame }
+    expect(await runtime.handlers.get('print:getPreviewModel')!(event, jobId)).toMatchObject({
+      success: true
+    })
+    sender.emit('destroyed')
+    expect(await runtime.handlers.get('print:getPreviewModel')!(event, jobId)).toMatchObject({
+      success: false,
+      errorCode: 'UNAUTHORIZED'
+    })
+  })
+
+  it('GUI 的 PDF 渲染期间清理窗口登录态时不得落盘', async () => {
+    const jobId = createJob()
+    const sender = new TestContents()
+    const { setSessionBySender, clearSessionByEvent } = await import('./session')
+    setSessionBySender(sender, actor)
+    const event = { sender } as unknown as IpcMainInvokeEvent
+    const started = deferred<void>()
+    const pdf = deferred<Buffer>()
+    runtime.pdf.mockImplementationOnce(() => {
+      started.resolve()
+      return pdf.promise
+    })
+    const outputPath = path.join(runtime.directory, 'gui-blocked.pdf')
+    const pending = runtime.handlers.get('print:exportPdf')!(event, { jobId, outputPath })
+    await started.promise
+    clearSessionByEvent(event)
+    pdf.resolve(Buffer.from('%PDF-test'))
+    expect(await pending).toMatchObject({ success: false, errorCode: 'UNAUTHORIZED' })
+    expect(fs.existsSync(outputPath)).toBe(false)
+    sender.emit('destroyed')
+  })
+
+  it('GUI 和 CLI 更新损坏的预览文档时保留相同冲突错误和任务错误状态', async () => {
+    const jobId = createJob()
+    const record = JSON.parse(fs.readFileSync(jobFile(jobId), 'utf8'))
+    record.sourceDocument.segments = null
+    fs.writeFileSync(jobFile(jobId), JSON.stringify(record))
+    const sender = new TestContents()
+    const { setSessionBySender } = await import('./session')
+    setSessionBySender(sender, actor)
+    const payload = { jobId, settings: { scalePercent: 80 } }
+    const { updatePrintPreviewSettingsCommand } = await import('../commands/printCommands')
+    const { createCommandContext } = await import('../commands/context')
+    const cli = await updatePrintPreviewSettingsCommand(
+      createCommandContext({ db, actor }),
+      payload
+    )
+    expect(cli.error).toMatchObject({ code: 'CONFLICT', details: { jobId, status: 'ready' } })
+    expect(JSON.parse(fs.readFileSync(jobFile(jobId), 'utf8')).error).toBe(cli.error?.message)
+    expect(await runtime.handlers.get('print:updatePreviewSettings')!({ sender }, payload)).toEqual(
+      {
+        success: false,
+        error: cli.error?.message,
+        errorCode: 'CONFLICT',
+        errorDetails: cli.error?.details
+      }
+    )
+    sender.emit('destroyed')
   })
 
   it('PDF 渲染期间撤销会话时不得落盘', async () => {
@@ -251,6 +322,44 @@ describe('打印任务会话与生命周期集成回归', () => {
     expect(TestWindow.getAllWindows()).toHaveLength(0)
   })
 
+  it('GUI 与 CLI 更新同一预览保留未传入设置且返回相同布局', async () => {
+    const jobId = createJob()
+    const sender = new TestContents()
+    const { setSessionBySender } = await import('./session')
+    setSessionBySender(sender, actor)
+    const input = { jobId, settings: { scalePercent: 85 as const } }
+    const cliModel = await print.updatePrintPreviewSettingsForActor(db, actor, input)
+    const guiResult = await runtime.handlers.get('print:updatePreviewSettings')!({ sender }, input)
+    expect(cliModel).not.toBeNull()
+    expect(guiResult).toEqual({
+      success: true,
+      model: { ...cliModel, layoutVersion: cliModel!.layoutVersion + 1 }
+    })
+    expect(cliModel?.settings).toMatchObject({ ...settings, scalePercent: 85 })
+    sender.emit('destroyed')
+  })
+
+  it('GUI 和 CLI 对撤销会话返回同一权限错误且不修改打印任务', async () => {
+    const jobId = createJob()
+    const sender = new TestContents()
+    const { setSessionBySender } = await import('./session')
+    setSessionBySender(sender, actor)
+    const before = fs.readFileSync(jobFile(jobId), 'utf8')
+    db.exec('DELETE FROM auth_sessions')
+    const { getPrintJobStatusCommand } = await import('../commands/printCommands')
+    const { createCommandContext } = await import('../commands/context')
+    const cliResult = await getPrintJobStatusCommand(createCommandContext({ db, actor }), { jobId })
+    const guiResult = await runtime.handlers.get('print:getJobStatus')!({ sender }, jobId)
+    expect(cliResult.status).toBe('error')
+    expect(guiResult).toMatchObject({
+      success: false,
+      error: cliResult.error?.message,
+      errorCode: cliResult.error?.code
+    })
+    expect(fs.readFileSync(jobFile(jobId), 'utf8')).toBe(before)
+    sender.emit('destroyed')
+  })
+
   it('普通用户撤销账套权限并重新登录后仍不能读取旧任务', async () => {
     const jobId = createJob()
     db.exec(
@@ -273,6 +382,37 @@ describe('打印任务会话与生命周期集成回归', () => {
     })
     sender.emit('destroyed')
   })
+
+  it.each(['destroyed', 'logout'] as const)(
+    'GUI 准备期间 %s 后台任务不得保存为 ready',
+    async (action) => {
+      const started = deferred<void>()
+      const load = deferred<undefined>()
+      runtime.load.mockImplementationOnce(() => {
+        started.resolve()
+        return load.promise
+      })
+      const sender = new TestContents()
+      const event = { sender } as unknown as IpcMainInvokeEvent
+      const { setSessionBySender, clearSessionByEvent } = await import('./session')
+      setSessionBySender(sender, actor)
+      const prepared = (await runtime.handlers.get('print:prepare')!(event, {
+        type: 'book',
+        ledgerId: 1,
+        bookType: 'detail_ledger',
+        title: '后台授权测试',
+        columns: [{ key: 'text', label: '内容' }],
+        rows: []
+      })) as { jobId: string }
+      await started.promise
+      if (action === 'destroyed') sender.emit('destroyed')
+      else clearSessionByEvent(event)
+      load.resolve(undefined)
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(fs.existsSync(jobFile(prepared.jobId))).toBe(false)
+      sender.emit('destroyed')
+    }
+  )
 
   it.each(['cli', 'ipc'] as const)('%s 准备期间删除任务不会在后台完成时复活', async (source) => {
     const started = deferred<void>()

@@ -1228,7 +1228,7 @@ export async function runInteractiveCli(
         renderShellCommandResult(output, result, state.outputMode)
         state = applyInteractiveCommandResultState(state, prepared, result)
       } catch (error) {
-        const result =
+        const result: CommandResult<unknown> =
           error instanceof CommandError
             ? {
                 status: 'error' as const,

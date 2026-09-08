@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import type { PackageStatus } from '../../shared/contracts/status'
 
 export interface ArchiveExportRecord {
   id: number
@@ -7,7 +8,7 @@ export interface ArchiveExportRecord {
   export_path: string
   manifest_path: string
   checksum: string | null
-  status: string
+  status: PackageStatus
   item_count: number
   created_by: number
   created_at: string

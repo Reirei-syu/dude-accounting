@@ -1,4 +1,5 @@
 import path from 'node:path'
+import type { SubjectTemplateEntryInput } from '../../shared/contracts/subjectTemplateInput'
 import type Database from 'better-sqlite3'
 import ExcelJS from 'exceljs'
 import {
@@ -61,7 +62,10 @@ const TEMPLATE_HEADERS = [
 
 const OPTION_SHEET_NAME = '选项数据'
 
-const TEMPLATE_EXAMPLES: Record<AccountingStandardType, Array<CustomTopLevelSubjectTemplateEntry>> = {
+const TEMPLATE_EXAMPLES: Record<
+  AccountingStandardType,
+  Array<CustomTopLevelSubjectTemplateEntry>
+> = {
   enterprise: [
     {
       code: '1991',
@@ -324,7 +328,7 @@ const normalizeCarryForwardTargetCode = (
 
 const normalizeTemplateEntry = (
   standardType: AccountingStandardType,
-  entry: Partial<CustomTopLevelSubjectTemplateEntry>,
+  entry: SubjectTemplateEntryInput,
   index: number
 ): CustomTopLevelSubjectTemplateEntry => {
   const code = normalizeSubjectCode(entry.code)
@@ -335,8 +339,14 @@ const normalizeTemplateEntry = (
     name: normalizeRequiredText(entry.name, '科目名称'),
     category,
     balanceDirection: normalizeBalanceDirection(entry.balanceDirection),
-    isCashFlow: typeof entry.isCashFlow === 'boolean' ? entry.isCashFlow : normalizeBoolean(entry.isCashFlow, '是否现金科目'),
-    enabled: typeof entry.enabled === 'boolean' ? entry.enabled : normalizeBoolean(entry.enabled, '是否启用'),
+    isCashFlow:
+      typeof entry.isCashFlow === 'boolean'
+        ? entry.isCashFlow
+        : normalizeBoolean(entry.isCashFlow, '是否现金科目'),
+    enabled:
+      typeof entry.enabled === 'boolean'
+        ? entry.enabled
+        : normalizeBoolean(entry.enabled, '是否启用'),
     sortOrder: normalizeSortOrder(entry.sortOrder, index + 1),
     carryForwardTargetCode: normalizeCarryForwardTargetCode(
       standardType,
@@ -386,7 +396,8 @@ const normalizeStoredPayload = (
   standardType: AccountingStandardType,
   payload: unknown
 ): CustomTopLevelSubjectTemplate => {
-  const source = typeof payload === 'object' && payload ? (payload as Partial<StoredSubjectTemplatePayload>) : {}
+  const source =
+    typeof payload === 'object' && payload ? (payload as Partial<StoredSubjectTemplatePayload>) : {}
   const entries = Array.isArray(source.entries)
     ? source.entries.map((entry, index) =>
         normalizeTemplateEntry(
@@ -400,7 +411,8 @@ const normalizeStoredPayload = (
 
   return {
     standardType,
-    templateName: normalizeOptionalText(source.templateName) ?? TEMPLATE_NAME_BY_STANDARD[standardType],
+    templateName:
+      normalizeOptionalText(source.templateName) ?? TEMPLATE_NAME_BY_STANDARD[standardType],
     templateDescription: normalizeOptionalText(source.templateDescription),
     updatedAt: normalizeOptionalText(source.updatedAt),
     entryCount: entries.length,
@@ -467,7 +479,7 @@ export const saveCustomTopLevelSubjectTemplate = (
     standardType: AccountingStandardType
     templateName?: string
     templateDescription?: string | null
-    entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
+    entries: SubjectTemplateEntryInput[]
   }
 ): CustomTopLevelSubjectTemplate => {
   const normalizedEntries = payload.entries.map((entry, index) =>
@@ -590,7 +602,7 @@ export function saveIndependentCustomSubjectTemplate(
     baseStandardType: AccountingStandardType
     templateName: string
     templateDescription?: string | null
-    entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
+    entries: SubjectTemplateEntryInput[]
   }
 ): IndependentCustomSubjectTemplate {
   const normalizedEntries = sortEntriesByCode(
@@ -672,7 +684,8 @@ export const clearCustomTopLevelSubjectTemplate = (
   standardType: AccountingStandardType
 ): boolean => {
   return (
-    db.prepare('DELETE FROM system_settings WHERE key = ?').run(buildSettingKey(standardType)).changes > 0
+    db.prepare('DELETE FROM system_settings WHERE key = ?').run(buildSettingKey(standardType))
+      .changes > 0
   )
 }
 
@@ -750,7 +763,10 @@ export const applyCustomTopLevelSubjectTemplate = (
 
     deleteCarryForwardRule.run(ledgerId, entry.code)
 
-    if (!requiresCarryForwardTarget(standardType, entry.category) || !entry.carryForwardTargetCode) {
+    if (
+      !requiresCarryForwardTarget(standardType, entry.category) ||
+      !entry.carryForwardTargetCode
+    ) {
       continue
     }
 
@@ -772,10 +788,16 @@ export const writeCustomTopLevelSubjectImportTemplate = async (
   instructionSheet.addRow([IMPORT_TEMPLATE_NAME_BY_STANDARD[standardType]])
   instructionSheet.addRow([`适用账套类型：${standardType}`])
   instructionSheet.addRow(['仅支持导入一级科目，科目编码为 4 位数字。'])
-  instructionSheet.addRow(['科目类别请直接使用下拉框选择中文类别，导入时系统会自动映射到内部分类编码。'])
+  instructionSheet.addRow([
+    '科目类别请直接使用下拉框选择中文类别，导入时系统会自动映射到内部分类编码。'
+  ])
   instructionSheet.addRow(['余额方向填写“借”或“贷”；是否字段填写“是”或“否”。'])
-  instructionSheet.addRow(['损益类/收入类/费用类科目必须通过下拉选择期末结转目标科目，显示内容为“科目代码 + 科目名称”，导入时系统会自动转译为内部科目代码。'])
-  instructionSheet.addRow(['可参考“填写示例”工作表中的样例，再将自己的正式数据填写到“一级科目模板”工作表。'])
+  instructionSheet.addRow([
+    '损益类/收入类/费用类科目必须通过下拉选择期末结转目标科目，显示内容为“科目代码 + 科目名称”，导入时系统会自动转译为内部科目代码。'
+  ])
+  instructionSheet.addRow([
+    '可参考“填写示例”工作表中的样例，再将自己的正式数据填写到“一级科目模板”工作表。'
+  ])
   instructionSheet.columns = [{ width: 72 }]
 
   const templateSheet = workbook.addWorksheet('一级科目模板')
@@ -842,7 +864,7 @@ export const writeCustomTopLevelSubjectImportTemplate = async (
       entry.code,
       entry.name,
       CATEGORY_OPTIONS[standardType].find((option) => option.value === entry.category)?.label ??
-      entry.category,
+        entry.category,
       entry.balanceDirection === 1 ? '借' : '贷',
       entry.isCashFlow ? '是' : '否',
       entry.enabled ? '是' : '否',

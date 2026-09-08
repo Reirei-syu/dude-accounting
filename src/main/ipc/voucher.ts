@@ -1,10 +1,8 @@
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import type { VoucherBatchAction } from '../services/voucherBatchLifecycle'
 import type { VoucherListStatusFilter } from '../services/voucherCatalog'
-import {
-  resolveVoucherCashFlowEntries,
-  type VoucherEntryInput
-} from '../services/voucherLifecycle'
+import { resolveVoucherCashFlowEntries, type VoucherEntryInput } from '../services/voucherLifecycle'
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import {
   createVoucherCommand,
@@ -45,7 +43,7 @@ interface RenumberVoucherNumbersInput {
 export { resolveVoucherCashFlowEntries }
 
 export function registerVoucherHandlers(): void {
-  ipcMain.handle('voucher:getNextNumber', (event, ledgerId: number, period: string) =>
+  handleInvoke('voucher:getNextNumber', (event, ledgerId: number, period: string) =>
     withIpcTelemetry(
       {
         channel: 'voucher:getNextNumber',
@@ -66,21 +64,21 @@ export function registerVoucherHandlers(): void {
     )
   )
 
-  ipcMain.handle('voucher:save', async (event, payload: SaveVoucherInput) =>
+  handleInvoke('voucher:save', async (event, payload: SaveVoucherInput) =>
     toLegacySuccess(
       await createVoucherCommand(createCommandContextFromEvent(event), payload),
       (data) => ({ ...data })
     )
   )
 
-  ipcMain.handle('voucher:update', async (event, payload: UpdateVoucherInput) =>
+  handleInvoke('voucher:update', async (event, payload: UpdateVoucherInput) =>
     toLegacySuccess(
       await updateVoucherCommand(createCommandContextFromEvent(event), payload),
       (data) => ({ ...data })
     )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'voucher:list',
     (
       event,
@@ -119,7 +117,7 @@ export function registerVoucherHandlers(): void {
       )
   )
 
-  ipcMain.handle('voucher:getEntries', (event, voucherId: number) =>
+  handleInvoke('voucher:getEntries', (event, voucherId: number) =>
     withIpcTelemetry(
       {
         channel: 'voucher:getEntries',
@@ -139,7 +137,7 @@ export function registerVoucherHandlers(): void {
     )
   )
 
-  ipcMain.handle('voucher:swapPositions', (event, payload: SwapVoucherPositionsInput) =>
+  handleInvoke('voucher:swapPositions', (event, payload: SwapVoucherPositionsInput) =>
     withIpcTelemetry(
       {
         channel: 'voucher:swapPositions',
@@ -156,7 +154,7 @@ export function registerVoucherHandlers(): void {
     )
   )
 
-  ipcMain.handle('voucher:renumber', (event, payload: RenumberVoucherNumbersInput) =>
+  handleInvoke('voucher:renumber', (event, payload: RenumberVoucherNumbersInput) =>
     withIpcTelemetry(
       {
         channel: 'voucher:renumber',
@@ -174,7 +172,7 @@ export function registerVoucherHandlers(): void {
     )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'voucher:batchAction',
     (
       event,

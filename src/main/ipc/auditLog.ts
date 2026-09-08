@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import { exportAuditLogsCommand, listAuditLogsCommand } from '../commands/auditLogCommands'
 import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
@@ -7,7 +7,7 @@ import type { OperationLogFilters } from '../services/auditLog'
 export function registerAuditLogHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('auditLog:list', async (event, filters?: OperationLogFilters) => {
+  handleInvoke('auditLog:list', async (event, filters?: OperationLogFilters) => {
     const result = await listAuditLogsCommand(createCommandContextFromEvent(event), filters ?? {})
     if (isCommandSuccess(result)) {
       return result.data
@@ -16,7 +16,7 @@ export function registerAuditLogHandlers(): void {
     throw new Error(result.error?.message ?? '获取操作日志失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'auditLog:export',
     async (
       event,

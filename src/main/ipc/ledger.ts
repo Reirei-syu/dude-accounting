@@ -1,4 +1,5 @@
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   applyLedgerTemplateCommand,
@@ -16,7 +17,7 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 export function registerLedgerHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('ledger:getAll', (event) =>
+  handleInvoke('ledger:getAll', (event) =>
     withIpcTelemetry(
       {
         channel: 'ledger:getAll',
@@ -33,7 +34,7 @@ export function registerLedgerHandlers(): void {
     )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'ledger:create',
     (
       event,
@@ -62,7 +63,7 @@ export function registerLedgerHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'ledger:update',
     (
       event,
@@ -93,23 +94,28 @@ export function registerLedgerHandlers(): void {
       )
   )
 
-  ipcMain.handle('ledger:delete', (event, payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
-    withIpcTelemetry(
-      {
-        channel: 'ledger:delete',
-        baseDir: app.getPath('userData'),
-        context: { ledgerId: payload.ledgerId, riskAcknowledged: payload.riskAcknowledged === true }
-      },
-      async () => {
-        return toLegacySuccess(
-          await deleteLedgerCommand(createCommandContextFromEvent(event), payload),
-          () => ({})
-        )
-      }
-    )
+  handleInvoke(
+    'ledger:delete',
+    (event, payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
+      withIpcTelemetry(
+        {
+          channel: 'ledger:delete',
+          baseDir: app.getPath('userData'),
+          context: {
+            ledgerId: payload.ledgerId,
+            riskAcknowledged: payload.riskAcknowledged === true
+          }
+        },
+        async () => {
+          return toLegacySuccess(
+            await deleteLedgerCommand(createCommandContextFromEvent(event), payload),
+            () => ({})
+          )
+        }
+      )
   )
 
-  ipcMain.handle('ledger:getDeletionRisk', (event, ledgerId: number) =>
+  handleInvoke('ledger:getDeletionRisk', (event, ledgerId: number) =>
     withIpcTelemetry(
       {
         channel: 'ledger:getDeletionRisk',
@@ -135,7 +141,7 @@ export function registerLedgerHandlers(): void {
     )
   )
 
-  ipcMain.handle('ledger:getPeriods', (event, ledgerId: number) =>
+  handleInvoke('ledger:getPeriods', (event, ledgerId: number) =>
     withIpcTelemetry(
       {
         channel: 'ledger:getPeriods',
@@ -155,7 +161,7 @@ export function registerLedgerHandlers(): void {
     )
   )
 
-  ipcMain.handle('ledger:getStandardTemplates', async (event) => {
+  handleInvoke('ledger:getStandardTemplates', async (event) => {
     const result = await listLedgerTemplatesCommand(createCommandContextFromEvent(event))
     if (isCommandSuccess(result)) {
       return result.data
@@ -164,7 +170,7 @@ export function registerLedgerHandlers(): void {
     throw new Error(result.error?.message ?? '获取模板失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'ledger:applyStandardTemplate',
     (
       event,

@@ -1,5 +1,6 @@
 import path from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   deleteArchiveCommand,
@@ -44,9 +45,17 @@ async function pickArchiveRootDirectory(
 }
 
 export function registerArchiveHandlers(): void {
-  ipcMain.handle(
+  handleInvoke(
     'archive:export',
-    async (event, payload: { operationId?: string; ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
+    async (
+      event,
+      payload: {
+        operationId?: string
+        ledgerId: number
+        fiscalYear: string
+        directoryPath?: string
+      }
+    ) =>
       withIpcTelemetry(
         {
           channel: 'archive:export',
@@ -109,7 +118,7 @@ export function registerArchiveHandlers(): void {
       )
   )
 
-  ipcMain.handle('archive:list', (event, ledgerId?: number) =>
+  handleInvoke('archive:list', (event, ledgerId?: number) =>
     withIpcTelemetry(
       {
         channel: 'archive:list',
@@ -137,7 +146,7 @@ export function registerArchiveHandlers(): void {
     )
   )
 
-  ipcMain.handle('archive:validate', (event, exportId: number) =>
+  handleInvoke('archive:validate', (event, exportId: number) =>
     withIpcTelemetry(
       {
         channel: 'archive:validate',
@@ -174,7 +183,7 @@ export function registerArchiveHandlers(): void {
     )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'archive:delete',
     (
       event,
@@ -219,7 +228,7 @@ export function registerArchiveHandlers(): void {
       )
   )
 
-  ipcMain.handle('archive:getManifest', async (event, exportId: number) => {
+  handleInvoke('archive:getManifest', async (event, exportId: number) => {
     const result = await getArchiveManifestCommand(createCommandContextFromEvent(event), {
       exportId
     })

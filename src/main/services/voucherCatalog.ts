@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import type { VoucherStatus } from '../../shared/contracts/status'
 
 export type VoucherListStatusFilter = 'all' | 0 | 1 | 2 | 3
 
@@ -19,7 +20,7 @@ export interface VoucherSummaryRow {
   voucher_date: string
   voucher_number: number
   voucher_word: string
-  status: number
+  status: VoucherStatus
   first_summary: string
   creator_id: number | null
   auditor_id: number | null

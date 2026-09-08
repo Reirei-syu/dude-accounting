@@ -1,4 +1,5 @@
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import {
   convertElectronicVoucherCommand,
   importElectronicVoucherCommand,
@@ -10,7 +11,7 @@ import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
 
 export function registerElectronicVoucherHandlers(): void {
-  ipcMain.handle(
+  handleInvoke(
     'eVoucher:import',
     async (
       event,
@@ -49,7 +50,7 @@ export function registerElectronicVoucherHandlers(): void {
       )
   )
 
-  ipcMain.handle('eVoucher:list', async (event, ledgerId: number) => {
+  handleInvoke('eVoucher:list', async (event, ledgerId: number) => {
     const result = await listElectronicVouchersCommand(createCommandContextFromEvent(event), {
       ledgerId
     })
@@ -60,7 +61,7 @@ export function registerElectronicVoucherHandlers(): void {
     throw new Error(result.error?.message ?? '获取电子凭证列表失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'eVoucher:verify',
     async (
       event,
@@ -92,7 +93,7 @@ export function registerElectronicVoucherHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'eVoucher:parse',
     async (
       event,
@@ -127,7 +128,7 @@ export function registerElectronicVoucherHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'eVoucher:convert',
     async (event, payload: { recordId: number; voucherDate?: string; voucherWord?: string }) =>
       withIpcTelemetry(

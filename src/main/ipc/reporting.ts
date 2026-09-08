@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   deleteReportCommand,
@@ -87,7 +88,7 @@ function toTaxTemplateExceptionFailure(error: unknown): {
 }
 
 export function registerReportingHandlers(): void {
-  ipcMain.handle('reporting:list', (event, filters: ReportListFilters) =>
+  handleInvoke('reporting:list', (event, filters: ReportListFilters) =>
     withIpcTelemetry(
       {
         channel: 'reporting:list',
@@ -109,30 +110,28 @@ export function registerReportingHandlers(): void {
     )
   )
 
-  ipcMain.handle(
-    'reporting:getDetail',
-    (event, payload: { snapshotId: number; ledgerId?: number }) =>
-      withIpcTelemetry(
-        {
-          channel: 'reporting:getDetail',
-          baseDir: app.getPath('userData'),
-          context: {
-            snapshotId: payload.snapshotId,
-            ledgerId: payload.ledgerId ?? null
-          }
-        },
-        async () => {
-          const result = await getReportDetailCommand(createCommandContextFromEvent(event), payload)
-          if (isCommandSuccess(result)) {
-            return result.data
-          }
-
-          throw new Error(result.error?.message ?? '获取报表详情失败')
+  handleInvoke('reporting:getDetail', (event, payload: { snapshotId: number; ledgerId?: number }) =>
+    withIpcTelemetry(
+      {
+        channel: 'reporting:getDetail',
+        baseDir: app.getPath('userData'),
+        context: {
+          snapshotId: payload.snapshotId,
+          ledgerId: payload.ledgerId ?? null
         }
-      )
+      },
+      async () => {
+        const result = await getReportDetailCommand(createCommandContextFromEvent(event), payload)
+        if (isCommandSuccess(result)) {
+          return result.data
+        }
+
+        throw new Error(result.error?.message ?? '获取报表详情失败')
+      }
+    )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'reporting:export',
     async (
       event,
@@ -218,7 +217,7 @@ export function registerReportingHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'reporting:exportBatch',
     async (
       event,
@@ -267,10 +266,7 @@ export function registerReportingHandlers(): void {
             if (failedDetailResult && !isCommandSuccess(failedDetailResult)) {
               return toLegacyFailure(failedDetailResult.error, '获取报表详情失败')
             }
-            const preferredDir = getPreferredReportExportBatchDir(
-              db,
-              app.getPath('documents')
-            )
+            const preferredDir = getPreferredReportExportBatchDir(db, app.getPath('documents'))
             const browserWindow = BrowserWindow.fromWebContents(event.sender)
             const openResult = payload.directoryPath
               ? { canceled: false, filePaths: [payload.directoryPath] }
@@ -316,7 +312,7 @@ export function registerReportingHandlers(): void {
       )
   )
 
-  ipcMain.handle('reporting:chooseTaxTemplateOutputDirectory', async (event) =>
+  handleInvoke('reporting:chooseTaxTemplateOutputDirectory', async (event) =>
     withIpcTelemetry(
       {
         channel: 'reporting:chooseTaxTemplateOutputDirectory',
@@ -364,7 +360,7 @@ export function registerReportingHandlers(): void {
     )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'reporting:exportTaxTemplate',
     async (
       event,
@@ -439,7 +435,7 @@ export function registerReportingHandlers(): void {
       )
   )
 
-  ipcMain.handle('reporting:delete', (event, payload: { snapshotId: number; ledgerId: number }) =>
+  handleInvoke('reporting:delete', (event, payload: { snapshotId: number; ledgerId: number }) =>
     withIpcTelemetry(
       {
         channel: 'reporting:delete',
@@ -458,7 +454,7 @@ export function registerReportingHandlers(): void {
     )
   )
 
-  ipcMain.handle('reporting:generate', (event, payload: GenerateReportSnapshotParams) =>
+  handleInvoke('reporting:generate', (event, payload: GenerateReportSnapshotParams) =>
     withIpcTelemetry(
       {
         channel: 'reporting:generate',

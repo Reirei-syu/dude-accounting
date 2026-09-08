@@ -1,5 +1,9 @@
 import fs from 'node:fs'
-import { fileOperationDeletionRecovery, prepareFileOperationDeletion } from '../services/fileOperationDeletion'
+import type { ArchiveManifest } from '../services/archiveExport'
+import {
+  fileOperationDeletionRecovery,
+  prepareFileOperationDeletion
+} from '../services/fileOperationDeletion'
 import { fileOperationCommandError } from './fileOperationError'
 import { resolveSessionActor } from '../security/sessionAuthority'
 import path from 'node:path'
@@ -25,9 +29,7 @@ import {
 } from '../services/archiveExport'
 import { computeFileSha256, ensureDirectory, sanitizePathSegment } from '../services/fileIntegrity'
 import { formatLocalDateTime } from '../services/localTime'
-import {
-  getArchivePhysicalPackageStatus
-} from '../services/packageDeletion'
+import { getArchivePhysicalPackageStatus } from '../services/packageDeletion'
 import { rememberPathPreference } from '../services/pathPreference'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requireCommandLedgerAccess, requireCommandPermission } from './authz'
@@ -353,7 +355,14 @@ export async function validateArchiveCommand(
 export async function deleteArchiveCommand(
   context: CommandContext,
   payload: { exportId: number; deleteRecordOnly?: boolean; operationId?: string }
-): Promise<CommandResult<{ operationId: string; deletedPhysicalPackage: boolean; deletedPaths: string[]; packagePath?: string }>> {
+): Promise<
+  CommandResult<{
+    operationId: string
+    deletedPhysicalPackage: boolean
+    deletedPaths: string[]
+    packagePath?: string
+  }>
+> {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'ledger_settings')
     const operationId = requireOperationId(payload.operationId)
@@ -362,18 +371,31 @@ export async function deleteArchiveCommand(
       const row = getArchiveExportById(context.db, payload.exportId)
       const prior = journal.getRecoveryRecord(operationId)
       const ledgerId = row?.ledger_id ?? prior?.ledgerId
-      if (ledgerId !== null && ledgerId !== undefined) requireCommandLedgerAccess(context.db, context.actor, ledgerId)
+      if (ledgerId !== null && ledgerId !== undefined)
+        requireCommandLedgerAccess(context.db, context.actor, ledgerId)
       let targets: string[] = []
       let packagePath = ''
       const validate = (): void => {
         if (!row) throw new CommandError('NOT_FOUND', '归档记录不存在', null, 5)
-        assertHistoricalVersionDeletable(row.id, listArchiveExportIdsByLedger(context.db, row.ledger_id), '归档')
+        assertHistoricalVersionDeletable(
+          row.id,
+          listArchiveExportIdsByLedger(context.db, row.ledger_id),
+          '归档'
+        )
       }
       return new FileOperationLifecycle(journal, context.db).execute(
-        { operationId, kind: 'archive_delete', actorId: actor.id, username: actor.username,
-          ledgerId: ledgerId ?? null, requestHash: createHash('sha256').update(JSON.stringify([payload.exportId, Boolean(payload.deleteRecordOnly)])).digest('hex') },
+        {
+          operationId,
+          kind: 'archive_delete',
+          actorId: actor.id,
+          username: actor.username,
+          ledgerId: ledgerId ?? null,
+          requestHash: createHash('sha256')
+            .update(JSON.stringify([payload.exportId, Boolean(payload.deleteRecordOnly)]))
+            .digest('hex')
+        },
         fileOperationDeletionRecovery,
-        lease => {
+        (lease) => {
           validate()
           if (!row) throw new Error('归档记录不存在')
           const physicalStatus = getArchivePhysicalPackageStatus(row.export_path)
@@ -381,7 +403,12 @@ export async function deleteArchiveCommand(
           if (payload.deleteRecordOnly && physicalStatus.physicalExists)
             throw new CommandError('VALIDATION_ERROR', '实体包仍存在，请执行正常删除', null, 2)
           if (!payload.deleteRecordOnly && !physicalStatus.physicalExists)
-            throw new CommandError('RISK_CONFIRMATION_REQUIRED', '实体包已不存在，请显式传入 deleteRecordOnly=true', { packagePath, missingPhysicalPackage: true }, 2)
+            throw new CommandError(
+              'RISK_CONFIRMATION_REQUIRED',
+              '实体包已不存在，请显式传入 deleteRecordOnly=true',
+              { packagePath, missingPhysicalPackage: true },
+              2
+            )
           targets = payload.deleteRecordOnly ? [] : [physicalStatus.packagePath]
           const parent = targets.length ? path.dirname(targets[0]) : path.dirname(context.db.name)
           prepareFileOperationDeletion(journal, lease, operationId, targets, parent)
@@ -389,24 +416,41 @@ export async function deleteArchiveCommand(
         () => {
           context.actor = resolveSessionActor(context.db, actor.session, actor.source)
           requireCommandPermission(context.actor, 'ledger_settings')
-          if (ledgerId !== null && ledgerId !== undefined) requireCommandLedgerAccess(context.db, context.actor, ledgerId)
+          if (ledgerId !== null && ledgerId !== undefined)
+            requireCommandLedgerAccess(context.db, context.actor, ledgerId)
           validate()
           deleteArchiveExportRecord(context.db, payload.exportId)
-          appendActorOperationLog(context, { ledgerId: ledgerId ?? null, module: 'archive', action: 'delete',
-            targetType: 'archive_export', targetId: payload.exportId,
-            details: { operationId, deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package' } })
-          return { operationId, deletedPhysicalPackage: targets.length > 0, deletedPaths: targets, packagePath }
+          appendActorOperationLog(context, {
+            ledgerId: ledgerId ?? null,
+            module: 'archive',
+            action: 'delete',
+            targetType: 'archive_export',
+            targetId: payload.exportId,
+            details: {
+              operationId,
+              deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package'
+            }
+          })
+          return {
+            operationId,
+            deletedPhysicalPackage: targets.length > 0,
+            deletedPaths: targets,
+            packagePath
+          }
         }
       )
-    } catch (error) { throw fileOperationCommandError(error, operationId, journal) }
-    finally { journal.close() }
+    } catch (error) {
+      throw fileOperationCommandError(error, operationId, journal)
+    } finally {
+      journal.close()
+    }
   })
 }
 
 export async function getArchiveManifestCommand(
   context: CommandContext,
   payload: { exportId: number }
-): Promise<CommandResult<unknown>> {
+): Promise<CommandResult<ArchiveManifest>> {
   return withCommandResult(context, () => {
     requireCommandPermission(context.actor, 'ledger_settings')
     const row = getArchiveExportById(context.db, payload.exportId)
@@ -422,6 +466,6 @@ export async function getArchiveManifestCommand(
         5
       )
     }
-    return JSON.parse(fs.readFileSync(row.manifest_path, 'utf8')) as unknown
+    return JSON.parse(fs.readFileSync(row.manifest_path, 'utf8')) as ArchiveManifest
   })
 }

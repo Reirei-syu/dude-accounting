@@ -1,4 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   exportBookQueryCommand,
@@ -52,7 +53,7 @@ function toLegacyFailure(
 export function registerBookQueryHandlers(): void {
   const db = getDatabase()
 
-  ipcMain.handle('bookQuery:listSubjectBalances', (event, query: SubjectBalanceQuery) =>
+  handleInvoke('bookQuery:listSubjectBalances', (event, query: SubjectBalanceQuery) =>
     withIpcTelemetry(
       {
         channel: 'bookQuery:listSubjectBalances',
@@ -75,7 +76,7 @@ export function registerBookQueryHandlers(): void {
     )
   )
 
-  ipcMain.handle('bookQuery:getDetailLedger', (event, query: DetailLedgerQuery) =>
+  handleInvoke('bookQuery:getDetailLedger', (event, query: DetailLedgerQuery) =>
     withIpcTelemetry(
       {
         channel: 'bookQuery:getDetailLedger',
@@ -97,7 +98,7 @@ export function registerBookQueryHandlers(): void {
     )
   )
 
-  ipcMain.handle('bookQuery:getJournal', (event, query: JournalQuery) =>
+  handleInvoke('bookQuery:getJournal', (event, query: JournalQuery) =>
     withIpcTelemetry(
       {
         channel: 'bookQuery:getJournal',
@@ -120,7 +121,7 @@ export function registerBookQueryHandlers(): void {
     )
   )
 
-  ipcMain.handle('bookQuery:getAuxiliaryBalances', (event, query: AuxiliaryBalanceQuery) =>
+  handleInvoke('bookQuery:getAuxiliaryBalances', (event, query: AuxiliaryBalanceQuery) =>
     withIpcTelemetry(
       {
         channel: 'bookQuery:getAuxiliaryBalances',
@@ -146,7 +147,7 @@ export function registerBookQueryHandlers(): void {
     )
   )
 
-  ipcMain.handle('bookQuery:getAuxiliaryDetail', (event, query: AuxiliaryDetailQuery) =>
+  handleInvoke('bookQuery:getAuxiliaryDetail', (event, query: AuxiliaryDetailQuery) =>
     withIpcTelemetry(
       {
         channel: 'bookQuery:getAuxiliaryDetail',
@@ -169,7 +170,7 @@ export function registerBookQueryHandlers(): void {
     )
   )
 
-  ipcMain.handle('bookQuery:export', async (event, payload: BookQueryExportPayload) =>
+  handleInvoke('bookQuery:export', async (event, payload: BookQueryExportPayload) =>
     withIpcTelemetry(
       {
         channel: 'bookQuery:export',

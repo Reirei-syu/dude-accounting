@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   createSubjectCommand,
@@ -12,7 +12,7 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 export function registerSubjectHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('subject:getAll', async (event, ledgerId: number) => {
+  handleInvoke('subject:getAll', async (event, ledgerId: number) => {
     const result = await listSubjectsCommand(createCommandContextFromEvent(event), { ledgerId })
     if (isCommandSuccess(result)) {
       return result.data
@@ -21,7 +21,7 @@ export function registerSubjectHandlers(): void {
     throw new Error(result.error?.message ?? '获取科目列表失败')
   })
 
-  ipcMain.handle('subject:search', async (event, ledgerId: number, keyword: string) => {
+  handleInvoke('subject:search', async (event, ledgerId: number, keyword: string) => {
     const result = await searchSubjectsCommand(createCommandContextFromEvent(event), {
       ledgerId,
       keyword
@@ -33,7 +33,7 @@ export function registerSubjectHandlers(): void {
     throw new Error(result.error?.message ?? '搜索科目失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'subject:create',
     (
       event,
@@ -52,7 +52,7 @@ export function registerSubjectHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'subject:update',
     (
       event,
@@ -69,7 +69,7 @@ export function registerSubjectHandlers(): void {
       )
   )
 
-  ipcMain.handle('subject:delete', async (event, id: number) =>
+  handleInvoke('subject:delete', async (event, id: number) =>
     toLegacySuccess(
       await deleteSubjectCommand(createCommandContextFromEvent(event), { subjectId: id }),
       () => ({})

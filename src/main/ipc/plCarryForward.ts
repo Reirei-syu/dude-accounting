@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   executeCarryForwardCommand,
@@ -11,7 +11,7 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 export function registerPLCarryForwardHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('plCarryForward:listRules', async (event, ledgerId: number) => {
+  handleInvoke('plCarryForward:listRules', async (event, ledgerId: number) => {
     const result = await listCarryForwardRulesCommand(createCommandContextFromEvent(event), {
       ledgerId
     })
@@ -22,7 +22,7 @@ export function registerPLCarryForwardHandlers(): void {
     throw new Error(result.error?.message ?? '获取损益结转规则失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'plCarryForward:saveRules',
     async (
       event,
@@ -40,9 +40,12 @@ export function registerPLCarryForwardHandlers(): void {
       )
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'plCarryForward:preview',
-    async (event, payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) => {
+    async (
+      event,
+      payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }
+    ) => {
       const result = await previewCarryForwardCommand(createCommandContextFromEvent(event), payload)
       if (isCommandSuccess(result)) {
         return result.data
@@ -52,9 +55,12 @@ export function registerPLCarryForwardHandlers(): void {
     }
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'plCarryForward:execute',
-    async (event, payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }) =>
+    async (
+      event,
+      payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }
+    ) =>
       toLegacySuccess(
         await executeCarryForwardCommand(createCommandContextFromEvent(event), payload),
         (data) => ({ ...data })

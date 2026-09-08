@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { handleInvoke } from './typedInvoke'
 import { getDatabase } from '../database/init'
 import {
   createUserCommand,
@@ -15,7 +15,7 @@ import { clearSessionByEvent, requireAdmin, setSessionByEvent } from './session'
 export function registerAuthHandlers(): void {
   getDatabase()
 
-  ipcMain.handle('auth:login', async (event, username: string, password: string) => {
+  handleInvoke('auth:login', async (event, username: string, password: string) => {
     const result = await loginCommand(
       createCommandContext({
         actor: null
@@ -40,7 +40,7 @@ export function registerAuthHandlers(): void {
     }
   })
 
-  ipcMain.handle('auth:logout', async (event) => {
+  handleInvoke('auth:logout', async (event) => {
     const result = await logoutCommand(createCommandContextFromEvent(event))
     if (isCommandSuccess(result)) {
       clearSessionByEvent(event)
@@ -53,7 +53,7 @@ export function registerAuthHandlers(): void {
     }
   })
 
-  ipcMain.handle('auth:getUsers', async (event) => {
+  handleInvoke('auth:getUsers', async (event) => {
     requireAdmin(event)
     const result = await listUsersCommand(createCommandContextFromEvent(event))
     if (isCommandSuccess(result)) {
@@ -63,7 +63,7 @@ export function registerAuthHandlers(): void {
     throw new Error(result.error?.message ?? '获取用户列表失败')
   })
 
-  ipcMain.handle(
+  handleInvoke(
     'auth:createUser',
     async (
       event,
@@ -83,7 +83,7 @@ export function registerAuthHandlers(): void {
     }
   )
 
-  ipcMain.handle(
+  handleInvoke(
     'auth:updateUser',
     async (
       event,
@@ -105,7 +105,7 @@ export function registerAuthHandlers(): void {
     }
   )
 
-  ipcMain.handle('auth:deleteUser', async (event, userId: number) => {
+  handleInvoke('auth:deleteUser', async (event, userId: number) => {
     requireAdmin(event)
     return toLegacySuccess(
       await deleteUserCommand(createCommandContextFromEvent(event), { userId }),
