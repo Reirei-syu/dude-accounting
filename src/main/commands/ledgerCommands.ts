@@ -23,8 +23,19 @@ import {
   normalizeStringField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
+
+function ledgerAuditSnapshot(context: CommandContext, ledgerId: number): unknown {
+  return (
+    context.db
+      .prepare(
+        'SELECT id, name, standard_type, start_period, current_period FROM ledgers WHERE id = ?'
+      )
+      .get(ledgerId) ?? null
+  )
+}
 
 function assertStandardType(value: string): LedgerStandardType {
   if (value !== 'enterprise' && value !== 'npo') {
@@ -36,7 +47,11 @@ function assertStandardType(value: string): LedgerStandardType {
 function normalizeLedgerIdPayload(payload: unknown) {
   const rawPayload = asCommandPayloadRecord(payload, '账套 payload 格式不正确')
   return {
-    ledgerId: normalizePositiveInteger(rawPayload.ledgerId ?? rawPayload.id, 'ledgerId', '缺少账套 ledgerId')
+    ledgerId: normalizePositiveInteger(
+      rawPayload.ledgerId ?? rawPayload.id,
+      'ledgerId',
+      '缺少账套 ledgerId'
+    )
   }
 }
 
@@ -44,7 +59,11 @@ function normalizeCreateLedgerPayload(payload: unknown) {
   const rawPayload = asCommandPayloadRecord(payload, '创建账套 payload 格式不正确')
   return {
     name: normalizeStringField(rawPayload.name, 'name', '账套名称不能为空'),
-    standardType: normalizeStringField(rawPayload.standardType, 'standardType', '账套准则类型不能为空'),
+    standardType: normalizeStringField(
+      rawPayload.standardType,
+      'standardType',
+      '账套准则类型不能为空'
+    ),
     taxpayerIdentificationNumber: normalizeOptionalStringField(
       rawPayload.taxpayerIdentificationNumber,
       'taxpayerIdentificationNumber',
@@ -75,7 +94,11 @@ function normalizeUpdateLedgerPayload(payload: unknown) {
 function normalizeDeleteLedgerPayload(payload: unknown) {
   const rawPayload = asCommandPayloadRecord(payload, '删除账套 payload 格式不正确')
   return {
-    ledgerId: normalizePositiveInteger(rawPayload.ledgerId ?? rawPayload.id, 'ledgerId', '缺少账套 ledgerId'),
+    ledgerId: normalizePositiveInteger(
+      rawPayload.ledgerId ?? rawPayload.id,
+      'ledgerId',
+      '缺少账套 ledgerId'
+    ),
     riskAcknowledged: normalizeBooleanField(rawPayload.riskAcknowledged, 'riskAcknowledged', false)
   }
 }
@@ -84,7 +107,11 @@ function normalizeApplyLedgerTemplatePayload(payload: unknown) {
   const rawPayload = asCommandPayloadRecord(payload, '应用账套模板 payload 格式不正确')
   return {
     ledgerId: normalizePositiveInteger(rawPayload.ledgerId, 'ledgerId', '缺少账套 ledgerId'),
-    standardType: normalizeStringField(rawPayload.standardType, 'standardType', '账套准则类型不能为空')
+    standardType: normalizeStringField(
+      rawPayload.standardType,
+      'standardType',
+      '账套准则类型不能为空'
+    )
   }
 }
 
@@ -109,7 +136,7 @@ export async function createLedgerCommand(
     taxpayerIdentificationNumber?: string
   }
 ): Promise<CommandResult<{ id: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeCreateLedgerPayload(payload)
     const actor = requireCommandPermission(context.actor, 'ledger_settings')
     const result = createLedgerWithTemplate(context.db, {
@@ -133,7 +160,9 @@ export async function createLedgerCommand(
         hasTaxpayerIdentificationNumber: Boolean(
           normalizedPayload.taxpayerIdentificationNumber?.trim()
         ),
-        customSubjectCount: result.customSubjectCount
+        customSubjectCount: result.customSubjectCount,
+        before: null,
+        after: ledgerAuditSnapshot(context, result.ledgerId)
       }
     })
     writeContextDiagnostic(context.runtime, {
@@ -157,12 +186,24 @@ export async function createLedgerCommand(
 
 export async function updateLedgerCommand(
   context: CommandContext,
-  payload: { id: number; name?: string; currentPeriod?: string; taxpayerIdentificationNumber?: string }
+  payload: {
+    id: number
+    name?: string
+    currentPeriod?: string
+    taxpayerIdentificationNumber?: string
+  }
 ): Promise<CommandResult<{ id: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeUpdateLedgerPayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.id)
+    const before = ledgerAuditSnapshot(context, normalizedPayload.id)
+    if (!before) throw new CommandError('NOT_FOUND', '账套不存在', { id: normalizedPayload.id }, 5)
+    if (
+      !Object.entries(normalizedPayload).some(([key, value]) => key !== 'id' && value !== undefined)
+    ) {
+      return { id: normalizedPayload.id }
+    }
     updateLedgerConfiguration(context.db, {
       ledgerId: normalizedPayload.id,
       name: normalizedPayload.name,
@@ -178,6 +219,8 @@ export async function updateLedgerCommand(
       targetId: normalizedPayload.id,
       details: {
         name: normalizedPayload.name,
+        before,
+        after: ledgerAuditSnapshot(context, normalizedPayload.id),
         currentPeriod: normalizedPayload.currentPeriod,
         hasTaxpayerIdentificationNumber:
           normalizedPayload.taxpayerIdentificationNumber === undefined
@@ -194,7 +237,7 @@ export async function deleteLedgerCommand(
   context: CommandContext,
   payload: { ledgerId: number; riskAcknowledged?: boolean }
 ): Promise<CommandResult<{ ledgerId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeDeleteLedgerPayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -206,6 +249,7 @@ export async function deleteLedgerCommand(
       )
     }
 
+    const before = ledgerAuditSnapshot(context, normalizedPayload.ledgerId)
     context.db.prepare('DELETE FROM ledgers WHERE id = ?').run(normalizedPayload.ledgerId)
     appendActorOperationLog(context, {
       ledgerId: normalizedPayload.ledgerId,
@@ -215,6 +259,8 @@ export async function deleteLedgerCommand(
       targetId: normalizedPayload.ledgerId,
       details: {
         ...riskSnapshot,
+        before,
+        after: null,
         riskAcknowledged: normalizedPayload.riskAcknowledged === true
       }
     })
@@ -260,10 +306,11 @@ export async function applyLedgerTemplateCommand(
   context: CommandContext,
   payload: { ledgerId: number; standardType: string }
 ): Promise<CommandResult<{ ledger: unknown; subjectCount: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeApplyLedgerTemplatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
+    const before = ledgerAuditSnapshot(context, normalizedPayload.ledgerId)
     const result = applyLedgerStandardTemplate(context.db, {
       ledgerId: normalizedPayload.ledgerId,
       standardType: assertStandardType(normalizedPayload.standardType)
@@ -278,7 +325,9 @@ export async function applyLedgerTemplateCommand(
       details: {
         standardType: normalizedPayload.standardType,
         subjectCount: result.subjectCount,
-        customSubjectCount: result.customSubjectCount
+        customSubjectCount: result.customSubjectCount,
+        before,
+        after: ledgerAuditSnapshot(context, normalizedPayload.ledgerId)
       }
     })
 

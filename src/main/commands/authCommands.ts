@@ -18,6 +18,7 @@ import {
   normalizeBooleanField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandActor, CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
@@ -28,6 +29,15 @@ interface CommandUserRow {
   permissions: string
   is_admin: number
   is_enabled: number
+}
+
+function userAuditSnapshot(context: CommandContext, userId: number): unknown {
+  const user = context.db
+    .prepare(
+      'SELECT id, username, real_name, permissions, is_admin, is_enabled FROM users WHERE id = ?'
+    )
+    .get(userId) as CommandUserRow | undefined
+  return user ? { ...user, ledgerIds: listUserLedgerIds(context.db, userId) } : null
 }
 
 function parsePermissions(raw: unknown): Record<string, boolean> {
@@ -244,7 +254,7 @@ export async function whoamiCommand(
 export async function logoutCommand(
   context: CommandContext
 ): Promise<CommandResult<{ loggedOut: true }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     if (!context.actor) {
       throw new CommandError('UNAUTHORIZED', '当前没有有效的 CLI 登录态', null, 3)
     }
@@ -288,7 +298,7 @@ export async function createUserCommand(
     ledgerIds?: number[]
   }
 ): Promise<CommandResult<{ userId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     requireCommandAdmin(context.actor)
     const normalizedPayload = normalizeCreateUserPayload(payload)
     const username = normalizedPayload.username
@@ -326,7 +336,9 @@ export async function createUserCommand(
       details: {
         username,
         realName,
-        ledgerIds: created.ledgerIds
+        ledgerIds: created.ledgerIds,
+        before: null,
+        after: userAuditSnapshot(context, created.userId)
       }
     })
 
@@ -346,7 +358,7 @@ export async function updateUserCommand(
     ledgerIds?: number[]
   }
 ): Promise<CommandResult<{ userId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     requireCommandAdmin(context.actor)
     const normalizedPayload = normalizeUpdateUserPayload(payload)
 
@@ -356,6 +368,11 @@ export async function updateUserCommand(
     if (!target) {
       throw new CommandError('NOT_FOUND', '用户不存在', { id: normalizedPayload.id }, 5)
     }
+    if (
+      !Object.entries(normalizedPayload).some(([key, value]) => key !== 'id' && value !== undefined)
+    ) {
+      return { userId: normalizedPayload.id }
+    }
 
     if (target.is_admin === 1 && normalizedPayload.permissions !== undefined) {
       throw new CommandError('VALIDATION_ERROR', '管理员账号权限不可修改', null, 2)
@@ -364,6 +381,7 @@ export async function updateUserCommand(
       throw new CommandError('VALIDATION_ERROR', '管理员账号账套权限不可修改', null, 2)
     }
 
+    const before = userAuditSnapshot(context, normalizedPayload.id)
     const ledgerIds = context.db.transaction(() => {
       if (
         target.is_admin === 1 &&
@@ -419,7 +437,9 @@ export async function updateUserCommand(
         permissionKeys: normalizedPayload.permissions
           ? Object.keys(normalizedPayload.permissions)
           : [],
-        ledgerIds
+        ledgerIds,
+        before,
+        after: userAuditSnapshot(context, normalizedPayload.id)
       }
     })
 
@@ -431,7 +451,7 @@ export async function deleteUserCommand(
   context: CommandContext,
   payload: { userId: number }
 ): Promise<CommandResult<{ userId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     requireCommandAdmin(context.actor)
     const normalizedPayload = normalizeDeleteUserPayload(payload)
 
@@ -446,12 +466,14 @@ export async function deleteUserCommand(
       throw new CommandError('VALIDATION_ERROR', '管理员账号不可删除', null, 2)
     }
 
+    const before = userAuditSnapshot(context, normalizedPayload.userId)
     context.db.prepare('DELETE FROM users WHERE id = ?').run(normalizedPayload.userId)
     appendActorOperationLog(context, {
       module: 'auth',
       action: 'delete_user',
       targetType: 'user',
-      targetId: normalizedPayload.userId
+      targetId: normalizedPayload.userId,
+      details: { before, after: null }
     })
 
     return { userId: normalizedPayload.userId }

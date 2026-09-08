@@ -58,6 +58,9 @@ describe('periodCommands current period synchronization', () => {
     vi.clearAllMocks()
     db = new Database(':memory:')
     db.exec(`
+      CREATE TABLE pl_carry_forward_rules (
+        id INTEGER PRIMARY KEY, ledger_id INTEGER, from_subject_code TEXT, to_subject_code TEXT
+      );
       CREATE TABLE ledgers (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,

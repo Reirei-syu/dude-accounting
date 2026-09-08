@@ -60,6 +60,7 @@ import {
   normalizeStringField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
@@ -158,7 +159,7 @@ export async function generateReportCommand(
   context: CommandContext,
   payload: GenerateReportSnapshotParams
 ): Promise<CommandResult<{ snapshot: ReturnType<typeof generateReportSnapshot> }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
     const snapshot = generateReportSnapshot(context.db, {
@@ -187,7 +188,7 @@ export async function deleteReportCommand(
   context: CommandContext,
   payload: { snapshotId: number; ledgerId: number }
 ): Promise<CommandResult<{ snapshotId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
     const detail = getReportSnapshotDetail(context.db, payload.snapshotId, payload.ledgerId)

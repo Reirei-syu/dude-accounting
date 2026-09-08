@@ -12,6 +12,7 @@ import {
   normalizeStringField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
@@ -75,7 +76,7 @@ export async function saveInitialBalancesCommand(
   context: CommandContext,
   payload: { ledgerId: number; period: string; entries: InitialBalanceEntryInput[] }
 ): Promise<CommandResult<{ ledgerId: number; period: string }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeInitialBalanceSavePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)

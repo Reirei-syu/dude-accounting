@@ -10,6 +10,7 @@ import {
 } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
@@ -118,7 +119,7 @@ export async function verifyElectronicVoucherCommand(
     verificationMessage?: string
   }
 ): Promise<CommandResult<{ verificationStatus: 'verified' | 'failed' }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const record = context.db
       .prepare('SELECT id, ledger_id, voucher_type FROM electronic_voucher_records WHERE id = ?')
@@ -187,7 +188,7 @@ export async function parseElectronicVoucherCommand(
     counterpartName?: string | null
   }
 ): Promise<CommandResult<{ structuredData: Record<string, unknown> }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const record = context.db
       .prepare(
@@ -284,7 +285,7 @@ export async function convertElectronicVoucherCommand(
   context: CommandContext,
   payload: { recordId: number; voucherDate?: string; voucherWord?: string }
 ): Promise<CommandResult<{ draftVoucher: Record<string, unknown> }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const record = context.db
       .prepare(

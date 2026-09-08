@@ -3,6 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { getDatabase } from '../database/init'
 import { appendOperationLog } from '../services/auditLog'
+import { auditedTransaction } from '../services/auditedTransaction'
 import {
   clearCustomTopLevelSubjectTemplate,
   clearIndependentCustomSubjectTemplateEntries,
@@ -38,10 +39,7 @@ import {
   resetDiagnosticsLogDirectory,
   setDiagnosticsLogDirectory
 } from '../services/diagnosticsLogPath'
-import {
-  getPathPreferenceWithFallback,
-  rememberPathPreference
-} from '../services/pathPreference'
+import { getPathPreferenceWithFallback, rememberPathPreference } from '../services/pathPreference'
 import {
   getRuntimeDefaultsSnapshot,
   getSystemParamSnapshot,
@@ -63,7 +61,10 @@ function getDefaultTemplateDownloadDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '导入模板')
 }
 
-function getTemplateDefaultPath(db: ReturnType<typeof getDatabase>, standardType: StandardType): string {
+function getTemplateDefaultPath(
+  db: ReturnType<typeof getDatabase>,
+  standardType: StandardType
+): string {
   const preferredDir =
     getPathPreferenceWithFallback(db, [SUBJECT_TEMPLATE_DOWNLOAD_LAST_DIR_KEY]) ??
     getDefaultTemplateDownloadDir()
@@ -275,21 +276,38 @@ export function registerSettingsHandlers(): void {
   )
 
   ipcMain.handle('settings:setUserPreferences', (event, preferences: Record<string, string>) => {
-    const user = requireAuth(event)
-    const entries = Object.entries(preferences || {})
-    const saveTx = db.transaction(() => {
-      const upsertStmt = db.prepare(
-        `INSERT INTO user_preferences (user_id, key, value, updated_at)
+    return auditedTransaction(db, () => {
+      const user = requireAuth(event)
+      const entries = Object.entries(preferences || {}).filter(([key, value]) => {
+        const current = db
+          .prepare('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?')
+          .get(user.id, key) as { value: string } | undefined
+        return !current || current.value !== (value ?? '')
+      })
+      if (entries.length === 0) return { success: true }
+      const saveTx = db.transaction(() => {
+        const upsertStmt = db.prepare(
+          `INSERT INTO user_preferences (user_id, key, value, updated_at)
          VALUES (?, ?, ?, datetime('now'))
          ON CONFLICT(user_id, key)
          DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-      )
-      for (const [key, value] of entries) {
-        upsertStmt.run(user.id, key, value ?? '')
-      }
+        )
+        for (const [key, value] of entries) {
+          upsertStmt.run(user.id, key, value ?? '')
+        }
+      })
+      saveTx()
+      appendOperationLog(db, {
+        userId: user.id,
+        username: user.username,
+        module: 'settings',
+        action: 'set_user_preferences',
+        targetType: 'user_preference',
+        targetId: user.id,
+        details: { updatedKeys: entries.map(([key]) => key) }
+      })
+      return { success: true }
     })
-    saveTx()
-    return { success: true }
   })
 
   ipcMain.handle('settings:chooseWallpaper', async (event) => {
@@ -442,7 +460,7 @@ export function registerSettingsHandlers(): void {
 
   // 更新系统参数
   ipcMain.handle('settings:setSystemParam', (event, key: string, value: string) => {
-    const user = requirePermission(event, 'system_settings')
+    requirePermission(event, 'system_settings')
     if (!isSystemParamKey(key)) {
       return {
         success: false,
@@ -451,30 +469,33 @@ export function registerSettingsHandlers(): void {
     }
 
     try {
-      const result = updateSystemParam(db, key, value)
+      return auditedTransaction(db, () => {
+        const user = requirePermission(event, 'system_settings')
+        const result = updateSystemParam(db, key, value)
 
-      if (result.changed) {
-        appendOperationLog(db, {
-          userId: user.id,
-          username: user.username,
-          module: 'settings',
-          action: 'set_system_param',
-          targetType: 'system_setting',
-          targetId: key,
-          details: {
-            key,
-            previousValue: result.previousValue,
-            nextValue: result.nextValue
-          }
-        })
-      }
+        if (result.changed) {
+          appendOperationLog(db, {
+            userId: user.id,
+            username: user.username,
+            module: 'settings',
+            action: 'set_system_param',
+            targetType: 'system_setting',
+            targetId: key,
+            details: {
+              key,
+              previousValue: result.previousValue,
+              nextValue: result.nextValue
+            }
+          })
+        }
 
-      return {
-        success: true,
-        key,
-        value: result.nextValue,
-        changed: result.changed
-      }
+        return {
+          success: true,
+          key,
+          value: result.nextValue,
+          changed: result.changed
+        }
+      })
     } catch (error) {
       return {
         success: false,
@@ -539,7 +560,7 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:importSubjectTemplate', async (event, standardType: StandardType) => {
     try {
-      const user = requireAdmin(event)
+      requireAdmin(event)
       const browserWindow = BrowserWindow.fromWebContents(event.sender)
       const openResult = browserWindow
         ? await dialog.showOpenDialog(browserWindow, {
@@ -557,32 +578,35 @@ export function registerSettingsHandlers(): void {
 
       const sourcePath = openResult.filePaths[0]
       const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(sourcePath, standardType)
-      const savedTemplate = saveCustomTopLevelSubjectTemplate(db, {
-        standardType,
-        templateName: parsedTemplate.templateName,
-        entries: parsedTemplate.entries
-      })
-
-      appendOperationLog(db, {
-        userId: user.id,
-        username: user.username,
-        module: 'settings',
-        action: 'import_subject_template',
-        targetType: 'subject_template',
-        targetId: standardType,
-        details: {
+      return auditedTransaction(db, () => {
+        const user = requireAdmin(event)
+        const savedTemplate = saveCustomTopLevelSubjectTemplate(db, {
           standardType,
-          entryCount: savedTemplate.entryCount,
-          templateName: savedTemplate.templateName,
+          templateName: parsedTemplate.templateName,
+          entries: parsedTemplate.entries
+        })
+
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: 'import_subject_template',
+          targetType: 'subject_template',
+          targetId: standardType,
+          details: {
+            standardType,
+            entryCount: savedTemplate.entryCount,
+            templateName: savedTemplate.templateName,
+            sourcePath
+          }
+        })
+
+        return {
+          success: true,
+          template: savedTemplate,
           sourcePath
         }
       })
-
-      return {
-        success: true,
-        template: savedTemplate,
-        sourcePath
-      }
     } catch (error) {
       return {
         success: false,
@@ -640,28 +664,30 @@ export function registerSettingsHandlers(): void {
       }
     ) => {
       try {
-        const user = requireAdmin(event)
-        const savedTemplate = saveCustomTopLevelSubjectTemplate(db, payload)
+        return auditedTransaction(db, () => {
+          const user = requireAdmin(event)
+          const savedTemplate = saveCustomTopLevelSubjectTemplate(db, payload)
 
-        appendOperationLog(db, {
-          userId: user.id,
-          username: user.username,
-          module: 'settings',
-          action: 'save_subject_template',
-          targetType: 'subject_template',
-          targetId: payload.standardType,
-          details: {
-            standardType: payload.standardType,
-            entryCount: savedTemplate.entryCount,
-            templateName: savedTemplate.templateName,
-            templateDescription: savedTemplate.templateDescription
+          appendOperationLog(db, {
+            userId: user.id,
+            username: user.username,
+            module: 'settings',
+            action: 'save_subject_template',
+            targetType: 'subject_template',
+            targetId: payload.standardType,
+            details: {
+              standardType: payload.standardType,
+              entryCount: savedTemplate.entryCount,
+              templateName: savedTemplate.templateName,
+              templateDescription: savedTemplate.templateDescription
+            }
+          })
+
+          return {
+            success: true,
+            template: savedTemplate
           }
         })
-
-        return {
-          success: true,
-          template: savedTemplate
-        }
       } catch (error) {
         return {
           success: false,
@@ -684,30 +710,32 @@ export function registerSettingsHandlers(): void {
       }
     ) => {
       try {
-        const user = requireAdmin(event)
-        const savedTemplate = saveIndependentCustomSubjectTemplate(db, payload)
+        return auditedTransaction(db, () => {
+          const user = requireAdmin(event)
+          const savedTemplate = saveIndependentCustomSubjectTemplate(db, payload)
 
-        appendOperationLog(db, {
-          userId: user.id,
-          username: user.username,
-          module: 'settings',
-          action: payload.templateId
-            ? 'update_independent_custom_subject_template'
-            : 'create_independent_custom_subject_template',
-          targetType: 'independent_custom_subject_template',
-          targetId: savedTemplate.id,
-          details: {
-            baseStandardType: savedTemplate.baseStandardType,
-            templateName: savedTemplate.templateName,
-            templateDescription: savedTemplate.templateDescription,
-            entryCount: savedTemplate.entryCount
+          appendOperationLog(db, {
+            userId: user.id,
+            username: user.username,
+            module: 'settings',
+            action: payload.templateId
+              ? 'update_independent_custom_subject_template'
+              : 'create_independent_custom_subject_template',
+            targetType: 'independent_custom_subject_template',
+            targetId: savedTemplate.id,
+            details: {
+              baseStandardType: savedTemplate.baseStandardType,
+              templateName: savedTemplate.templateName,
+              templateDescription: savedTemplate.templateDescription,
+              entryCount: savedTemplate.entryCount
+            }
+          })
+
+          return {
+            success: true,
+            template: savedTemplate
           }
         })
-
-        return {
-          success: true,
-          template: savedTemplate
-        }
       } catch (error) {
         return {
           success: false,
@@ -719,25 +747,28 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:clearSubjectTemplate', (event, standardType: StandardType) => {
     try {
-      const user = requireAdmin(event)
-      const previousTemplate = getCustomTopLevelSubjectTemplate(db, standardType)
+      return auditedTransaction(db, () => {
+        const user = requireAdmin(event)
+        const previousTemplate = getCustomTopLevelSubjectTemplate(db, standardType)
 
-      clearCustomTopLevelSubjectTemplate(db, standardType)
+        const changed = clearCustomTopLevelSubjectTemplate(db, standardType)
+        if (!changed) return { success: true }
 
-      appendOperationLog(db, {
-        userId: user.id,
-        username: user.username,
-        module: 'settings',
-        action: 'clear_subject_template',
-        targetType: 'subject_template',
-        targetId: standardType,
-        details: {
-          standardType,
-          clearedEntryCount: previousTemplate.entryCount
-        }
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: 'clear_subject_template',
+          targetType: 'subject_template',
+          targetId: standardType,
+          details: {
+            standardType,
+            clearedEntryCount: previousTemplate.entryCount
+          }
+        })
+
+        return { success: true }
       })
-
-      return { success: true }
     } catch (error) {
       return {
         success: false,
@@ -750,26 +781,30 @@ export function registerSettingsHandlers(): void {
     'settings:clearIndependentCustomSubjectTemplateEntries',
     (event, templateId: string) => {
       try {
-        const user = requireAdmin(event)
-        const clearedTemplate = clearIndependentCustomSubjectTemplateEntries(db, templateId)
+        return auditedTransaction(db, () => {
+          const user = requireAdmin(event)
+          const current = getIndependentCustomSubjectTemplate(db, templateId)
+          if (current && current.entryCount === 0) return { success: true, template: current }
+          const clearedTemplate = clearIndependentCustomSubjectTemplateEntries(db, templateId)
 
-        appendOperationLog(db, {
-          userId: user.id,
-          username: user.username,
-          module: 'settings',
-          action: 'clear_independent_custom_subject_template_entries',
-          targetType: 'independent_custom_subject_template',
-          targetId: templateId,
-          details: {
-            templateName: clearedTemplate.templateName,
-            baseStandardType: clearedTemplate.baseStandardType
+          appendOperationLog(db, {
+            userId: user.id,
+            username: user.username,
+            module: 'settings',
+            action: 'clear_independent_custom_subject_template_entries',
+            targetType: 'independent_custom_subject_template',
+            targetId: templateId,
+            details: {
+              templateName: clearedTemplate.templateName,
+              baseStandardType: clearedTemplate.baseStandardType
+            }
+          })
+
+          return {
+            success: true,
+            template: clearedTemplate
           }
         })
-
-        return {
-          success: true,
-          template: clearedTemplate
-        }
       } catch (error) {
         return {
           success: false,
@@ -781,27 +816,29 @@ export function registerSettingsHandlers(): void {
 
   ipcMain.handle('settings:deleteIndependentCustomSubjectTemplate', (event, templateId: string) => {
     try {
-      const user = requireAdmin(event)
-      const deletedTemplate = deleteIndependentCustomSubjectTemplate(db, templateId)
+      return auditedTransaction(db, () => {
+        const user = requireAdmin(event)
+        const deletedTemplate = deleteIndependentCustomSubjectTemplate(db, templateId)
 
-      appendOperationLog(db, {
-        userId: user.id,
-        username: user.username,
-        module: 'settings',
-        action: 'delete_independent_custom_subject_template',
-        targetType: 'independent_custom_subject_template',
-        targetId: templateId,
-        details: {
-          templateName: deletedTemplate.templateName,
-          baseStandardType: deletedTemplate.baseStandardType,
-          entryCount: deletedTemplate.entryCount
+        appendOperationLog(db, {
+          userId: user.id,
+          username: user.username,
+          module: 'settings',
+          action: 'delete_independent_custom_subject_template',
+          targetType: 'independent_custom_subject_template',
+          targetId: templateId,
+          details: {
+            templateName: deletedTemplate.templateName,
+            baseStandardType: deletedTemplate.baseStandardType,
+            entryCount: deletedTemplate.entryCount
+          }
+        })
+
+        return {
+          success: true,
+          template: deletedTemplate
         }
       })
-
-      return {
-        success: true,
-        template: deletedTemplate
-      }
     } catch (error) {
       return {
         success: false,

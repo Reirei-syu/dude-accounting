@@ -20,8 +20,43 @@ import {
   normalizeStringField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
+
+function carryForwardRulesSnapshot(context: CommandContext, ledgerId: number): unknown[] {
+  return context.db
+    .prepare(
+      'SELECT id, from_subject_code, to_subject_code FROM pl_carry_forward_rules WHERE ledger_id = ? ORDER BY id'
+    )
+    .all(ledgerId)
+}
+
+function logInheritedRules(context: CommandContext, ledgerId: number, before: unknown[]): void {
+  const after = carryForwardRulesSnapshot(context, ledgerId)
+  if (JSON.stringify(before) === JSON.stringify(after)) return
+  appendActorOperationLog(context, {
+    ledgerId,
+    module: 'plCarryForward',
+    action: 'auto_attach_rules',
+    targetType: 'ledger',
+    targetId: ledgerId,
+    details: { before, after }
+  })
+}
+
+function periodAuditSnapshot(context: CommandContext, ledgerId: number, period: string): unknown {
+  return {
+    period:
+      context.db
+        .prepare(
+          'SELECT period, is_closed, closed_at FROM periods WHERE ledger_id = ? AND period = ?'
+        )
+        .get(ledgerId, period) ?? null,
+    ledger:
+      context.db.prepare('SELECT current_period FROM ledgers WHERE id = ?').get(ledgerId) ?? null
+  }
+}
 
 function normalizeCodeLikeField(value: unknown, fieldName: string): string {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -202,7 +237,10 @@ export async function getPeriodStatusCommand(
   payload: { ledgerId: number; period: string }
 ): Promise<CommandResult<ReturnType<typeof getPeriodStatusSummary>>> {
   return withCommandResult(context, () => {
-    const normalizedPayload = normalizeLedgerPeriodPayload(payload, '查询期间状态 payload 格式不正确')
+    const normalizedPayload = normalizeLedgerPeriodPayload(
+      payload,
+      '查询期间状态 payload 格式不正确'
+    )
     requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
     return getPeriodStatusSummary(context.db, normalizedPayload.ledgerId, normalizedPayload.period)
@@ -213,7 +251,7 @@ export async function closePeriodCommand(
   context: CommandContext,
   payload: { ledgerId: number; period: string }
 ): Promise<CommandResult<{ carriedForward: boolean; nextPeriod: string; carriedCount: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeLedgerPeriodPayload(payload, '结账 payload 格式不正确')
     const actor = requireCommandPermission(context.actor, 'bookkeeping')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -225,6 +263,7 @@ export async function closePeriodCommand(
     if (!ledger) {
       throw new Error('账套不存在')
     }
+    const rulesBefore = carryForwardRulesSnapshot(context, normalizedPayload.ledgerId)
     assertPLCarryForwardCompleted(context.db, {
       ledgerId: normalizedPayload.ledgerId,
       period: normalizedPayload.period
@@ -232,17 +271,29 @@ export async function closePeriodCommand(
 
     let carriedForward = false
     let carriedCount = 0
+    let changed =
+      JSON.stringify(rulesBefore) !==
+      JSON.stringify(carryForwardRulesSnapshot(context, normalizedPayload.ledgerId))
+    const before = periodAuditSnapshot(
+      context,
+      normalizedPayload.ledgerId,
+      normalizedPayload.period
+    )
     context.db.transaction(() => {
-      context.db
+      const currentInsert = context.db
         .prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)')
         .run(normalizedPayload.ledgerId, normalizedPayload.period)
-      context.db
+      const nextInsert = context.db
         .prepare('INSERT OR IGNORE INTO periods (ledger_id, period) VALUES (?, ?)')
         .run(normalizedPayload.ledgerId, nextPeriod)
+      changed = changed || currentInsert.changes > 0 || nextInsert.changes > 0
       const status = context.db
         .prepare('SELECT is_closed FROM periods WHERE ledger_id = ? AND period = ?')
-        .get(normalizedPayload.ledgerId, normalizedPayload.period) as { is_closed: number } | undefined
+        .get(normalizedPayload.ledgerId, normalizedPayload.period) as
+        | { is_closed: number }
+        | undefined
       if (status?.is_closed !== 1) {
+        changed = true
         context.db
           .prepare(
             `UPDATE periods
@@ -252,39 +303,54 @@ export async function closePeriodCommand(
           .run(normalizedPayload.ledgerId, normalizedPayload.period)
 
         if (month === 12) {
-          const result = carryForwardYear(context, normalizedPayload.ledgerId, ledger.start_period, year)
+          const result = carryForwardYear(
+            context,
+            normalizedPayload.ledgerId,
+            ledger.start_period,
+            year
+          )
           carriedForward = true
           carriedCount = result.carriedCount
         }
       }
 
-      context.db
+      const pointerUpdate = context.db
         .prepare(
           `UPDATE ledgers
            SET current_period = ?
            WHERE id = ? AND current_period <= ?`
         )
         .run(nextPeriod, normalizedPayload.ledgerId, normalizedPayload.period)
+      changed = changed || pointerUpdate.changes > 0
     })()
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId: normalizedPayload.ledgerId,
-        module: 'period',
-        action: 'close',
-        targetType: 'period',
-        targetId: normalizedPayload.period,
-        details: {
-          nextPeriod,
-          carriedForward,
-          carriedCount
+    if (changed)
+      appendActorOperationLog(
+        {
+          ...context,
+          actor
+        },
+        {
+          ledgerId: normalizedPayload.ledgerId,
+          module: 'period',
+          action: 'close',
+          targetType: 'period',
+          targetId: normalizedPayload.period,
+          details: {
+            nextPeriod,
+            carriedForward,
+            carriedCount,
+            before,
+            rulesBefore,
+            rulesAfter: carryForwardRulesSnapshot(context, normalizedPayload.ledgerId),
+            after: periodAuditSnapshot(
+              context,
+              normalizedPayload.ledgerId,
+              normalizedPayload.period
+            )
+          }
         }
-      }
-    )
+      )
 
     return {
       carriedForward,
@@ -298,12 +364,17 @@ export async function reopenPeriodCommand(
   context: CommandContext,
   payload: { ledgerId: number; period: string }
 ): Promise<CommandResult<{ period: string }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeLedgerPeriodPayload(payload, '反结账 payload 格式不正确')
     requireCommandPermission(context.actor, 'bookkeeping')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
     getPeriodParts(normalizedPayload.period)
     assertPeriodReopenAllowed(context.db, normalizedPayload.ledgerId, normalizedPayload.period)
+    const before = periodAuditSnapshot(
+      context,
+      normalizedPayload.ledgerId,
+      normalizedPayload.period
+    )
 
     context.db.transaction(() => {
       context.db
@@ -323,7 +394,11 @@ export async function reopenPeriodCommand(
       module: 'period',
       action: 'reopen',
       targetType: 'period',
-      targetId: normalizedPayload.period
+      targetId: normalizedPayload.period,
+      details: {
+        before,
+        after: periodAuditSnapshot(context, normalizedPayload.ledgerId, normalizedPayload.period)
+      }
     })
 
     return { period: normalizedPayload.period }
@@ -334,11 +409,17 @@ export async function listCarryForwardRulesCommand(
   context: CommandContext,
   payload: { ledgerId: number }
 ): Promise<CommandResult<ReturnType<typeof listPLCarryForwardRules>>> {
-  return withCommandResult(context, () => {
-    const normalizedPayload = normalizeLedgerIdPayload(payload, '查询损益结转规则 payload 格式不正确')
+  return withAuditedCommandResult(context, () => {
+    const normalizedPayload = normalizeLedgerIdPayload(
+      payload,
+      '查询损益结转规则 payload 格式不正确'
+    )
     requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
-    return listPLCarryForwardRules(context.db, normalizedPayload.ledgerId)
+    const before = carryForwardRulesSnapshot(context, normalizedPayload.ledgerId)
+    const result = listPLCarryForwardRules(context.db, normalizedPayload.ledgerId)
+    logInheritedRules(context, normalizedPayload.ledgerId, before)
+    return result
   })
 }
 
@@ -346,7 +427,7 @@ export async function saveCarryForwardRulesCommand(
   context: CommandContext,
   payload: Parameters<typeof savePLCarryForwardRules>[1]
 ): Promise<CommandResult<{ savedCount: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeCarryForwardRulesPayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -371,11 +452,14 @@ export async function previewCarryForwardCommand(
   context: CommandContext,
   payload: Parameters<typeof previewPLCarryForward>[1]
 ): Promise<CommandResult<ReturnType<typeof previewPLCarryForward>>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeCarryForwardExecutePayload(payload)
     requireCommandActor(context.actor)
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
-    return previewPLCarryForward(context.db, normalizedPayload)
+    const before = carryForwardRulesSnapshot(context, normalizedPayload.ledgerId)
+    const result = previewPLCarryForward(context.db, normalizedPayload)
+    logInheritedRules(context, normalizedPayload.ledgerId, before)
+    return result
   })
 }
 
@@ -383,15 +467,24 @@ export async function executeCarryForwardCommand(
   context: CommandContext,
   payload: { ledgerId: number; period: string; includeUnpostedVouchers?: boolean }
 ): Promise<CommandResult<ReturnType<typeof executePLCarryForward>>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeCarryForwardExecutePayload(payload)
     const actor = requireCommandPermission(context.actor, 'bookkeeping')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
-    return executePLCarryForward(context.db, {
+    const result = executePLCarryForward(context.db, {
       ledgerId: normalizedPayload.ledgerId,
       period: normalizedPayload.period,
       operatorId: actor.id,
       includeUnpostedVouchers: normalizedPayload.includeUnpostedVouchers
     })
+    appendActorOperationLog(context, {
+      ledgerId: normalizedPayload.ledgerId,
+      module: 'plCarryForward',
+      action: 'execute',
+      targetType: 'voucher',
+      targetId: result.voucherId,
+      details: { period: normalizedPayload.period, after: result }
+    })
+    return result
   })
 }

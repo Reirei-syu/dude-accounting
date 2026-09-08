@@ -36,13 +36,13 @@ import {
   type WallpaperAnalyzeResult
 } from '../services/wallpaperCropService'
 import { rememberPathPreference } from '../services/pathPreference'
-import {
-  appendCliE2eEvent,
-  shouldDryRunCliE2eDesktopActions
-} from '../runtime/cliE2eEvents'
+import { appendCliE2eEvent, shouldDryRunCliE2eDesktopActions } from '../runtime/cliE2eEvents'
 import { requireCommandActor, requireCommandAdmin, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
+import { auditedTransaction } from '../services/auditedTransaction'
+import { resolveSessionActor } from '../security/sessionAuthority'
 import type { CommandContext, CommandResult } from './types'
 
 type StandardType = 'enterprise' | 'npo'
@@ -77,7 +77,7 @@ export async function setSystemParamCommand(
   context: CommandContext,
   payload: { key: string; value: string }
 ): Promise<CommandResult<{ key: string; value: string; changed: boolean }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'system_settings')
     if (!isSystemParamKey(payload.key)) {
       throw new Error(`不支持修改系统参数：${payload.key}`)
@@ -134,9 +134,15 @@ export async function setUserPreferencesCommand(
   context: CommandContext,
   payload: { preferences: Record<string, string> }
 ): Promise<CommandResult<{ updatedKeys: string[] }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandActor(context.actor)
-    const entries = Object.entries(payload.preferences || {})
+    const entries = Object.entries(payload.preferences || {}).filter(([key, value]) => {
+      const current = context.db
+        .prepare('SELECT value FROM user_preferences WHERE user_id = ? AND key = ?')
+        .get(actor.id, key) as { value: string } | undefined
+      return !current || current.value !== (value ?? '')
+    })
+    if (entries.length === 0) return { updatedKeys: [] }
     const saveTx = context.db.transaction(() => {
       const upsertStmt = context.db.prepare(
         `INSERT INTO user_preferences (user_id, key, value, updated_at)
@@ -410,7 +416,7 @@ export async function saveSubjectTemplateCommand(
     entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
   }
 ): Promise<CommandResult<{ template: ReturnType<typeof saveCustomTopLevelSubjectTemplate> }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
     const template = saveCustomTopLevelSubjectTemplate(context.db, payload)
 
@@ -447,37 +453,42 @@ export async function importSubjectTemplateCommand(
   }>
 > {
   return withCommandResult(context, async () => {
-    const actor = requireCommandAdmin(context.actor)
+    requireCommandAdmin(context.actor)
     const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(
       payload.sourcePath,
       payload.standardType
     )
-    const template = saveCustomTopLevelSubjectTemplate(context.db, {
-      standardType: payload.standardType,
-      templateName: parsedTemplate.templateName,
-      entries: parsedTemplate.entries
-    })
+    return auditedTransaction(context.db, () => {
+      if (context.actor)
+        context.actor = resolveSessionActor(context.db, context.actor.session, context.actor.source)
+      const actor = requireCommandAdmin(context.actor)
+      const template = saveCustomTopLevelSubjectTemplate(context.db, {
+        standardType: payload.standardType,
+        templateName: parsedTemplate.templateName,
+        entries: parsedTemplate.entries
+      })
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        module: 'settings',
-        action: 'import_subject_template',
-        targetType: 'subject_template',
-        targetId: payload.standardType,
-        details: {
-          standardType: payload.standardType,
-          entryCount: template.entryCount,
-          templateName: template.templateName,
-          sourcePath: payload.sourcePath
+      appendActorOperationLog(
+        {
+          ...context,
+          actor
+        },
+        {
+          module: 'settings',
+          action: 'import_subject_template',
+          targetType: 'subject_template',
+          targetId: payload.standardType,
+          details: {
+            standardType: payload.standardType,
+            entryCount: template.entryCount,
+            templateName: template.templateName,
+            sourcePath: payload.sourcePath
+          }
         }
-      }
-    )
+      )
 
-    return { template, sourcePath: payload.sourcePath }
+      return { template, sourcePath: payload.sourcePath }
+    })
   })
 }
 
@@ -500,10 +511,11 @@ export async function clearSubjectTemplateCommand(
   context: CommandContext,
   payload: { standardType: StandardType }
 ): Promise<CommandResult<{ standardType: StandardType }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
     const previousTemplate = getCustomTopLevelSubjectTemplate(context.db, payload.standardType)
-    clearCustomTopLevelSubjectTemplate(context.db, payload.standardType)
+    const changed = clearCustomTopLevelSubjectTemplate(context.db, payload.standardType)
+    if (!changed) return { standardType: payload.standardType }
 
     appendActorOperationLog(
       {
@@ -555,7 +567,7 @@ export async function saveCustomTemplateCommand(
     entries: Array<Partial<CustomTopLevelSubjectTemplateEntry>>
   }
 ): Promise<CommandResult<{ template: ReturnType<typeof saveIndependentCustomSubjectTemplate> }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
     const template = saveIndependentCustomSubjectTemplate(context.db, payload)
 
@@ -601,44 +613,49 @@ export async function importCustomTemplateCommand(
   }>
 > {
   return withCommandResult(context, async () => {
-    const actor = requireCommandAdmin(context.actor)
+    requireCommandAdmin(context.actor)
     const parsedTemplate = await readCustomTopLevelSubjectTemplateImport(
       payload.sourcePath,
       payload.baseStandardType
     )
     const mergedEntries = [...(payload.mergeWithEntries ?? []), ...parsedTemplate.entries]
-    const template = saveIndependentCustomSubjectTemplate(context.db, {
-      templateId: payload.templateId,
-      baseStandardType: payload.baseStandardType,
-      templateName: payload.templateName,
-      templateDescription: payload.templateDescription,
-      entries: mergedEntries
-    })
+    return auditedTransaction(context.db, () => {
+      if (context.actor)
+        context.actor = resolveSessionActor(context.db, context.actor.session, context.actor.source)
+      const actor = requireCommandAdmin(context.actor)
+      const template = saveIndependentCustomSubjectTemplate(context.db, {
+        templateId: payload.templateId,
+        baseStandardType: payload.baseStandardType,
+        templateName: payload.templateName,
+        templateDescription: payload.templateDescription,
+        entries: mergedEntries
+      })
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        module: 'settings',
-        action: 'import_independent_custom_subject_template',
-        targetType: 'independent_custom_subject_template',
-        targetId: template.id,
-        details: {
-          baseStandardType: template.baseStandardType,
-          templateName: template.templateName,
-          templateDescription: template.templateDescription,
-          entryCount: template.entryCount,
-          sourcePath: payload.sourcePath
+      appendActorOperationLog(
+        {
+          ...context,
+          actor
+        },
+        {
+          module: 'settings',
+          action: 'import_independent_custom_subject_template',
+          targetType: 'independent_custom_subject_template',
+          targetId: template.id,
+          details: {
+            baseStandardType: template.baseStandardType,
+            templateName: template.templateName,
+            templateDescription: template.templateDescription,
+            entryCount: template.entryCount,
+            sourcePath: payload.sourcePath
+          }
         }
-      }
-    )
+      )
 
-    return {
-      template,
-      sourcePath: payload.sourcePath
-    }
+      return {
+        template,
+        sourcePath: payload.sourcePath
+      }
+    })
   })
 }
 
@@ -648,8 +665,10 @@ export async function clearCustomTemplateEntriesCommand(
 ): Promise<
   CommandResult<{ template: ReturnType<typeof clearIndependentCustomSubjectTemplateEntries> }>
 > {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
+    const current = getIndependentCustomSubjectTemplate(context.db, payload.templateId)
+    if (current && current.entryCount === 0) return { template: current }
     const template = clearIndependentCustomSubjectTemplateEntries(context.db, payload.templateId)
 
     appendActorOperationLog(
@@ -677,7 +696,7 @@ export async function deleteCustomTemplateCommand(
   context: CommandContext,
   payload: { templateId: string }
 ): Promise<CommandResult<{ template: ReturnType<typeof deleteIndependentCustomSubjectTemplate> }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
     const template = deleteIndependentCustomSubjectTemplate(context.db, payload.templateId)
 

@@ -22,7 +22,12 @@ export function authenticateMockContext(context: { db: object; actor: CommandAct
     Number(actor.isAdmin)
   )
   actor.session = issueSession(db, actor.id)
-  const mock = context.db as { prepare?: (sql: string) => unknown }
+  const mock = context.db as {
+    prepare?: (sql: string) => unknown
+    transaction?: Database.Database['transaction']
+  }
+  // 业务仍为 mock；命令的外层事务在真实隔离连接上执行。原子性另由集成测试验证。
+  if (!(context.db instanceof Database)) mock.transaction = db.transaction.bind(db)
   const original = mock.prepare?.bind(mock)
   mock.prepare = (sql: string): unknown =>
     sql.includes('JOIN auth_sessions') ? db.prepare(sql) : original?.(sql)

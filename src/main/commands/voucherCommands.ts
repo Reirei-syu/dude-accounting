@@ -37,11 +37,7 @@ import {
   VoucherNumberRenumberValidationError,
   type VoucherNumberRenumberResult
 } from '../services/voucherNumberLifecycle'
-import {
-  requireCommandActor,
-  requireCommandLedgerAccess,
-  requireCommandPermission
-} from './authz'
+import { requireCommandActor, requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { writeContextDiagnostic } from './contextDiagnostics'
 import { appendActorOperationLog } from './operationLog'
 import {
@@ -55,6 +51,7 @@ import {
   normalizeStringField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 import { MojibakeTextError, normalizeUserTextOrThrow } from '../../shared/mojibake'
@@ -507,7 +504,11 @@ function normalizeVoucherBatchPayload(payload: unknown): {
 } {
   const rawPayload = asCommandPayloadRecord(payload, '凭证批量操作 payload 格式不正确')
   return {
-    action: normalizeStringField(rawPayload.action, 'action', '缺少批量操作 action') as VoucherBatchAction,
+    action: normalizeStringField(
+      rawPayload.action,
+      'action',
+      '缺少批量操作 action'
+    ) as VoucherBatchAction,
     voucherIds: normalizePositiveIntegerArray(rawPayload.voucherIds, 'voucherIds'),
     reason: normalizeOptionalVoucherUserText(rawPayload.reason, 'reason', '批量操作原因'),
     approvalTag: normalizeOptionalVoucherUserText(
@@ -560,7 +561,12 @@ function ensureVoucherPeriod(
   }
 
   if (!currentPeriod) {
-    throw new CommandError('VALIDATION_ERROR', '账套当前会计期间未设置，无法保存或整理凭证', details, 2)
+    throw new CommandError(
+      'VALIDATION_ERROR',
+      '账套当前会计期间未设置，无法保存或整理凭证',
+      details,
+      2
+    )
   }
 
   if (currentPeriod !== period) {
@@ -568,12 +574,7 @@ function ensureVoucherPeriod(
       mode === 'date'
         ? `凭证日期所属期间（${period}）与当前会计期间（${currentPeriod}）不一致`
         : `凭证会计期间（${period}）与当前会计期间（${currentPeriod}）不一致`
-    throw new CommandError(
-      'VALIDATION_ERROR',
-      message,
-      details,
-      2
-    )
+    throw new CommandError('VALIDATION_ERROR', message, details, 2)
   }
 
   try {
@@ -612,7 +613,7 @@ export async function createVoucherCommand(
   context: CommandContext,
   payload: SaveVoucherInput
 ): Promise<CommandResult<{ voucherId: number; voucherNumber: number; status: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const ledgerId = extractLedgerIdFromVoucherPayload(payload)
     requireCommandLedgerAccess(context.db, context.actor, ledgerId)
@@ -636,6 +637,14 @@ export async function createVoucherCommand(
       creatorId: actor.id,
       allowSameMakerAuditor: allowSameRow?.value === '1'
     })
+    appendActorOperationLog(context, {
+      ledgerId: normalizedPayload.ledgerId,
+      module: 'voucher',
+      action: 'create',
+      targetType: 'voucher',
+      targetId: result.voucherId,
+      details: { after: result, period, entryCount: normalizedPayload.entries.length }
+    })
     writeContextDiagnostic(context.runtime, {
       event: 'voucher.save.context',
       db: context.db,
@@ -657,7 +666,7 @@ export async function updateVoucherCommand(
   context: CommandContext,
   payload: UpdateVoucherInput
 ): Promise<CommandResult<{ voucherId: number; voucherNumber: number; status: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     requireCommandPermission(context.actor, 'voucher_entry')
     const ledgerId = extractLedgerIdFromVoucherPayload(payload)
     requireCommandLedgerAccess(context.db, context.actor, ledgerId)
@@ -677,7 +686,12 @@ export async function updateVoucherCommand(
         }
       | undefined
     if (!voucher) {
-      throw new CommandError('NOT_FOUND', '凭证不存在', { voucherId: normalizedPayload.voucherId }, 5)
+      throw new CommandError(
+        'NOT_FOUND',
+        '凭证不存在',
+        { voucherId: normalizedPayload.voucherId },
+        5
+      )
     }
     if (voucher.ledger_id !== normalizedPayload.ledgerId) {
       throw new CommandError('VALIDATION_ERROR', '凭证不属于当前账套', null, 2)
@@ -705,6 +719,21 @@ export async function updateVoucherCommand(
       }
       throw error
     }
+    appendActorOperationLog(context, {
+      ledgerId: normalizedPayload.ledgerId,
+      module: 'voucher',
+      action: 'update',
+      targetType: 'voucher',
+      targetId: voucher.id,
+      details: {
+        before: voucher,
+        after: {
+          period,
+          voucherDate: normalizedPayload.voucherDate,
+          entryCount: normalizedPayload.entries.length
+        }
+      }
+    })
     return {
       voucherId: voucher.id,
       voucherNumber: voucher.voucher_number,
@@ -737,7 +766,12 @@ export async function exportVoucherEditPayloadCommand(
       | undefined
 
     if (!voucher) {
-      throw new CommandError('NOT_FOUND', '凭证不存在', { voucherId: normalizedPayload.voucherId }, 5)
+      throw new CommandError(
+        'NOT_FOUND',
+        '凭证不存在',
+        { voucherId: normalizedPayload.voucherId },
+        5
+      )
     }
     requireCommandLedgerAccess(context.db, context.actor, voucher.ledger_id)
     if (voucher.status !== 0) {
@@ -804,7 +838,12 @@ export async function getVoucherEntriesCommand(
     requireCommandActor(context.actor)
     const ledgerId = getVoucherLedgerId(context.db, normalizedPayload.voucherId)
     if (ledgerId === null) {
-      throw new CommandError('NOT_FOUND', '凭证不存在', { voucherId: normalizedPayload.voucherId }, 5)
+      throw new CommandError(
+        'NOT_FOUND',
+        '凭证不存在',
+        { voucherId: normalizedPayload.voucherId },
+        5
+      )
     }
     requireCommandLedgerAccess(context.db, context.actor, ledgerId)
     return listVoucherEntries(context.db, normalizedPayload.voucherId)
@@ -815,7 +854,7 @@ export async function swapVoucherPositionsCommand(
   context: CommandContext,
   payload: SwapVoucherPositionsInput
 ): Promise<CommandResult<{ voucherIds: number[] }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const normalizedPayload = normalizeVoucherIdsPayload(payload)
     if (normalizedPayload.voucherIds.length !== 2) {
@@ -883,7 +922,7 @@ export async function renumberVoucherNumbersCommand(
   context: CommandContext,
   payload: { ledgerId: number; period: string }
 ): Promise<CommandResult<VoucherNumberRenumberResult>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const normalizedPayload = normalizeVoucherPeriodPayload(payload)
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -903,27 +942,28 @@ export async function renumberVoucherNumbersCommand(
       throw error
     }
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId: normalizedPayload.ledgerId,
-        module: 'voucher',
-        action: 'renumber_voucher_numbers',
-        targetType: 'voucher_period',
-        targetId: `${normalizedPayload.ledgerId}:${period}`,
-        details: {
-          period,
-          totalCount: result.totalCount,
-          updatedCount: result.updatedCount,
-          groups: result.groups,
-          changeCount: result.changes.length,
-          changes: result.changes.slice(0, 50)
+    if (result.updatedCount > 0)
+      appendActorOperationLog(
+        {
+          ...context,
+          actor
+        },
+        {
+          ledgerId: normalizedPayload.ledgerId,
+          module: 'voucher',
+          action: 'renumber_voucher_numbers',
+          targetType: 'voucher_period',
+          targetId: `${normalizedPayload.ledgerId}:${period}`,
+          details: {
+            period,
+            totalCount: result.totalCount,
+            updatedCount: result.updatedCount,
+            groups: result.groups,
+            changeCount: result.changes.length,
+            changes: result.changes.slice(0, 50)
+          }
         }
-      }
-    )
+      )
 
     return result
   })
@@ -940,7 +980,7 @@ export async function voucherBatchActionCommand(
 ): Promise<
   CommandResult<{ processedCount: number; skippedCount: number; requestedCount: number }>
 > {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeVoucherBatchPayload(payload)
     if (normalizedPayload.voucherIds.length === 0) {
       throw new CommandError('VALIDATION_ERROR', '请选择凭证', null, 2)
@@ -979,31 +1019,35 @@ export async function voucherBatchActionCommand(
       emergencyReversal
     )
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId:
-          applicable.length > 0
-            ? applicable[0].ledger_id
-            : vouchers.length > 0
-              ? vouchers[0].ledger_id
-              : null,
-        module: 'voucher',
-        action,
-        targetType: 'voucher_batch',
-        targetId: normalizedPayload.voucherIds.join(','),
-        reason: emergencyReversal?.reason ?? null,
-        approvalTag: emergencyReversal?.approvalTag ?? null,
-        details: {
-          processedCount: applicable.length,
-          skippedCount: skipped.length,
-          requestedCount: vouchers.length
+    // 整批仍共用一笔事务；每个受影响账套各留一条，保证账套级查询/归档完整。
+    for (const ledgerId of new Set(applicable.map((voucher) => voucher.ledger_id))) {
+      const ledgerVouchers = applicable.filter((voucher) => voucher.ledger_id === ledgerId)
+      appendActorOperationLog(
+        {
+          ...context,
+          actor
+        },
+        {
+          ledgerId,
+          module: 'voucher',
+          action,
+          targetType: 'voucher_batch',
+          targetId: ledgerVouchers.map((voucher) => voucher.id).join(','),
+          reason: emergencyReversal?.reason ?? null,
+          approvalTag: emergencyReversal?.approvalTag ?? null,
+          details: {
+            processedCount: ledgerVouchers.length,
+            skippedCount: skipped.filter((voucher) => voucher.ledger_id === ledgerId).length,
+            requestedCount: vouchers.filter((voucher) => voucher.ledger_id === ledgerId).length,
+            before: ledgerVouchers,
+            after: listVoucherBatchTargets(
+              context.db,
+              ledgerVouchers.map((voucher) => voucher.id)
+            )
+          }
         }
-      }
-    )
+      )
+    }
 
     return {
       processedCount: applicable.length,

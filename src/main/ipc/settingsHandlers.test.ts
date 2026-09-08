@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const settingsMocks = vi.hoisted(() => {
@@ -116,10 +117,13 @@ import { registerSettingsHandlers } from './settings'
 
 describe('settings IPC handlers', () => {
   let tempDir = ''
+  let db: Database.Database
 
   beforeEach(() => {
     settingsMocks.handlers.clear()
     vi.clearAllMocks()
+    db = new Database(':memory:')
+    settingsMocks.getDatabase.mockReturnValue(db as never)
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-settings-log-'))
     settingsMocks.appGetPath.mockImplementation((name: string) =>
       name === 'documents' ? 'D:/Documents' : tempDir
@@ -185,6 +189,7 @@ describe('settings IPC handlers', () => {
   })
 
   afterEach(() => {
+    db.close()
     if (tempDir) {
       fs.rmSync(tempDir, { recursive: true, force: true })
       tempDir = ''

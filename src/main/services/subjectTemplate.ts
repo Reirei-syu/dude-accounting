@@ -670,8 +670,10 @@ export function deleteIndependentCustomSubjectTemplate(
 export const clearCustomTopLevelSubjectTemplate = (
   db: Database.Database,
   standardType: AccountingStandardType
-): void => {
-  db.prepare('DELETE FROM system_settings WHERE key = ?').run(buildSettingKey(standardType))
+): boolean => {
+  return (
+    db.prepare('DELETE FROM system_settings WHERE key = ?').run(buildSettingKey(standardType)).changes > 0
+  )
 }
 
 export const applyCustomTopLevelSubjectTemplate = (

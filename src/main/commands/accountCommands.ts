@@ -31,6 +31,7 @@ import {
   normalizeStringField
 } from './payloadNormalizers'
 import { withCommandResult } from './result'
+import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
@@ -204,7 +205,7 @@ export async function createSubjectCommand(
   context: CommandContext,
   payload: Parameters<typeof createSubject>[1]
 ): Promise<CommandResult<{ subjectId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeSubjectCreatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -240,7 +241,7 @@ export async function updateSubjectCommand(
   context: CommandContext,
   payload: Parameters<typeof updateSubject>[1]
 ): Promise<CommandResult<{ subjectId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeSubjectUpdatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     const subject = context.db
@@ -266,7 +267,7 @@ export async function deleteSubjectCommand(
   context: CommandContext,
   payload: { subjectId: number }
 ): Promise<CommandResult<{ subjectId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeSubjectIdPayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     const subject = context.db
@@ -307,7 +308,7 @@ export async function createAuxiliaryItemCommand(
   context: CommandContext,
   payload: Parameters<typeof createAuxiliaryItem>[1]
 ): Promise<CommandResult<{ auxiliaryItemId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeAuxiliaryCreatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -331,7 +332,7 @@ export async function updateAuxiliaryItemCommand(
   context: CommandContext,
   payload: Parameters<typeof updateAuxiliaryItem>[1]
 ): Promise<CommandResult<{ auxiliaryItemId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeAuxiliaryUpdatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     const item = context.db
@@ -357,7 +358,7 @@ export async function deleteAuxiliaryItemCommand(
   context: CommandContext,
   payload: { id: number }
 ): Promise<CommandResult<{ auxiliaryItemId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeIdPayload(payload, '删除辅助核算 payload 格式不正确')
     requireCommandPermission(context.actor, 'ledger_settings')
     const item = context.db
@@ -407,7 +408,7 @@ export async function createCashFlowMappingCommand(
   context: CommandContext,
   payload: Parameters<typeof createCashFlowMapping>[1]
 ): Promise<CommandResult<{ mappingId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeCashFlowMappingCreatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     requireCommandLedgerAccess(context.db, context.actor, normalizedPayload.ledgerId)
@@ -427,7 +428,7 @@ export async function updateCashFlowMappingCommand(
   context: CommandContext,
   payload: Parameters<typeof updateCashFlowMapping>[1]
 ): Promise<CommandResult<{ mappingId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeCashFlowMappingUpdatePayload(payload)
     requireCommandPermission(context.actor, 'ledger_settings')
     const mapping = context.db
@@ -453,7 +454,7 @@ export async function deleteCashFlowMappingCommand(
   context: CommandContext,
   payload: { id: number }
 ): Promise<CommandResult<{ mappingId: number }>> {
-  return withCommandResult(context, () => {
+  return withAuditedCommandResult(context, () => {
     const normalizedPayload = normalizeIdPayload(payload, '删除现金流映射 payload 格式不正确')
     requireCommandPermission(context.actor, 'ledger_settings')
     const mapping = context.db
