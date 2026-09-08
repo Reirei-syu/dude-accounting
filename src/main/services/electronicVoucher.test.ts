@@ -197,6 +197,9 @@ describe('electronicVoucher service', () => {
     const sourcePath = path.join(tempDir, '数电发票.pdf')
     const storageDir = path.join(tempDir, 'storage')
     fs.writeFileSync(sourcePath, 'invoice-content', 'utf8')
+    fs.mkdirSync(storageDir)
+    const historicalName = 'historical-数电发票.pdf'
+    fs.writeFileSync(path.join(storageDir, historicalName), '历史附件不得删除')
 
     const db = new FakeElectronicVoucherImportDb()
 
@@ -221,7 +224,8 @@ describe('electronicVoucher service', () => {
 
     expect(thrownError).toBeInstanceOf(Error)
     const storageFiles = fs.existsSync(storageDir) ? fs.readdirSync(storageDir) : []
-    expect(storageFiles).toHaveLength(0)
+    expect(storageFiles).toEqual([historicalName])
+    expect(fs.readFileSync(path.join(storageDir, historicalName), 'utf8')).toBe('历史附件不得删除')
     expect(db.recordRows).toHaveLength(0)
     expect(db.verificationRows).toHaveLength(0)
   })

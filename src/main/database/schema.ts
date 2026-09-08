@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3'
 import { migrateAuthRevision } from './authRevisionMigration'
+import { migrateFileOperationCommits } from './fileOperationMigration'
 
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 // 当前结构的唯一事实源；历史升级与新库使用相同定义。
 export const TABLE_SQL: Readonly<Record<string, string>> = {
@@ -339,4 +340,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cash_flow_mappings_unique
 export function createCurrentSchema(db: Database.Database, version = CURRENT_SCHEMA_VERSION): void {
   db.exec(Object.values(TABLE_SQL).join(';\n') + ';' + INDEX_SQL)
   if (version >= 3) migrateAuthRevision(db)
+  if (version >= 4) migrateFileOperationCommits(db)
 }

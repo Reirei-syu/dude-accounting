@@ -11,11 +11,7 @@ export type ElectronicVoucherType =
 
 export function detectElectronicVoucherType(fileName: string): ElectronicVoucherType {
   const lowerName = fileName.toLowerCase()
-  if (
-    lowerName.includes('发票') ||
-    lowerName.includes('invoice') ||
-    lowerName.includes('ofd')
-  ) {
+  if (lowerName.includes('发票') || lowerName.includes('invoice') || lowerName.includes('ofd')) {
     return 'digital_invoice'
   }
 
@@ -104,33 +100,6 @@ export interface ImportElectronicVoucherResult {
   voucherType: ElectronicVoucherType
 }
 
-function cleanupImportedVoucherFile(
-  storageDir: string,
-  storedPath: string,
-  originalName: string
-): void {
-  const candidatePaths = new Set<string>([storedPath])
-
-  if (fs.existsSync(storageDir)) {
-    for (const fileName of fs.readdirSync(storageDir)) {
-      if (fileName === originalName || fileName.endsWith(`-${originalName}`)) {
-        candidatePaths.add(path.join(storageDir, fileName))
-      }
-    }
-  }
-
-  for (const candidatePath of candidatePaths) {
-    if (fs.existsSync(candidatePath)) {
-      const stats = fs.statSync(candidatePath)
-      if (stats.isDirectory()) {
-        fs.rmSync(candidatePath, { recursive: true, force: true })
-      } else {
-        fs.unlinkSync(candidatePath)
-      }
-    }
-  }
-}
-
 export function importElectronicVoucher(
   db: Pick<Database.Database, 'prepare' | 'transaction'>,
   input: ImportElectronicVoucherInput
@@ -149,14 +118,41 @@ export function importElectronicVoucher(
   ensureDirectory(input.storageDir)
   const storedName = `${buildTimestampToken(input.now)}-${metadata.originalName}`
   const storedPath = path.join(input.storageDir, storedName)
-  fs.copyFileSync(input.sourcePath, storedPath)
+  fs.copyFileSync(input.sourcePath, storedPath, fs.constants.COPYFILE_EXCL)
   let persisted = false
 
   try {
-    const persist = db.transaction(() => {
-      const fileResult = db
-        .prepare(
-          `INSERT INTO electronic_voucher_files (
+    const result = persistImportedElectronicVoucher(db, input, storedPath, metadata)
+    persisted = true
+    return result
+  } finally {
+    if (!persisted) {
+      // 只清理本次独占创建的文件，禁止按名称扫描历史附件。
+      if (fs.existsSync(storedPath)) fs.unlinkSync(storedPath)
+    }
+  }
+}
+
+/** 文件已由操作生命周期发布；本函数仅写数据库，保留待验真流程。 */
+export function persistImportedElectronicVoucher(
+  db: Pick<Database.Database, 'prepare' | 'transaction'>,
+  input: ImportElectronicVoucherInput,
+  storedPath: string,
+  metadata: ReturnType<typeof buildImportedVoucherMetadata>
+): ImportElectronicVoucherResult {
+  const storedName = path.basename(storedPath)
+  const fingerprint = buildElectronicVoucherFingerprint({
+    sha256: metadata.sha256,
+    type: metadata.voucherType,
+    sourceNumber: input.sourceNumber,
+    sourceDate: input.sourceDate,
+    amountCents: input.amountCents
+  })
+  const persist = db.transaction(() => {
+    assertNoDuplicateElectronicVoucher(db, input.ledgerId, fingerprint)
+    const fileResult = db
+      .prepare(
+        `INSERT INTO electronic_voucher_files (
              ledger_id,
              original_name,
              stored_name,
@@ -166,22 +162,22 @@ export function importElectronicVoucher(
              file_size,
              imported_by
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          input.ledgerId,
-          metadata.originalName,
-          storedName,
-          storedPath,
-          metadata.fileExt,
-          metadata.sha256,
-          fs.statSync(storedPath).size,
-          input.importedBy
-        )
+      )
+      .run(
+        input.ledgerId,
+        metadata.originalName,
+        storedName,
+        storedPath,
+        metadata.fileExt,
+        metadata.sha256,
+        fs.statSync(storedPath).size,
+        input.importedBy
+      )
 
-      const fileId = Number(fileResult.lastInsertRowid)
-      const recordResult = db
-        .prepare(
-          `INSERT INTO electronic_voucher_records (
+    const fileId = Number(fileResult.lastInsertRowid)
+    const recordResult = db
+      .prepare(
+        `INSERT INTO electronic_voucher_records (
              ledger_id,
              file_id,
              voucher_type,
@@ -191,43 +187,37 @@ export function importElectronicVoucher(
              fingerprint,
              status
            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'imported')`
-        )
-        .run(
-          input.ledgerId,
-          fileId,
-          metadata.voucherType,
-          input.sourceNumber ?? null,
-          input.sourceDate ?? null,
-          input.amountCents ?? null,
-          fingerprint
-        )
+      )
+      .run(
+        input.ledgerId,
+        fileId,
+        metadata.voucherType,
+        input.sourceNumber ?? null,
+        input.sourceDate ?? null,
+        input.amountCents ?? null,
+        fingerprint
+      )
 
-      const recordId = Number(recordResult.lastInsertRowid)
-      db.prepare(
-        `INSERT INTO electronic_voucher_verifications (
+    const recordId = Number(recordResult.lastInsertRowid)
+    db.prepare(
+      `INSERT INTO electronic_voucher_verifications (
            record_id,
            verification_status,
            verification_method,
            verification_message
          ) VALUES (?, 'pending', ?, ?)`
-      ).run(recordId, 'initial-import', '待验签/验真')
+    ).run(recordId, 'initial-import', '待验签/验真')
 
-      return { fileId, recordId }
-    })
+    return { fileId, recordId }
+  })
 
-    const persistedResult = persist()
-    persisted = true
-    return {
-      fileId: persistedResult.fileId,
-      recordId: persistedResult.recordId,
-      storedName,
-      storedPath,
-      fingerprint,
-      voucherType: metadata.voucherType
-    }
-  } finally {
-    if (!persisted) {
-      cleanupImportedVoucherFile(input.storageDir, storedPath, metadata.originalName)
-    }
+  const persistedResult = persist()
+  return {
+    fileId: persistedResult.fileId,
+    recordId: persistedResult.recordId,
+    storedName,
+    storedPath,
+    fingerprint,
+    voucherType: metadata.voucherType
   }
 }

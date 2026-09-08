@@ -1003,10 +1003,14 @@ interface AuditLogAPI {
       limit?: number
     }
     filePath?: string
+    operationId?: string
   }) => Promise<{
     success: boolean
     error?: string
     rowCount?: number
+    operationId?: string
+    errorCode?: string
+    details?: unknown
     filePath?: string
     csv?: string
   }>
@@ -1014,6 +1018,7 @@ interface AuditLogAPI {
 
 interface BackupAPI {
   create: (payload: {
+    operationId?: string
     ledgerId: number
     period?: string | null
     directoryPath?: string
@@ -1021,6 +1026,7 @@ interface BackupAPI {
     success: boolean
     cancelled?: boolean
     error?: string
+    operationId?: string
     backupId?: number
     directoryPath?: string
     period?: string | null
@@ -1053,14 +1059,16 @@ interface BackupAPI {
     actualChecksum?: string | null
     error?: string
   }>
-  import: (payload?: { backupId?: number; packagePath?: string }) => Promise<{
+  import: (payload?: { operationId?: string; backupId?: number; packagePath?: string }) => Promise<{
+    operationId?: string
     success: boolean
     cancelled?: boolean
     importedLedgerId?: number
     importedLedgerName?: string
     error?: string
   }>
-  delete: (payload: { backupId: number; deleteRecordOnly?: boolean }) => Promise<{
+  delete: (payload: { operationId?: string; backupId: number; deleteRecordOnly?: boolean }) => Promise<{
+    operationId?: string
     success: boolean
     deletedPhysicalPackage?: boolean
     deletedPaths?: string[]
@@ -1069,7 +1077,8 @@ interface BackupAPI {
     packagePath?: string
     error?: string
   }>
-  restore: (payload?: { backupId?: number; packagePath?: string }) => Promise<{
+  restore: (payload?: { operationId?: string; backupId?: number; packagePath?: string }) => Promise<{
+    operationId?: string
     success: boolean
     cancelled?: boolean
     restartRequired?: boolean
@@ -1080,7 +1089,8 @@ interface BackupAPI {
 }
 
 interface ArchiveAPI {
-  export: (payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }) => Promise<{
+  export: (payload: { operationId?: string; ledgerId: number; fiscalYear: string; directoryPath?: string }) => Promise<{
+    operationId?: string
     success: boolean
     cancelled?: boolean
     exportId?: number
@@ -1112,7 +1122,8 @@ interface ArchiveAPI {
     errorCode?: string
     errorDetails?: Record<string, unknown> | null
   }>
-  delete: (payload: { exportId: number; deleteRecordOnly?: boolean }) => Promise<{
+  delete: (payload: { operationId?: string; exportId: number; deleteRecordOnly?: boolean }) => Promise<{
+    operationId?: string
     success: boolean
     deletedPhysicalPackage?: boolean
     deletedPaths?: string[]
@@ -1138,6 +1149,7 @@ interface ArchiveAPI {
 
 interface ElectronicVoucherAPI {
   import: (payload: {
+    operationId?: string
     ledgerId: number
     sourcePath: string
     sourceNumber?: string | null
@@ -1146,6 +1158,7 @@ interface ElectronicVoucherAPI {
   }) => Promise<{
     success: boolean
     error?: string
+    operationId?: string
     fileId?: number
     recordId?: number
     voucherType?: 'digital_invoice' | 'bank_receipt' | 'bank_statement' | 'unknown'

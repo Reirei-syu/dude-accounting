@@ -46,7 +46,7 @@ async function pickArchiveRootDirectory(
 export function registerArchiveHandlers(): void {
   ipcMain.handle(
     'archive:export',
-    async (event, payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
+    async (event, payload: { operationId?: string; ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
       withIpcTelemetry(
         {
           channel: 'archive:export',
@@ -83,12 +83,15 @@ export function registerArchiveHandlers(): void {
             const result = await exportArchiveCommand(createCommandContextFromEvent(event), {
               ledgerId: payload.ledgerId,
               fiscalYear: payload.fiscalYear,
-              directoryPath: picked.directoryPath
+              directoryPath: picked.directoryPath,
+              ...(payload.operationId ? { operationId: payload.operationId } : {})
             })
             if (!isCommandSuccess(result)) {
               return {
                 success: false,
-                error: result.error?.message ?? '导出电子档案失败'
+                error: result.error?.message ?? '导出电子档案失败',
+                errorCode: result.error?.code,
+                errorDetails: result.error?.details
               }
             }
 
@@ -178,6 +181,7 @@ export function registerArchiveHandlers(): void {
       payload: {
         exportId: number
         deleteRecordOnly?: boolean
+        operationId?: string
       }
     ) =>
       withIpcTelemetry(
@@ -195,6 +199,7 @@ export function registerArchiveHandlers(): void {
             ? {
                 success: true,
                 deletedPhysicalPackage: result.data.deletedPhysicalPackage,
+                operationId: result.data.operationId,
                 deletedPaths: result.data.deletedPaths
               }
             : {

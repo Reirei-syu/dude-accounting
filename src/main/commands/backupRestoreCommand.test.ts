@@ -1,250 +1,99 @@
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Database from 'better-sqlite3'
+import { describe, expect, it, vi } from 'vitest'
+import { restoreBackupCommand, createBackupCommand } from './backupCommands'
+import { createBackupOperationFixture } from './testSupport/backupOperationFixture'
+import { runDatabaseMigrations } from '../database/migrations'
+import { createBackupPackageRecord } from '../services/backupCatalog'
+import { computeFileSha256 } from '../services/fileIntegrity'
+import { FileOperationJournal, requireOperationId } from '../services/fileOperationJournal'
+import { consumeEmbeddedCliState } from '../runtime/embeddedCliState'
 
-const backupMocks = vi.hoisted(() => ({
-  getBackupPackageById: vi.fn(),
-  validateBackupArtifact: vi.fn(),
-  resolveBackupArtifactPaths: vi.fn(),
-  restoreBackupArtifact: vi.fn(),
-  closeDatabase: vi.fn(),
-  initializeDatabase: vi.fn(),
-  writePendingRestoreLog: vi.fn(),
-  clearPendingRestoreLog: vi.fn(),
-  getPendingRestoreLogPath: vi.fn(() => 'D:/tmp/pending-restore-log.json'),
-  requestEmbeddedCliRelaunch: vi.fn(),
-  rememberPathPreference: vi.fn(),
-  requireCommandAdmin: vi.fn((actor) => actor),
-  requireCommandLedgerAccess: vi.fn((...args) => args[1])
-}))
-
-vi.mock('../database/init', () => ({
-  closeDatabase: backupMocks.closeDatabase,
-  getDatabasePath: () => 'D:/tmp/dude-accounting.db',
-  initializeDatabase: backupMocks.initializeDatabase
-}))
-
-vi.mock('../services/backupCatalog', async () => {
-  const actual = await vi.importActual('../services/backupCatalog')
-  return {
-    ...(actual as object),
-    getBackupPackageById: backupMocks.getBackupPackageById
-  }
-})
-
-vi.mock('../services/backupRecovery', async () => {
-  const actual = await vi.importActual('../services/backupRecovery')
-  return {
-    ...(actual as object),
-    resolveBackupArtifactPaths: backupMocks.resolveBackupArtifactPaths,
-    restoreBackupArtifact: backupMocks.restoreBackupArtifact,
-    validateBackupArtifact: backupMocks.validateBackupArtifact
-  }
-})
-
-vi.mock('../services/pendingRestoreLog', () => ({
-  clearPendingRestoreLog: backupMocks.clearPendingRestoreLog,
-  getPendingRestoreLogPath: backupMocks.getPendingRestoreLogPath,
-  writePendingRestoreLog: backupMocks.writePendingRestoreLog
-}))
-
-vi.mock('../runtime/embeddedCliState', () => ({
-  requestEmbeddedCliRelaunch: backupMocks.requestEmbeddedCliRelaunch
-}))
-
-vi.mock('../services/pathPreference', () => ({
-  rememberPathPreference: backupMocks.rememberPathPreference
-}))
-
-vi.mock('./authz', async () => {
-  const actual = await vi.importActual('./authz')
-  return {
-    ...(actual as object),
-    requireCommandAdmin: backupMocks.requireCommandAdmin,
-    requireCommandLedgerAccess: backupMocks.requireCommandLedgerAccess
-  }
-})
-
-import { restoreBackupCommand } from './backupCommands'
+function legacyPackage(fixture: ReturnType<typeof createBackupOperationFixture>): { packagePath: string; backupPath: string; backupId: number } {
+  const packagePath = path.join(fixture.root, 'system-backup')
+  fs.mkdirSync(packagePath)
+  const backupPath = path.join(packagePath, 'data.db')
+  const source = new Database(backupPath)
+  runDatabaseMigrations(source)
+  source.close()
+  const manifestPath = path.join(packagePath, 'manifest.json')
+  const checksum = computeFileSha256(backupPath)
+  fs.writeFileSync(manifestPath, JSON.stringify({ schemaVersion: '1.0', packageType: 'system_backup',
+    databaseFile: 'data.db', checksum, fileSize: fs.statSync(backupPath).size }))
+  const backupId = createBackupPackageRecord(fixture.context.db, { ledgerId: 7, backupPeriod: null,
+    fiscalYear: null, packageType: 'system_db_snapshot_legacy', packageSchemaVersion: '1.0',
+    backupPath, manifestPath, checksum, fileSize: fs.statSync(backupPath).size,
+    createdBy: fixture.context.actor!.id, createdAt: '2026-04-11 18:00:00' })
+  return { packagePath, backupPath, backupId }
+}
 
 describe('restoreBackupCommand', () => {
-  let tempDir = ''
-  const context = {
-    db: {
-      prepare: vi.fn(),
-      pragma: vi.fn()
-    },
-    runtime: {
-      userDataPath: 'D:/tmp/userData'
-    },
-    actor: {
-      id: 1,
-      username: 'admin',
-      permissions: {},
-      isAdmin: true,
-      source: 'cli' as const
-    },
-    outputMode: 'json' as const,
-    now: new Date('2026-04-10T10:00:00.000Z')
-  }
-
-  beforeEach(() => {
-    authenticateMockContext(context)
-    vi.clearAllMocks()
-    backupMocks.restoreBackupArtifact.mockImplementation(() => undefined)
-    backupMocks.getBackupPackageById.mockReturnValue({
-      id: 11,
-      ledger_id: 7,
-      package_type: 'system_db_snapshot_legacy',
-      backup_path: 'D:/backup/package/data.db',
-      manifest_path: 'D:/backup/package/manifest.json',
-      checksum: 'checksum-1'
-    })
-    backupMocks.validateBackupArtifact.mockReturnValue({
-      valid: true,
-      actualChecksum: 'checksum-1'
-    })
+  it('候选库审计提交后请求重启，不依赖 pending 成功日志', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const pkg = legacyPackage(fixture)
+      const operationId = requireOperationId(undefined)
+      const result = await restoreBackupCommand(fixture.context, { backupId: pkg.backupId, operationId })
+      expect(result.status, JSON.stringify(result.error)).toBe('success')
+      expect(result.data).toMatchObject({ restartRequired: true, backupPath: pkg.backupPath })
+      expect(fixture.context.db.prepare("SELECT target_id FROM operation_logs WHERE action='restore'").all()).toEqual([{ target_id: operationId }])
+      expect(fs.existsSync(path.join(fixture.root, 'pending-restore-log.json'))).toBe(false)
+      expect(consumeEmbeddedCliState().relaunchRequested).toBe(true)
+    } finally { fixture.cleanup() }
   })
-
-  afterEach(() => {
-    if (tempDir) {
-      fs.rmSync(tempDir, { recursive: true, force: true })
-      tempDir = ''
-    }
+  it('拒绝账套包按整库恢复并提供导入指引', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const created = await createBackupCommand(fixture.context, { ledgerId: 7, directoryPath: fixture.root })
+      const result = await restoreBackupCommand(fixture.context, { backupId: created.data!.backupId })
+      expect(result.error).toMatchObject({ code: 'VALIDATION_ERROR', details: { backupId: created.data!.backupId, packageType: 'ledger_backup' } })
+      expect(result.error?.message).toContain('backup import')
+      expect(consumeEmbeddedCliState().relaunchRequested).toBe(false)
+    } finally { fixture.cleanup() }
   })
-
-  it('writes pending log and requests relaunch on successful restore', async () => {
-    const result = await restoreBackupCommand(context as never, { backupId: 11 })
-
-    expect(result.status).toBe('success')
-    expect(result.data).toMatchObject({
-      restartRequired: true,
-      backupPath: 'D:/backup/package/data.db'
-    })
-    expect(backupMocks.writePendingRestoreLog).toHaveBeenCalledTimes(1)
-    expect(backupMocks.closeDatabase).toHaveBeenCalledTimes(1)
-    expect(backupMocks.restoreBackupArtifact).toHaveBeenCalledWith({
-      backupPath: 'D:/backup/package/data.db',
-      manifestPath: 'D:/backup/package/manifest.json',
-      expectedChecksum: 'checksum-1',
-      targetPath: 'D:/tmp/dude-accounting.db'
-    })
-    expect(backupMocks.requestEmbeddedCliRelaunch).toHaveBeenCalledTimes(1)
-    expect(backupMocks.initializeDatabase).not.toHaveBeenCalled()
+  it('候选发布失败恢复原库并留下失败记录，不重启', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const pkg = legacyPackage(fixture)
+      const operationId = requireOperationId(undefined)
+      const target = fixture.context.db.name
+      const rename = fs.renameSync.bind(fs)
+      let injected = false
+      const fault = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+        if (!injected && to === target) { injected = true; throw Object.assign(new Error('模拟发布失败'), { code: 'EACCES' }) }
+        rename(from, to)
+      })
+      try {
+        const result = await restoreBackupCommand(fixture.context, { backupId: pkg.backupId, operationId })
+        expect(result.status).toBe('error')
+        expect(injected).toBe(true)
+      } finally { fault.mockRestore() }
+      expect(fixture.context.db.open).toBe(true)
+      expect(fixture.context.db.prepare('SELECT id FROM ledgers WHERE id=7').get()).toEqual({ id: 7 })
+      const journal = new FileOperationJournal(target)
+      try { expect(journal.getRecoveryRecord(operationId)).toMatchObject({ state: 'failed', compensation: 'completed' }) }
+      finally { journal.close() }
+      expect(consumeEmbeddedCliState().relaunchRequested).toBe(false)
+    } finally { fixture.cleanup() }
   })
-
-  it('rejects ledger backup packages with a clear import guidance message', async () => {
-    backupMocks.getBackupPackageById.mockReturnValue({
-      id: 11,
-      ledger_id: 7,
-      package_type: 'ledger_backup',
-      backup_path: 'D:/backup/package/data.db',
-      manifest_path: 'D:/backup/package/manifest.json',
-      checksum: 'checksum-1'
-    })
-
-    const result = await restoreBackupCommand(context as never, { backupId: 11 })
-
-    expect(result.status).toBe('error')
-    expect(result.error).toMatchObject({
-      code: 'VALIDATION_ERROR',
-      message: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
-      details: {
-        backupId: 11,
-        packageType: 'ledger_backup'
-      }
-    })
-    expect(backupMocks.validateBackupArtifact).not.toHaveBeenCalled()
-    expect(backupMocks.restoreBackupArtifact).not.toHaveBeenCalled()
-    expect(backupMocks.requestEmbeddedCliRelaunch).not.toHaveBeenCalled()
+  it('显式目录恢复后仍保留所选目录偏好', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const pkg = legacyPackage(fixture)
+      const result = await restoreBackupCommand(fixture.context, { packagePath: pkg.packagePath })
+      expect(result.status, JSON.stringify(result.error)).toBe('success')
+      expect(fixture.context.db.prepare("SELECT value FROM system_settings WHERE key='backup_restore_last_dir'").get()).toEqual({ value: fixture.root })
+    } finally { fixture.cleanup() }
   })
-
-  it('clears pending log and reopens database when restore fails', async () => {
-    backupMocks.restoreBackupArtifact.mockImplementation(() => {
-      throw new Error('restore failed')
-    })
-
-    const result = await restoreBackupCommand(context as never, { backupId: 11 })
-
-    expect(result.status).toBe('error')
-    expect(result.error?.message).toBe('restore failed')
-    expect(backupMocks.clearPendingRestoreLog).toHaveBeenCalledTimes(1)
-    expect(backupMocks.initializeDatabase).toHaveBeenCalledTimes(1)
-  })
-
-  it('remembers restore directories when restoring from an explicit package path', async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-restore-command-'))
-    const packageDir = path.join(tempDir, 'system-backup')
-    const manifestPath = path.join(packageDir, 'manifest.json')
-    fs.mkdirSync(packageDir, { recursive: true })
-    fs.writeFileSync(
-      manifestPath,
-      JSON.stringify({
-        checksum: 'checksum-1',
-        ledgerId: 7,
-        packageType: 'system_backup'
-      }),
-      'utf8'
-    )
-    backupMocks.resolveBackupArtifactPaths.mockReturnValue({
-      backupPath: path.join(packageDir, 'data.db'),
-      manifestPath
-    })
-    backupMocks.validateBackupArtifact.mockReturnValue({
-      valid: true,
-      actualChecksum: 'checksum-1'
-    })
-
-    const result = await restoreBackupCommand(context as never, {
-      packagePath: packageDir
-    })
-
-    expect(result.status).toBe('success')
-    expect(result.data).toMatchObject({
-      restartRequired: true,
-      backupPath: path.join(packageDir, 'data.db')
-    })
-    expect(backupMocks.rememberPathPreference).toHaveBeenCalledWith(
-      expect.anything(),
-      'backup_restore_last_dir',
-      tempDir
-    )
-  })
-
-  it('still guides users to backup import when a parent directory resolves to a ledger backup package', async () => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-restore-command-'))
-    const packageDir = path.join(tempDir, 'ledger-backup')
-    const manifestPath = path.join(packageDir, 'manifest.json')
-    fs.mkdirSync(packageDir, { recursive: true })
-    fs.writeFileSync(
-      manifestPath,
-      JSON.stringify({
-        checksum: 'checksum-1',
-        ledgerId: 7,
-        packageType: 'ledger_backup'
-      }),
-      'utf8'
-    )
-    backupMocks.resolveBackupArtifactPaths.mockReturnValue({
-      backupPath: path.join(packageDir, 'data.db'),
-      manifestPath
-    })
-
-    const result = await restoreBackupCommand(context as never, {
-      packagePath: tempDir
-    })
-
-    expect(result.status).toBe('error')
-    expect(result.error).toMatchObject({
-      code: 'VALIDATION_ERROR',
-      message: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
-      details: {
-        packagePath: tempDir,
-        packageType: 'ledger_backup'
-      }
-    })
-    expect(backupMocks.validateBackupArtifact).not.toHaveBeenCalled()
+  it('父目录解析到账套包时仍拒绝整库恢复', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const created = await createBackupCommand(fixture.context, { ledgerId: 7, directoryPath: fixture.root })
+      const packagePath = path.dirname(path.dirname(created.data!.manifestPath))
+      const result = await restoreBackupCommand(fixture.context, { packagePath })
+      expect(result.error).toMatchObject({ code: 'VALIDATION_ERROR', details: { packagePath, packageType: 'ledger_backup' } })
+      expect(result.error?.message).toContain('backup import')
+    } finally { fixture.cleanup() }
   })
 })
-import { authenticateMockContext } from './testSupport/sessionContext'

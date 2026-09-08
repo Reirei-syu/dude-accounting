@@ -1,9 +1,6 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
-import { closeDatabase, getDatabase, getDatabasePath, initializeDatabase } from '../database/init'
-import { appendOperationLog } from '../services/auditLog'
-import { getBackupPackageById } from '../services/backupCatalog'
+import { getDatabase } from '../database/init'
 import {
   BACKUP_CREATE_LAST_DIR_KEY,
   BACKUP_IMPORT_LAST_DIR_KEY,
@@ -13,22 +10,11 @@ import {
   deleteBackupCommand,
   importBackupCommand,
   listBackupsCommand,
+  restoreBackupCommand,
   validateBackupCommand
 } from '../commands/backupCommands'
-import {
-  resolveBackupArtifactPaths,
-  restoreBackupArtifact,
-  validateBackupArtifact
-} from '../services/backupRecovery'
-import {
-  getPathPreferenceWithFallback,
-  rememberPathPreference
-} from '../services/pathPreference'
-import {
-  clearPendingRestoreLog,
-  getPendingRestoreLogPath,
-  writePendingRestoreLog
-} from '../services/pendingRestoreLog'
+import { resolveBackupArtifactPaths } from '../services/backupRecovery'
+import { getPathPreferenceWithFallback, rememberPathPreference } from '../services/pathPreference'
 import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess } from './commandBridge'
 import { requireAdmin, requireLedgerAccess } from './session'
@@ -37,10 +23,7 @@ function getDefaultBackupRootDir(): string {
   return path.join(app.getPath('documents'), 'Dude Accounting', '系统备份')
 }
 
-function getPreferredBackupDir(
-  db: ReturnType<typeof getDatabase>,
-  primaryKey: string
-): string {
+function getPreferredBackupDir(db: ReturnType<typeof getDatabase>, primaryKey: string): string {
   return (
     getPathPreferenceWithFallback(db, [primaryKey, BACKUP_LAST_DIR_LEGACY_KEY]) ??
     getDefaultBackupRootDir()
@@ -77,20 +60,6 @@ async function pickDirectory(
   }
 }
 
-function buildUnsupportedLedgerRestoreResponse(details: Record<string, unknown>): {
-  success: false
-  error: string
-  errorCode: 'VALIDATION_ERROR'
-  errorDetails: Record<string, unknown>
-} {
-  return {
-    success: false,
-    error: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
-    errorCode: 'VALIDATION_ERROR',
-    errorDetails: details
-  }
-}
-
 export function registerBackupHandlers(): void {
   ipcMain.handle(
     'backup:create',
@@ -100,6 +69,7 @@ export function registerBackupHandlers(): void {
         ledgerId: number
         period?: string | null
         directoryPath?: string
+        operationId?: string
       }
     ) =>
       withIpcTelemetry(
@@ -141,12 +111,15 @@ export function registerBackupHandlers(): void {
             const result = await createBackupCommand(createCommandContextFromEvent(event), {
               ledgerId: payload.ledgerId,
               period: null,
-              directoryPath: picked.directoryPath
+              directoryPath: picked.directoryPath,
+              ...(payload.operationId ? { operationId: payload.operationId } : {})
             })
             if (!isCommandSuccess(result)) {
               return {
                 success: false,
-                error: result.error?.message ?? '创建备份失败'
+                error: result.error?.message ?? '创建备份失败',
+                errorCode: result.error?.code,
+                errorDetails: result.error?.details
               }
             }
 
@@ -232,6 +205,7 @@ export function registerBackupHandlers(): void {
       payload?: {
         backupId?: number
         packagePath?: string
+        operationId?: string
       }
     ) =>
       withIpcTelemetry(
@@ -295,7 +269,8 @@ export function registerBackupHandlers(): void {
 
             const result = await importBackupCommand(createCommandContextFromEvent(event), {
               backupId: payload?.backupId,
-              packagePath: payload?.backupId ? undefined : selectedPackagePath
+              packagePath: payload?.backupId ? undefined : selectedPackagePath,
+              ...(payload?.operationId ? { operationId: payload.operationId } : {})
             })
             if (!isCommandSuccess(result)) {
               return {
@@ -326,6 +301,7 @@ export function registerBackupHandlers(): void {
       payload: {
         backupId: number
         deleteRecordOnly?: boolean
+        operationId?: string
       }
     ) =>
       withIpcTelemetry(
@@ -343,6 +319,7 @@ export function registerBackupHandlers(): void {
             ? {
                 success: true,
                 deletedPhysicalPackage: result.data.deletedPhysicalPackage,
+                operationId: result.data.operationId,
                 deletedPaths: result.data.deletedPaths
               }
             : {
@@ -369,6 +346,7 @@ export function registerBackupHandlers(): void {
       payload?: {
         backupId?: number
         packagePath?: string
+        operationId?: string
       }
     ) =>
       withIpcTelemetry(
@@ -381,157 +359,35 @@ export function registerBackupHandlers(): void {
           }
         },
         async () => {
-          let databaseClosed = false
-          let pendingRestoreLogPath: string | null = null
-          let restoreLogContext: {
-            ledgerId: number | null
-            targetType: string
-            targetId: string | number | null
-            backupPath: string
-            manifestPath: string | null
-            userId: number
-            username: string
-          } | null = null
-
           try {
-            const user = requireAdmin(event)
+            requireAdmin(event)
             const db = getDatabase()
-            const preferredDir = getPreferredBackupDir(db, BACKUP_RESTORE_LAST_DIR_KEY)
-
-            let backupPath = ''
-            let manifestPath: string | null = null
-            let ledgerId: number | null = null
-            let targetType = 'backup_package'
-            let targetId: string | number | null = payload?.backupId ?? null
-            let expectedChecksum = ''
-
-            if (typeof payload?.backupId === 'number') {
-              const row = getBackupPackageById(db, payload.backupId)
-
-              if (!row) {
-                return { success: false, error: '备份记录不存在' }
-              }
-
-              requireLedgerAccess(event, db, row.ledger_id)
-              if (row.package_type === 'ledger_backup') {
-                return buildUnsupportedLedgerRestoreResponse({
-                  backupId: payload.backupId,
-                  packageType: row.package_type
-                })
-              }
-              backupPath = row.backup_path
-              manifestPath = row.manifest_path
-              ledgerId = row.ledger_id
-              expectedChecksum = row.checksum
-            } else {
-              const picked = payload?.packagePath
-                ? { cancelled: false, directoryPath: payload.packagePath }
-                : await pickDirectory(event.sender, {
-                    defaultPath: preferredDir,
-                    title: '选择需要恢复的备份包目录'
-                  })
-
-              if (picked.cancelled || !picked.directoryPath) {
+            let packagePath = payload?.packagePath
+            if (typeof payload?.backupId !== 'number' && !packagePath) {
+              const picked = await pickDirectory(event.sender, {
+                defaultPath: getPreferredBackupDir(db, BACKUP_RESTORE_LAST_DIR_KEY),
+                title: '选择需要恢复的备份包目录'
+              })
+              if (picked.cancelled || !picked.directoryPath)
                 return { success: false, cancelled: true }
-              }
-
-              rememberPathPreference(
-                db,
-                BACKUP_RESTORE_LAST_DIR_KEY,
-                path.dirname(picked.directoryPath)
-              )
-              const resolved = resolveBackupArtifactPaths(picked.directoryPath)
-              const manifest = JSON.parse(fs.readFileSync(resolved.manifestPath, 'utf8')) as {
-                checksum: string
-                ledgerId?: number | null
-                packageType?: string
-              }
-              if (manifest.packageType === 'ledger_backup') {
-                return buildUnsupportedLedgerRestoreResponse({
-                  packagePath: picked.directoryPath,
-                  packageType: 'ledger_backup'
-                })
-              }
-
-              backupPath = resolved.backupPath
-              manifestPath = resolved.manifestPath
-              ledgerId = manifest.ledgerId ?? null
-              expectedChecksum = manifest.checksum
-              targetType = 'backup_package_path'
-              targetId = picked.directoryPath
+              packagePath = picked.directoryPath
             }
-
-            const validation = validateBackupArtifact(backupPath, expectedChecksum, manifestPath)
-            if (!validation.valid) {
-              return { success: false, error: validation.error ?? '备份文件校验失败' }
-            }
-
-            restoreLogContext = {
-              ledgerId,
-              targetType,
-              targetId,
-              backupPath,
-              manifestPath,
-              userId: user.id,
-              username: user.username
-            }
-
-            pendingRestoreLogPath = getPendingRestoreLogPath(app.getPath('userData'))
-            writePendingRestoreLog(pendingRestoreLogPath, {
-              userId: restoreLogContext.userId,
-              username: restoreLogContext.username,
-              ledgerId: restoreLogContext.ledgerId,
-              targetType: restoreLogContext.targetType,
-              targetId: restoreLogContext.targetId,
-              backupPath: restoreLogContext.backupPath,
-              manifestPath: restoreLogContext.manifestPath,
-              backupMode: 'system_db_snapshot'
+            const result = await restoreBackupCommand(createCommandContextFromEvent(event), {
+              backupId: payload?.backupId,
+              packagePath,
+              ...(payload?.operationId ? { operationId: payload.operationId } : {})
             })
-
-            closeDatabase()
-            databaseClosed = true
-
-            restoreBackupArtifact({
-              backupPath,
-              manifestPath,
-              expectedChecksum,
-              targetPath: getDatabasePath()
-            })
+            if (!isCommandSuccess(result))
+              return {
+                success: false,
+                error: result.error?.message ?? '恢复失败',
+                errorCode: result.error?.code,
+                errorDetails: result.error?.details
+              }
             app.relaunch()
             app.exit(0)
-
-            return {
-              success: true,
-              restartRequired: true
-            }
+            return { success: true, restartRequired: true, operationId: result.data.operationId }
           } catch (error) {
-            if (pendingRestoreLogPath) {
-              clearPendingRestoreLog(pendingRestoreLogPath)
-            }
-
-            if (databaseClosed) {
-              initializeDatabase()
-              databaseClosed = false
-            }
-
-            if (restoreLogContext) {
-              appendOperationLog(getDatabase(), {
-                ledgerId: restoreLogContext.ledgerId,
-                userId: restoreLogContext.userId,
-                username: restoreLogContext.username,
-                module: 'backup',
-                action: 'restore_failed',
-                targetType: restoreLogContext.targetType,
-                targetId: restoreLogContext.targetId,
-                details: {
-                  backupPath: restoreLogContext.backupPath,
-                  manifestPath: restoreLogContext.manifestPath,
-                  backupMode: 'system_db_snapshot',
-                  error: error instanceof Error ? error.message : '恢复备份失败'
-                }
-              })
-            }
-
             return {
               success: false,
               error: error instanceof Error ? error.message : '恢复备份失败'

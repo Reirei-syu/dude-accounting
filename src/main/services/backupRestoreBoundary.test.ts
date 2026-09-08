@@ -23,6 +23,22 @@ describe('整库恢复前拒绝损坏载荷', () => {
       fs.writeFileSync(target + suffix, `original${suffix}`)
   })
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
+  it('候选库审计写入失败不切换主库，也不更改源备份', () => {
+    const checksum = computeFileSha256(source)
+    let called = false
+    expect(() => restoreBackupArtifact({
+      backupPath: source, targetPath: target, manifestPath: null, expectedChecksum: checksum,
+      commitCandidate(candidate) {
+        called = true
+        candidate.exec("INSERT INTO users(username) VALUES('candidate-only')")
+        throw new Error('模拟恢复审计失败')
+      }
+    })).toThrow('模拟恢复审计失败')
+    expect(called).toBe(true)
+    expect(computeFileSha256(source)).toBe(checksum)
+    for (const suffix of ['', '-wal', '-shm'])
+      expect(fs.readFileSync(target + suffix, 'utf8')).toBe(`original${suffix}`)
+  })
   it('主文件摘要不变时仍拒绝未声明 WAL', () => {
     const checksum = computeFileSha256(source)
     const db = new Database(source)

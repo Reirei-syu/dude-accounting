@@ -23,6 +23,7 @@ export function registerAuditLogHandlers(): void {
       payload?: {
         filters?: OperationLogFilters
         filePath?: string
+        operationId?: string
       }
     ) => {
       const result = await exportAuditLogsCommand(createCommandContextFromEvent(event), payload)
@@ -35,7 +36,9 @@ export function registerAuditLogHandlers(): void {
 
       return {
         success: false,
-        error: result.error?.message ?? '导出操作日志失败'
+        error: result.error?.message ?? '导出操作日志失败',
+        errorCode: result.error?.code,
+        details: result.error?.details
       }
     }
   )

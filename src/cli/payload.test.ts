@@ -9,6 +9,11 @@ import { normalizeCliPayloadFilePath, resolveCliPayload } from './payload'
 const tempFiles: string[] = []
 
 describe('resolveCliPayload', () => {
+  it.each(['D:\\isolated\\backup', '/mnt/d/isolated/backup'])('文件操作ID在 %s 路径的CLI payload中保持不变', (packagePath) => {
+    const operationId = '12345678-1234-4234-8234-123456789abc'
+    const args = parseCliArgs(['backup', 'import', '--operationId', operationId, '--packagePath', packagePath])
+    expect(resolveCliPayload({ flags: args.flags })).toEqual({ operationId, packagePath })
+  })
   afterEach(() => {
     while (tempFiles.length > 0) {
       const filePath = tempFiles.pop()

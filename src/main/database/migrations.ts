@@ -11,11 +11,13 @@ import {
   validateLegacyObjects
 } from './legacyMigrations'
 import { migrateAuthRevision } from './authRevisionMigration'
+import { migrateFileOperationCommits } from './fileOperationMigration'
 
 const MIGRATIONS = [
   { version: 1, name: 'legacy 结构归一与原记录归档', run: migrateLegacyStructure },
   { version: 2, name: '历史元数据归一与唯一索引', run: migrateLegacyDataAndIndexes },
-  { version: 3, name: '授权版本与最小会话身份', run: migrateAuthRevision }
+  { version: 3, name: '授权版本与最小会话身份', run: migrateAuthRevision },
+  { version: 4, name: '文件操作原子提交标记', run: migrateFileOperationCommits }
 ] as const
 
 export interface MigrationOptions {

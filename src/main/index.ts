@@ -92,25 +92,23 @@ function flushPendingRestoreLog(): void {
     return
   }
 
-  try {
-    appendOperationLog(getDatabase(), {
+  appendOperationLog(getDatabase(), {
       ledgerId: payload.ledgerId,
       userId: payload.userId,
       username: payload.username,
       module: 'backup',
-      action: 'restore',
-      targetType: payload.targetType,
-      targetId: payload.targetId,
+      action: 'restore_legacy_unverified',
+      targetType: 'legacy_restore',
+      targetId: typeof payload.targetId === 'number' && Number.isSafeInteger(payload.targetId)
+        ? payload.targetId : null,
       details: {
-        backupPath: payload.backupPath,
-        manifestPath: payload.manifestPath,
-        restartRequired: true,
+        state: 'recovery_required',
+        errorCode: 'LEGACY_RESTORE_UNVERIFIED',
+        compensation: 'manual_review_required',
         backupMode: payload.backupMode
       }
-    })
-  } finally {
-    clearPendingRestoreLog(pendingLogPath)
-  }
+  })
+  clearPendingRestoreLog(pendingLogPath)
 }
 
 app.whenReady().then(() => {

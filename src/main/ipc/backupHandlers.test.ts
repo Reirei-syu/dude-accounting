@@ -34,6 +34,9 @@ const backupHandlerMocks = vi.hoisted(() => {
     importBackupCommand: vi.fn(),
     listBackupsCommand: vi.fn(),
     validateBackupCommand: vi.fn(),
+    restoreBackupCommand: vi.fn(),
+    relaunch: vi.fn(),
+    exit: vi.fn(),
     getBackupPackageById: vi.fn(),
     getPathPreferenceWithFallback: vi.fn(),
     rememberPathPreference: vi.fn(),
@@ -43,7 +46,11 @@ const backupHandlerMocks = vi.hoisted(() => {
 })
 
 vi.mock('electron', () => ({
-  app: { getPath: backupHandlerMocks.appGetPath },
+  app: {
+    getPath: backupHandlerMocks.appGetPath,
+    relaunch: backupHandlerMocks.relaunch,
+    exit: backupHandlerMocks.exit
+  },
   BrowserWindow: { fromWebContents: vi.fn(() => null) },
   dialog: {
     showOpenDialog: backupHandlerMocks.showOpenDialog
@@ -98,7 +105,8 @@ vi.mock('../commands/backupCommands', () => ({
   deleteBackupCommand: backupHandlerMocks.deleteBackupCommand,
   importBackupCommand: backupHandlerMocks.importBackupCommand,
   listBackupsCommand: backupHandlerMocks.listBackupsCommand,
-  validateBackupCommand: backupHandlerMocks.validateBackupCommand
+  validateBackupCommand: backupHandlerMocks.validateBackupCommand,
+  restoreBackupCommand: backupHandlerMocks.restoreBackupCommand
 }))
 
 vi.mock('./session', () => ({
@@ -278,6 +286,15 @@ describe('backup IPC handlers', () => {
   })
 
   it('guides users to backup import when restore target is a ledger backup package', async () => {
+    backupHandlerMocks.restoreBackupCommand.mockResolvedValue({
+      status: 'error',
+      data: null,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: '账套备份不支持整库恢复，请改用 backup import 导入为新账套',
+        details: { backupId: 9, packageType: 'ledger_backup' }
+      }
+    })
     backupHandlerMocks.getBackupPackageById.mockReturnValue({
       id: 9,
       ledger_id: 1,
@@ -300,5 +317,32 @@ describe('backup IPC handlers', () => {
       }
     })
     expect(backupHandlerMocks.validateBackupArtifact).not.toHaveBeenCalled()
+  })
+  it('GUI 恢复复用命令且仅在成功后重启', async () => {
+    const handler = backupHandlerMocks.handlers.get('backup:restore')
+    backupHandlerMocks.restoreBackupCommand.mockResolvedValue({
+      status: 'success',
+      data: { restartRequired: true },
+      error: null
+    })
+    expect(await handler?.({ sender: { id: 1 } }, { packagePath: 'D:/isolated/package' })).toEqual({
+      success: true,
+      restartRequired: true
+    })
+    expect(backupHandlerMocks.restoreBackupCommand).toHaveBeenCalledWith(expect.anything(), {
+      backupId: undefined,
+      packagePath: 'D:/isolated/package'
+    })
+    expect(backupHandlerMocks.relaunch).toHaveBeenCalledTimes(1)
+    expect(backupHandlerMocks.exit).toHaveBeenCalledWith(0)
+    backupHandlerMocks.restoreBackupCommand.mockResolvedValue({
+      status: 'error',
+      data: null,
+      error: { code: 'INTERNAL_ERROR', message: '失败', details: null }
+    })
+    expect(await handler?.({ sender: { id: 1 } }, { backupId: 1 })).toMatchObject({
+      success: false
+    })
+    expect(backupHandlerMocks.relaunch).toHaveBeenCalledTimes(1)
   })
 })

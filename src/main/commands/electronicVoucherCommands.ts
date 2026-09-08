@@ -1,13 +1,20 @@
 import fs from 'node:fs'
+import { fileOperationCommandError } from './fileOperationError'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
+import { resolveSessionActor } from '../security/sessionAuthority'
+import { FileOperationJournal, requireOperationId } from '../services/fileOperationJournal'
+import { FileOperationLifecycle } from '../services/fileOperationLifecycle'
+import {
+  fileOperationArtifactRecovery,
+  prepareFileOperationArtifact
+} from '../services/fileOperationArtifact'
 import {
   buildElectronicVoucherFingerprint,
-  importElectronicVoucher
+  buildImportedVoucherMetadata,
+  persistImportedElectronicVoucher
 } from '../services/electronicVoucher'
-import {
-  requireCommandLedgerAccess,
-  requireCommandPermission
-} from './authz'
+import { requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
 import { withAuditedCommandResult } from './auditedResult'
@@ -23,18 +30,24 @@ export async function importElectronicVoucherCommand(
   payload: {
     ledgerId: number
     sourcePath: string
+    operationId?: string
     sourceNumber?: string | null
     sourceDate?: string | null
     amountCents?: number | null
   }
 ): Promise<
-  CommandResult<{ fileId: number; recordId: number; voucherType: string; fingerprint: string }>
+  CommandResult<{ operationId: string; fileId: number; recordId: number; voucherType: string; fingerprint: string }>
 > {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
     if (!fs.existsSync(payload.sourcePath)) {
-      throw new CommandError('NOT_FOUND', '电子凭证源文件不存在', { sourcePath: payload.sourcePath }, 5)
+      throw new CommandError(
+        'NOT_FOUND',
+        '电子凭证源文件不存在',
+        { sourcePath: payload.sourcePath },
+        5
+      )
     }
     const ledger = context.db
       .prepare('SELECT id FROM ledgers WHERE id = ?')
@@ -43,7 +56,9 @@ export async function importElectronicVoucherCommand(
       throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId: payload.ledgerId }, 5)
     }
     const ledgerDir = path.join(getElectronicVoucherRootDir(context), `ledger-${payload.ledgerId}`)
-    const imported = importElectronicVoucher(context.db, {
+    const operationId = requireOperationId(payload.operationId)
+    const metadata = buildImportedVoucherMetadata(payload.sourcePath)
+    const input = {
       ledgerId: payload.ledgerId,
       sourcePath: payload.sourcePath,
       storageDir: ledgerDir,
@@ -51,30 +66,81 @@ export async function importElectronicVoucherCommand(
       sourceNumber: payload.sourceNumber ?? null,
       sourceDate: payload.sourceDate ?? null,
       amountCents: payload.amountCents ?? null
-    })
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId: payload.ledgerId,
-        module: 'electronic_voucher',
-        action: 'import',
-        targetType: 'electronic_voucher_record',
-        targetId: imported.recordId,
-        details: {
-          sourcePath: payload.sourcePath,
-          storedPath: imported.storedPath,
-          voucherType: imported.voucherType
+    }
+    const journal = new FileOperationJournal(context.db.name)
+    let storedPath = ''
+    try {
+      return new FileOperationLifecycle(journal, context.db).execute(
+        {
+          operationId,
+          kind: 'electronic_voucher_import',
+          actorId: actor.id,
+          username: actor.username,
+          ledgerId: payload.ledgerId,
+          requestHash: createHash('sha256')
+            .update(
+              JSON.stringify([
+                payload.ledgerId,
+                metadata,
+                input.sourceNumber,
+                input.sourceDate,
+                input.amountCents
+              ])
+            )
+            .digest('hex')
+        },
+        fileOperationArtifactRecovery,
+        (lease) => {
+          fs.mkdirSync(ledgerDir, { recursive: true })
+          const resultDirectory = prepareFileOperationArtifact(
+            journal,
+            lease,
+            operationId,
+            ledgerDir,
+            (staging) => {
+              const stagedPath = path.join(staging, metadata.originalName)
+              fs.copyFileSync(payload.sourcePath, stagedPath, fs.constants.COPYFILE_EXCL)
+              if (buildImportedVoucherMetadata(stagedPath).sha256 !== metadata.sha256)
+                throw new Error('电子凭证源文件在导入期间发生变化')
+            }
+          )
+          storedPath = path.join(resultDirectory, metadata.originalName)
+        },
+        () => {
+          context.actor = resolveSessionActor(context.db, actor.session, actor.source)
+          requireCommandPermission(context.actor, 'voucher_entry')
+          requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
+          const imported = persistImportedElectronicVoucher(context.db, input, storedPath, metadata)
+          appendActorOperationLog(
+            {
+              ...context,
+              actor
+            },
+            {
+              ledgerId: payload.ledgerId,
+              module: 'electronic_voucher',
+              action: 'import',
+              targetType: 'electronic_voucher_record',
+              targetId: imported.recordId,
+              details: {
+                operationId,
+                voucherType: imported.voucherType
+              }
+            }
+          )
+          return {
+            operationId,
+            fileId: imported.fileId,
+            recordId: imported.recordId,
+            voucherType: imported.voucherType,
+            fingerprint: imported.fingerprint
+          }
         }
-      }
-    )
-    return {
-      fileId: imported.fileId,
-      recordId: imported.recordId,
-      voucherType: imported.voucherType,
-      fingerprint: imported.fingerprint
+      )
+    } catch (error) {
+      throw fileOperationCommandError(error, operationId, journal)
+    } finally {
+      journal.close()
     }
   })
 }
@@ -123,9 +189,7 @@ export async function verifyElectronicVoucherCommand(
     const actor = requireCommandPermission(context.actor, 'voucher_entry')
     const record = context.db
       .prepare('SELECT id, ledger_id, voucher_type FROM electronic_voucher_records WHERE id = ?')
-      .get(payload.recordId) as
-      | { id: number; ledger_id: number; voucher_type: string }
-      | undefined
+      .get(payload.recordId) as { id: number; ledger_id: number; voucher_type: string } | undefined
     if (!record) {
       throw new CommandError('NOT_FOUND', '电子凭证记录不存在', { recordId: payload.recordId }, 5)
     }
@@ -147,7 +211,8 @@ export async function verifyElectronicVoucherCommand(
         payload.recordId,
         verificationStatus,
         payload.verificationMethod ?? 'manual',
-        payload.verificationMessage ?? (verificationStatus === 'verified' ? '校验通过' : '校验失败'),
+        payload.verificationMessage ??
+          (verificationStatus === 'verified' ? '校验通过' : '校验失败'),
         verificationStatus
       )
     context.db
@@ -313,9 +378,11 @@ export async function convertElectronicVoucherCommand(
     requireCommandLedgerAccess(context.db, context.actor, record.ledger_id)
     const draftVoucher = {
       ledgerId: record.ledger_id,
-      voucherDate: payload.voucherDate ?? record.source_date ?? new Date().toISOString().slice(0, 10),
+      voucherDate:
+        payload.voucherDate ?? record.source_date ?? new Date().toISOString().slice(0, 10),
       voucherWord: payload.voucherWord ?? '记',
-      summary: record.source_number?.trim() || record.counterpart_name?.trim() || record.original_name,
+      summary:
+        record.source_number?.trim() || record.counterpart_name?.trim() || record.original_name,
       sourceRecordId: record.id,
       entries: [] as Array<{
         summary: string

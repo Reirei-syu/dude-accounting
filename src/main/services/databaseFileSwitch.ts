@@ -182,6 +182,10 @@ function cleanupImportStaging(targetPath: string): void {
   }
 }
 
+export function withDatabaseReplacementLock<T>(targetPath: string, action: () => T): T {
+  return withSwitchLock(targetPath, action)
+}
+
 function withSwitchLock<T>(targetPath: string, action: () => T): T {
   const lockPath = switchLockPath(targetPath)
   if (heldLocks.has(lockPath)) return action()

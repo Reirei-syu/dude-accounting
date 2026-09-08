@@ -1,6 +1,20 @@
 import fs from 'node:fs'
+import { fileOperationDeletionRecovery, prepareFileOperationDeletion } from '../services/fileOperationDeletion'
+import { fileOperationCommandError } from './fileOperationError'
 import path from 'node:path'
-import { closeDatabase, getDatabase, getDatabasePath, initializeDatabase } from '../database/init'
+import { createHash } from 'node:crypto'
+import { resolveSessionActor } from '../security/sessionAuthority'
+import { FileOperationJournal, requireOperationId } from '../services/fileOperationJournal'
+import { FileOperationLifecycle } from '../services/fileOperationLifecycle'
+import { fileOperationDatabaseRecovery } from '../services/fileOperationDatabaseRecovery'
+import { withDatabaseReplacementLock } from '../services/databaseFileSwitch'
+import { computeFileSha256 } from '../services/fileIntegrity'
+import {
+  fileOperationArtifactRecovery,
+  treeDigest,
+  prepareFileOperationArtifact
+} from '../services/fileOperationArtifact'
+import { closeDatabase, getDatabase, initializeDatabase } from '../database/init'
 import {
   createBackupPackageRecord,
   deleteBackupPackageRecord,
@@ -20,15 +34,9 @@ import {
 } from '../services/backupRecovery'
 import { formatLocalDateTime } from '../services/localTime'
 import {
-  deleteBackupPhysicalPackage,
   getBackupPhysicalPackageStatus
 } from '../services/packageDeletion'
 import { rememberPathPreference } from '../services/pathPreference'
-import {
-  clearPendingRestoreLog,
-  getPendingRestoreLogPath,
-  writePendingRestoreLog
-} from '../services/pendingRestoreLog'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requestEmbeddedCliRelaunch } from '../runtime/embeddedCliState'
 import { appendCliE2eEvent, shouldSuppressCliE2eRelaunch } from '../runtime/cliE2eEvents'
@@ -71,9 +79,11 @@ export async function createBackupCommand(
     ledgerId: number
     period?: string | null
     directoryPath: string
+    operationId?: string
   }
 ): Promise<
   CommandResult<{
+    operationId: string
     backupId: number
     directoryPath: string
     period: string | null
@@ -93,69 +103,111 @@ export async function createBackupCommand(
       throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId: payload.ledgerId }, 5)
     }
 
-    rememberPathPreference(context.db, BACKUP_CREATE_LAST_DIR_KEY, payload.directoryPath)
-    context.db.pragma('wal_checkpoint(TRUNCATE)')
     const createdAtDate = context.now
     const backupPeriod = null
     const fiscalYear = null
-    const artifact = createLedgerBackupArtifact({
-      sourcePath: getDatabasePath(),
-      backupDir: payload.directoryPath,
-      ledgerId: payload.ledgerId,
-      ledgerName: ledger.name,
-      period: null,
-      fiscalYear: null,
-      now: createdAtDate
-    })
-    const createdAt = formatLocalDateTime(createdAtDate)
-    const backupId = createBackupPackageRecord(context.db, {
-      ledgerId: payload.ledgerId,
-      backupPeriod,
-      fiscalYear,
-      packageType: 'ledger_backup',
-      packageSchemaVersion: '2.1',
-      backupPath: artifact.backupPath,
-      manifestPath: artifact.manifestPath,
-      checksum: artifact.checksum,
-      fileSize: artifact.fileSize,
-      createdBy: actor.id,
-      createdAt
-    })
+    const operationId = requireOperationId(payload.operationId)
+    const journal = new FileOperationJournal(context.db.name)
+    const lifecycle = new FileOperationLifecycle(journal, context.db)
+    let artifact: ReturnType<typeof createLedgerBackupArtifact>
+    try {
+      return lifecycle.execute(
+        {
+          operationId,
+          kind: 'backup_create',
+          actorId: actor.id,
+          username: actor.username,
+          ledgerId: payload.ledgerId,
+          requestHash: createHash('sha256')
+            .update(JSON.stringify([payload.ledgerId, path.resolve(payload.directoryPath)]))
+            .digest('hex')
+        },
+        fileOperationArtifactRecovery,
+        (lease) => {
+          context.db.pragma('wal_checkpoint(TRUNCATE)')
+          prepareFileOperationArtifact(
+            journal,
+            lease,
+            operationId,
+            payload.directoryPath,
+            (staging, finalDirectory) => {
+              const staged = createLedgerBackupArtifact({
+                sourcePath: context.db.name,
+                backupDir: staging,
+                ledgerId: payload.ledgerId,
+                ledgerName: ledger.name,
+                period: null,
+                fiscalYear: null,
+                now: createdAtDate
+              })
+              artifact = {
+                ...staged,
+                packageDir: path.join(finalDirectory, path.relative(staging, staged.packageDir)),
+                backupPath: path.join(finalDirectory, path.relative(staging, staged.backupPath)),
+                manifestPath: path.join(finalDirectory, path.relative(staging, staged.manifestPath))
+              }
+            }
+          )
+        },
+        () => {
+          context.actor = resolveSessionActor(context.db, actor.session, actor.source)
+          requireCommandPermission(context.actor, 'ledger_settings')
+          requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
+          rememberPathPreference(context.db, BACKUP_CREATE_LAST_DIR_KEY, payload.directoryPath)
+          const createdAt = formatLocalDateTime(createdAtDate)
+          const backupId = createBackupPackageRecord(context.db, {
+            ledgerId: payload.ledgerId,
+            backupPeriod,
+            fiscalYear,
+            packageType: 'ledger_backup',
+            packageSchemaVersion: '2.1',
+            backupPath: artifact.backupPath,
+            manifestPath: artifact.manifestPath,
+            checksum: artifact.checksum,
+            fileSize: artifact.fileSize,
+            createdBy: actor.id,
+            createdAt
+          })
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId: payload.ledgerId,
-        module: 'backup',
-        action: 'create',
-        targetType: 'backup_package',
-        targetId: backupId,
-        details: {
-          period: backupPeriod,
-          fiscalYear,
-          selectedDirectory: payload.directoryPath,
-          packageDir: artifact.packageDir,
-          backupPath: artifact.backupPath,
-          manifestPath: artifact.manifestPath,
-          fileSize: artifact.fileSize,
-          createdAt,
-          backupMode: 'ledger_current_state_backup',
-          packageType: 'ledger_backup'
+          appendActorOperationLog(
+            {
+              ...context,
+              actor
+            },
+            {
+              ledgerId: payload.ledgerId,
+              module: 'backup',
+              action: 'create',
+              targetType: 'backup_package',
+              targetId: backupId,
+              details: {
+                period: backupPeriod,
+                fiscalYear,
+                operationId,
+                fileSize: artifact.fileSize,
+                createdAt,
+                backupMode: 'ledger_current_state_backup',
+                packageType: 'ledger_backup'
+              }
+            }
+          )
+
+          return {
+            operationId,
+            backupId,
+            directoryPath: payload.directoryPath,
+            period: backupPeriod,
+            backupPath: artifact.backupPath,
+            manifestPath: artifact.manifestPath,
+            checksum: artifact.checksum,
+            fileSize: artifact.fileSize
+          }
         }
-      }
-    )
-
-    return {
-      backupId,
-      directoryPath: payload.directoryPath,
-      period: backupPeriod,
-      backupPath: artifact.backupPath,
-      manifestPath: artifact.manifestPath,
-      checksum: artifact.checksum,
-      fileSize: artifact.fileSize
+      )
+    } catch (error) {
+      throw fileOperationCommandError(error, operationId, journal)
+    } finally {
+      journal.close()
     }
   })
 }
@@ -232,8 +284,8 @@ export async function validateBackupCommand(
 
 export async function importBackupCommand(
   context: CommandContext,
-  payload: { backupId?: number; packagePath?: string }
-): Promise<CommandResult<{ importedLedgerId: number; importedLedgerName: string }>> {
+  payload: { backupId?: number; packagePath?: string; operationId?: string }
+): Promise<CommandResult<{ operationId: string; importedLedgerId: number; importedLedgerName: string }>> {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'ledger_settings')
     let backupPath = ''
@@ -265,147 +317,168 @@ export async function importBackupCommand(
       manifestPath = resolved.manifestPath
     }
 
-    context.db.pragma('wal_checkpoint(TRUNCATE)')
-    let closedForSwitch = false
+    const expectedManifestDigest = createHash('sha256')
+      .update(JSON.stringify(JSON.parse(fs.readFileSync(manifestPath, 'utf8')))).digest('hex')
+    const targetPath = context.db.name
+    const operationId = requireOperationId(payload.operationId)
+    const journal = new FileOperationJournal(targetPath)
     try {
-      const imported = importLedgerBackupArtifact({
-        backupPath,
-        manifestPath,
-        targetPath: getDatabasePath(),
-        attachmentRootDir: getElectronicVoucherRootDir(context),
-        operatorUserId: actor.id,
-        operatorIsAdmin: actor.isAdmin,
-        beforeSwitch: () => {
-          closeDatabase()
-          closedForSwitch = true
+      return new FileOperationLifecycle(journal, context.db).executeReplacement<{
+        operationId: string
+        importedLedgerId: number
+        importedLedgerName: string
+      }>(
+        {
+          operationId,
+          kind: 'backup_import',
+          actorId: actor.id,
+          username: actor.username,
+          ledgerId: sourceLedgerId,
+          requestHash: createHash('sha256')
+            .update(
+              JSON.stringify([
+                targetPath,
+                expectedManifestDigest,
+                computeFileSha256(backupPath)
+              ])
+            )
+            .digest('hex')
         },
-        appendImportLog: (db, imported) =>
-          appendActorOperationLog(
-            {
-              ...context,
-              db,
-              actor
-            },
-            {
-              ledgerId: imported.importedLedgerId,
-              module: 'backup',
-              action: 'import',
-              targetType: 'ledger',
-              targetId: imported.importedLedgerId,
-              details: {
-                sourceBackupId,
-                sourceLedgerId,
-                sourcePackagePath: backupPath,
+        fileOperationDatabaseRecovery,
+        (commitCandidate, lease) => {
+          withDatabaseReplacementLock(targetPath, () => {
+            journal.saveRecoveryPlan(lease, operationId, { targetPath })
+            context.actor = resolveSessionActor(context.db, actor.session, actor.source)
+            requireCommandPermission(context.actor, 'ledger_settings')
+            if (sourceLedgerId !== null)
+              requireCommandLedgerAccess(context.db, context.actor, sourceLedgerId)
+            context.db.pragma('wal_checkpoint(TRUNCATE)')
+            let closed = false
+            try {
+              importLedgerBackupArtifact({
+                expectedManifestDigest,
+                operationId,
+                backupPath,
                 manifestPath,
-                packageType: 'ledger_backup',
-                importedLedgerName: imported.importedLedgerName
+                targetPath,
+                attachmentRootDir: getElectronicVoucherRootDir(context),
+                operatorUserId: actor.id,
+                operatorIsAdmin: context.actor!.isAdmin,
+                preparedAssets(staging, assetPath) {
+                  journal.saveRecoveryPlan(lease, operationId, {
+                    targetPath,
+                    assetPath,
+                    assetDigest: treeDigest(staging)
+                  })
+                },
+                beforeSwitch() {
+                  closeDatabase()
+                  closed = true
+                },
+                appendImportLog(db, imported) {
+                  if (payload.packagePath) rememberPathPreference(db, BACKUP_IMPORT_LAST_DIR_KEY, path.dirname(payload.packagePath))
+                  appendActorOperationLog(
+                    { ...context, db, actor },
+                    {
+                      ledgerId: imported.importedLedgerId,
+                      module: 'backup',
+                      action: 'import',
+                      targetType: 'ledger',
+                      targetId: imported.importedLedgerId,
+                      details: {
+                        operationId,
+                        sourceBackupId,
+                        sourceLedgerId,
+                        packageType: 'ledger_backup'
+                      }
+                    }
+                  )
+                  commitCandidate(db, { ...imported, operationId })
+                }
+              })
+            } finally {
+              if (closed) {
+                initializeDatabase()
+                context.db = getDatabase()
               }
             }
-          )
-      })
-
-      return imported
+          })
+        },
+        () => {
+          if (!context.db.open) {
+            initializeDatabase()
+            context.db = getDatabase()
+          }
+          return context.db
+        }
+      )
+    } catch (error) {
+      throw fileOperationCommandError(error, operationId, journal)
     } finally {
-      if (closedForSwitch) {
-        initializeDatabase()
-        context.db = getDatabase()
-      }
+      journal.close()
     }
   })
 }
 
 export async function deleteBackupCommand(
   context: CommandContext,
-  payload: { backupId: number; deleteRecordOnly?: boolean }
-): Promise<
-  CommandResult<{ deletedPhysicalPackage: boolean; deletedPaths: string[]; packagePath?: string }>
-> {
+  payload: { backupId: number; deleteRecordOnly?: boolean; operationId?: string }
+): Promise<CommandResult<{ operationId: string; deletedPhysicalPackage: boolean; deletedPaths: string[]; packagePath?: string }>> {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'ledger_settings')
-    const row = getBackupPackageById(context.db, payload.backupId)
-    if (!row) {
-      throw new CommandError('NOT_FOUND', '备份记录不存在', { backupId: payload.backupId }, 5)
-    }
-    requireCommandLedgerAccess(context.db, context.actor, row.ledger_id)
-    assertHistoricalVersionDeletable(
-      row.id,
-      listBackupPackageIdsByLedger(context.db, row.ledger_id),
-      '备份'
-    )
-    const physicalStatus = getBackupPhysicalPackageStatus({
-      backupPath: row.backup_path,
-      manifestPath: row.manifest_path,
-      protectedDir: path.dirname(getDatabasePath())
-    })
-
-    if (payload.deleteRecordOnly && physicalStatus.physicalExists) {
-      throw new CommandError(
-        'VALIDATION_ERROR',
-        '路径下备份包仍存在，请执行正常删除以同时删除实体包。',
-        null,
-        2
-      )
-    }
-
-    const deletionResult = payload.deleteRecordOnly
-      ? {
-          physicalExists: false,
-          deletedPaths: [],
-          packagePath: physicalStatus.packagePath
-        }
-      : deleteBackupPhysicalPackage({
-          backupPath: row.backup_path,
-          manifestPath: row.manifest_path,
-          protectedDir: path.dirname(getDatabasePath())
-        })
-
-    if (!payload.deleteRecordOnly && !deletionResult.physicalExists) {
-      throw new CommandError(
-        'RISK_CONFIRMATION_REQUIRED',
-        '路径下备份包已不存在，若只删除数据库记录请显式传入 deleteRecordOnly=true。',
-        {
-          packagePath: deletionResult.packagePath,
-          missingPhysicalPackage: true
-        },
-        2
-      )
-    }
-
-    deleteBackupPackageRecord(context.db, payload.backupId)
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId: row.ledger_id,
-        module: 'backup',
-        action: 'delete',
-        targetType: 'backup_package',
-        targetId: row.id,
-        details: {
-          period: row.backup_period,
-          backupPath: row.backup_path,
-          manifestPath: row.manifest_path,
-          deletedPaths: deletionResult.deletedPaths,
-          deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package',
-          physicalPackageMissing: !deletionResult.physicalExists
-        }
+    const operationId = requireOperationId(payload.operationId)
+    const journal = new FileOperationJournal(context.db.name)
+    try {
+      const row = getBackupPackageById(context.db, payload.backupId)
+      const prior = journal.getRecoveryRecord(operationId)
+      const ledgerId = row?.ledger_id ?? prior?.ledgerId
+      if (ledgerId !== null && ledgerId !== undefined) requireCommandLedgerAccess(context.db, context.actor, ledgerId)
+      let targets: string[] = []
+      let packagePath = ''
+      const validate = (): void => {
+        if (!row) throw new CommandError('NOT_FOUND', '备份记录不存在', null, 5)
+        assertHistoricalVersionDeletable(row.id, listBackupPackageIdsByLedger(context.db, row.ledger_id), '备份')
       }
-    )
-
-    return {
-      deletedPhysicalPackage: deletionResult.physicalExists,
-      deletedPaths: deletionResult.deletedPaths,
-      packagePath: deletionResult.packagePath
-    }
+      return new FileOperationLifecycle(journal, context.db).execute(
+        { operationId, kind: 'backup_delete', actorId: actor.id, username: actor.username,
+          ledgerId: ledgerId ?? null, requestHash: createHash('sha256').update(JSON.stringify([payload.backupId, Boolean(payload.deleteRecordOnly)])).digest('hex') },
+        fileOperationDeletionRecovery,
+        lease => {
+          validate()
+          if (!row) throw new Error('备份记录不存在')
+          const physicalStatus = getBackupPhysicalPackageStatus({ backupPath: row.backup_path, manifestPath: row.manifest_path, protectedDir: path.dirname(context.db.name) })
+          packagePath = physicalStatus.packagePath
+          if (payload.deleteRecordOnly && physicalStatus.physicalExists)
+            throw new CommandError('VALIDATION_ERROR', '实体包仍存在，请执行正常删除', null, 2)
+          if (!payload.deleteRecordOnly && !physicalStatus.physicalExists)
+            throw new CommandError('RISK_CONFIRMATION_REQUIRED', '实体包已不存在，请显式传入 deleteRecordOnly=true', { packagePath, missingPhysicalPackage: true }, 2)
+          targets = payload.deleteRecordOnly ? [] : path.resolve(physicalStatus.packagePath) === path.dirname(context.db.name)
+        ? [row.backup_path, row.manifest_path].filter((value): value is string => Boolean(value && fs.existsSync(value)))
+        : [physicalStatus.packagePath]
+          const parent = targets.length ? path.dirname(targets[0]) : path.dirname(context.db.name)
+          prepareFileOperationDeletion(journal, lease, operationId, targets, parent)
+        },
+        () => {
+          context.actor = resolveSessionActor(context.db, actor.session, actor.source)
+          requireCommandPermission(context.actor, 'ledger_settings')
+          if (ledgerId !== null && ledgerId !== undefined) requireCommandLedgerAccess(context.db, context.actor, ledgerId)
+          validate()
+          deleteBackupPackageRecord(context.db, payload.backupId)
+          appendActorOperationLog(context, { ledgerId: ledgerId ?? null, module: 'backup', action: 'delete',
+            targetType: 'backup_package', targetId: payload.backupId,
+            details: { operationId, deleteMode: payload.deleteRecordOnly ? 'record_only' : 'record_and_package' } })
+          return { operationId, deletedPhysicalPackage: targets.length > 0, deletedPaths: targets, packagePath }
+        }
+      )
+    } catch (error) { throw fileOperationCommandError(error, operationId, journal) }
+    finally { journal.close() }
   })
 }
 
 export async function restoreBackupCommand(
   context: CommandContext,
-  payload: { backupId?: number; packagePath?: string }
-): Promise<CommandResult<{ restartRequired: true; backupPath: string }>> {
+  payload: { backupId?: number; packagePath?: string; operationId?: string }
+): Promise<CommandResult<{ operationId: string; restartRequired: true; backupPath: string }>> {
   return withCommandResult(context, () => {
     const actor = requireCommandAdmin(context.actor)
 
@@ -456,36 +529,73 @@ export async function restoreBackupCommand(
       )
     }
 
-    const pendingRestoreLogPath = getPendingRestoreLogPath(context.runtime.userDataPath)
-    let databaseClosed = false
+    const targetPath = context.db.name
+    const operationId = requireOperationId(payload.operationId)
+    const journal = new FileOperationJournal(targetPath)
     try {
-      appendCliE2eEvent('backup.restore.requested', {
-        backupPath,
-        manifestPath,
-        ledgerId,
-        backupId: payload.backupId ?? null,
-        packagePath: payload.packagePath ?? null
-      })
-      writePendingRestoreLog(pendingRestoreLogPath, {
-        userId: actor.id,
-        username: actor.username,
-        ledgerId,
-        targetType: typeof payload.backupId === 'number' ? 'backup_package' : 'backup_package_path',
-        targetId:
-          typeof payload.backupId === 'number' ? payload.backupId : (payload.packagePath ?? null),
-        backupPath,
-        manifestPath,
-        backupMode: 'system_db_snapshot'
-      })
-
-      closeDatabase()
-      databaseClosed = true
-      restoreBackupArtifact({
-        backupPath,
-        manifestPath,
-        expectedChecksum,
-        targetPath: getDatabasePath()
-      })
+      const result = new FileOperationLifecycle(journal, context.db).executeReplacement<{ operationId: string; restartRequired: true; backupPath: string }>(
+        {
+          operationId,
+          kind: 'backup_restore',
+          actorId: actor.id,
+          username: actor.username,
+          ledgerId,
+          requestHash: createHash('sha256')
+            .update(JSON.stringify([expectedChecksum, targetPath]))
+            .digest('hex')
+        },
+        fileOperationDatabaseRecovery,
+        (commitCandidate, lease) => {
+          withDatabaseReplacementLock(targetPath, () => {
+            journal.saveRecoveryPlan(lease, operationId, { targetPath })
+            context.actor = resolveSessionActor(context.db, actor.session, actor.source)
+            requireCommandAdmin(context.actor)
+            appendCliE2eEvent('backup.restore.requested', {
+              backupPath,
+              manifestPath,
+              ledgerId,
+              backupId: payload.backupId ?? null,
+              packagePath: payload.packagePath ?? null
+            })
+            closeDatabase()
+            try {
+              restoreBackupArtifact({
+                backupPath,
+                manifestPath,
+                expectedChecksum,
+                targetPath,
+                  commitCandidate(candidate) {
+                    if (payload.packagePath) rememberPathPreference(candidate, BACKUP_RESTORE_LAST_DIR_KEY, path.dirname(payload.packagePath))
+                  appendActorOperationLog(
+                    { ...context, db: candidate, actor },
+                    {
+                      ledgerId,
+                      module: 'backup',
+                      action: 'restore',
+                      targetType: 'file_operation',
+                      targetId: operationId,
+                      details: { operationId, backupMode: 'system_db_snapshot' }
+                    }
+                  )
+                  commitCandidate(candidate, {
+                    restartRequired: true as const,
+                    backupPath,
+                    operationId
+                  })
+                }
+              })
+            } finally {
+              initializeDatabase()
+              context.db = getDatabase()
+            }
+          })
+        },
+        () => {
+          initializeDatabase()
+          context.db = getDatabase()
+          return context.db
+        }
+      )
       appendCliE2eEvent('backup.restore.relaunch-requested', {
         backupPath,
         manifestPath
@@ -493,16 +603,11 @@ export async function restoreBackupCommand(
       if (!shouldSuppressCliE2eRelaunch()) {
         requestEmbeddedCliRelaunch()
       }
-      return {
-        restartRequired: true as const,
-        backupPath
-      }
+      return result
     } catch (error) {
-      clearPendingRestoreLog(pendingRestoreLogPath)
-      if (databaseClosed) {
-        initializeDatabase()
-      }
-      throw error
+      throw fileOperationCommandError(error, operationId, journal)
+    } finally {
+      journal.close()
     }
   })
 }

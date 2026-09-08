@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
+import { assertSynchronousOperation } from './auditedTransaction'
+import { requireOperationId } from './fileOperationJournal'
 import { hashPassword } from '../security/password'
 import {
   buildTimestampToken,
@@ -806,6 +808,9 @@ function hasLedgerColumn(db: Database.Database, columnName: string): boolean {
 }
 
 interface LedgerImportInput {
+  operationId?: string
+  expectedManifestDigest?: string
+  preparedAssets?: (staging: string, finalPath: string) => undefined
   backupPath: string
   manifestPath: string
   targetPath: string
@@ -820,7 +825,9 @@ export function importLedgerBackupArtifact(input: LedgerImportInput): LedgerBack
   const validation = validateLedgerBackupArtifact(input.backupPath, input.manifestPath)
   if (!validation.valid || !validation.manifest)
     throw new Error(validation.error ?? '账套备份包校验失败')
-  const generation = randomUUID()
+  if (input.expectedManifestDigest && createHash('sha256').update(JSON.stringify(validation.manifest)).digest('hex') !== input.expectedManifestDigest)
+    throw new Error('操作规划后源备份清单发生变化，禁止导入')
+  const generation = input.operationId ? requireOperationId(input.operationId) : randomUUID()
   const parent = path.dirname(path.resolve(input.targetPath))
   const finalAssets = resolveContainedPath(parent, `import-assets/${generation}`)
   const manifest = validation.manifest
@@ -880,6 +887,10 @@ export function importLedgerBackupArtifact(input: LedgerImportInput): LedgerBack
         assets,
         finalAssets
       )
+      if (input.preparedAssets) {
+        assertSynchronousOperation(input.preparedAssets as () => unknown)
+        if (input.preparedAssets(assets, finalAssets) !== undefined) throw new Error('导入附件准备必须同步完成')
+      }
       input.beforeSwitch?.()
       switchDatabaseFile(copy, input.targetPath, { preparedPath: assets, generation })
       return result
@@ -1705,7 +1716,9 @@ export function restoreBackupArtifact(input: {
   tempPath?: string
   manifestPath?: string | null
   expectedChecksum?: string
+  commitCandidate?: (candidate: Database.Database) => undefined
 }): BackupRestoreResult {
+  if (input.commitCandidate) assertSynchronousOperation(input.commitCandidate as () => unknown)
   const manifestPath =
     input.manifestPath === undefined
       ? path.join(path.dirname(input.backupPath), 'manifest.json')
@@ -1731,6 +1744,15 @@ export function restoreBackupArtifact(input: {
       })
       // 恢复不能复活快照中已撤销的令牌；所有客户端必须重新登录。
       candidate.exec('DELETE FROM auth_sessions')
+      // 快照携带的提交证据属于旧控制日志，不能证明当前恢复后的文件操作。
+      if (candidate.prepare('SELECT 1 FROM file_operation_commits LIMIT 1').get())
+        candidate.exec('DELETE FROM file_operation_commits')
+      if (input.commitCandidate) {
+        candidate.transaction(() => {
+          const result = input.commitCandidate!(candidate)
+          if (result !== undefined) throw new TypeError('恢复候选库提交必须同步完成')
+        }).immediate()
+      }
       candidate.pragma('wal_checkpoint(TRUNCATE)')
       candidate.pragma('journal_mode = DELETE')
     } finally {

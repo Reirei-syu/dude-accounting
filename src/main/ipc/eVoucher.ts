@@ -15,6 +15,7 @@ export function registerElectronicVoucherHandlers(): void {
     async (
       event,
       payload: {
+        operationId?: string
         ledgerId: number
         sourcePath: string
         sourceNumber?: string | null
@@ -37,6 +38,7 @@ export function registerElectronicVoucherHandlers(): void {
           return toLegacySuccess(
             await importElectronicVoucherCommand(createCommandContextFromEvent(event), payload),
             (data) => ({
+              operationId: data.operationId,
               fileId: data.fileId,
               recordId: data.recordId,
               voucherType: data.voucherType,

@@ -74,7 +74,7 @@ describe('版本化数据库迁移', () => {
     createHistoricalFixture(db, variant)
     db.pragma('foreign_keys = ON')
     const result = runDatabaseMigrations(db)
-    expect(result.applied).toEqual([1, 2, 3])
+    expect(result.applied).toEqual([1, 2, 3, 4])
     validateSchema(db)
     expect(db.pragma('user_version', { simple: true })).toBe(CURRENT_SCHEMA_VERSION)
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
@@ -175,7 +175,7 @@ describe('版本化数据库迁移', () => {
     expect(getSchemaObjects(db)).toEqual(schema)
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
     expect(db.pragma('locking_mode', { simple: true })).toBe('normal')
-    expect(runDatabaseMigrations(db).applied).toEqual([1, 2, 3])
+    expect(runDatabaseMigrations(db).applied).toEqual([1, 2, 3, 4])
   })
 
   it('第一步提交后中断从版本1续跑；第二步失败不留下半份归档', () => {
@@ -201,7 +201,7 @@ describe('版本化数据库迁移', () => {
     expect(db.prepare('SELECT COUNT(*) AS count FROM migration_conflicts').get()).toEqual({
       count: 0
     })
-    expect(runDatabaseMigrations(db).applied).toEqual([2, 3])
+    expect(runDatabaseMigrations(db).applied).toEqual([2, 3, 4])
   })
 
   it('文件库升级前快照包含 WAL 已提交记录，副本可独立恢复演练', () => {
@@ -216,7 +216,7 @@ describe('版本化数据库迁移', () => {
     expect(restored.prepare('SELECT COUNT(*) AS count FROM report_snapshots').get()).toEqual({
       count: 2
     })
-    expect(runDatabaseMigrations(restored).applied).toEqual([1, 2, 3])
+    expect(runDatabaseMigrations(restored).applied).toEqual([1, 2, 3, 4])
     validateSchema(restored)
   })
 
@@ -324,6 +324,6 @@ describe('版本化数据库迁移', () => {
     expect(recovered.prepare('SELECT COUNT(*) AS count FROM report_snapshots').get()).toEqual({
       count: 2
     })
-    expect(runDatabaseMigrations(recovered).applied).toEqual([1, 2, 3])
+    expect(runDatabaseMigrations(recovered).applied).toEqual([1, 2, 3, 4])
   })
 })

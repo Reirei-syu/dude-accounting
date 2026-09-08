@@ -4,6 +4,7 @@ import { getRuntimeContext } from '../runtime/runtimeContext'
 import { seedAdminUser } from './seed'
 import { preflightDatabaseVersion, runDatabaseMigrations } from './migrations'
 import { acquireDatabaseConnectionLease, recoverDatabaseFileSwitch } from '../services/databaseFileSwitch'
+import { recoverPendingFileOperations } from '../services/fileOperationStartup'
 
 let db: Database.Database | null = null
 let databasePath: string | null = null
@@ -47,6 +48,7 @@ export function initializeDatabase(): void {
   try {
     runDatabaseMigrations(connection)
     connection.pragma('journal_mode = WAL')
+    recoverPendingFileOperations(connection)
     connection.transaction(() => {
       seedAdminUser(connection)
       const insertSetting = connection.prepare('INSERT OR IGNORE INTO system_settings (key, value) VALUES (?, ?)')

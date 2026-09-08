@@ -302,31 +302,33 @@ const api = {
         limit?: number
       }
       filePath?: string
+      operationId?: string
     }) => ipcRenderer.invoke('auditLog:export', payload)
   },
   backup: {
-    create: (payload: { ledgerId: number; period?: string | null; directoryPath?: string }) =>
+    create: (payload: { operationId?: string; ledgerId: number; period?: string | null; directoryPath?: string }) =>
       ipcRenderer.invoke('backup:create', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('backup:list', ledgerId),
     validate: (backupId: number) => ipcRenderer.invoke('backup:validate', backupId),
-    import: (payload?: { backupId?: number; packagePath?: string }) =>
+    import: (payload?: { operationId?: string; backupId?: number; packagePath?: string }) =>
       ipcRenderer.invoke('backup:import', payload),
-    delete: (payload: { backupId: number; deleteRecordOnly?: boolean }) =>
+    delete: (payload: { operationId?: string; backupId: number; deleteRecordOnly?: boolean }) =>
       ipcRenderer.invoke('backup:delete', payload),
-    restore: (payload?: { backupId?: number; packagePath?: string }) =>
+    restore: (payload?: { operationId?: string; backupId?: number; packagePath?: string }) =>
       ipcRenderer.invoke('backup:restore', payload)
   },
   archive: {
-    export: (payload: { ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
+    export: (payload: { operationId?: string; ledgerId: number; fiscalYear: string; directoryPath?: string }) =>
       ipcRenderer.invoke('archive:export', payload),
     list: (ledgerId?: number) => ipcRenderer.invoke('archive:list', ledgerId),
     validate: (exportId: number) => ipcRenderer.invoke('archive:validate', exportId),
-    delete: (payload: { exportId: number; deleteRecordOnly?: boolean }) =>
+    delete: (payload: { operationId?: string; exportId: number; deleteRecordOnly?: boolean }) =>
       ipcRenderer.invoke('archive:delete', payload),
     getManifest: (exportId: number) => ipcRenderer.invoke('archive:getManifest', exportId)
   },
   eVoucher: {
     import: (payload: {
+      operationId?: string
       ledgerId: number
       sourcePath: string
       sourceNumber?: string | null

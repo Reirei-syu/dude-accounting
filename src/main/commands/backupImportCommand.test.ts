@@ -1,100 +1,49 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-const backupImportMocks = vi.hoisted(() => ({
-  importLedgerBackupArtifact: vi.fn(),
-  resolveBackupArtifactPaths: vi.fn(),
-  rememberPathPreference: vi.fn(),
-  requireCommandPermission: vi.fn((actor) => actor),
-  requireCommandLedgerAccess: vi.fn(),
-  appendActorOperationLog: vi.fn()
-}))
-
-vi.mock('../database/init', () => ({
-  getDatabasePath: () => 'D:/tmp/dude-accounting.db'
-}))
-
-vi.mock('../services/backupRecovery', async () => {
-  const actual = await vi.importActual('../services/backupRecovery')
-  return {
-    ...(actual as object),
-    importLedgerBackupArtifact: backupImportMocks.importLedgerBackupArtifact,
-    resolveBackupArtifactPaths: backupImportMocks.resolveBackupArtifactPaths
-  }
-})
-
-vi.mock('../services/pathPreference', () => ({
-  rememberPathPreference: backupImportMocks.rememberPathPreference
-}))
-
-vi.mock('./authz', async () => {
-  const actual = await vi.importActual('./authz')
-  return {
-    ...(actual as object),
-    requireCommandPermission: backupImportMocks.requireCommandPermission,
-    requireCommandLedgerAccess: backupImportMocks.requireCommandLedgerAccess
-  }
-})
-
-vi.mock('./operationLog', async () => {
-  const actual = await vi.importActual('./operationLog')
-  return {
-    ...(actual as object),
-    appendActorOperationLog: backupImportMocks.appendActorOperationLog
-  }
-})
-
-import { importBackupCommand } from './backupCommands'
+import path from 'node:path'
+import fs from 'node:fs'
+import { describe, expect, it, vi } from 'vitest'
+import { FileOperationJournal, requireOperationId } from '../services/fileOperationJournal'
+import { createBackupCommand, importBackupCommand } from './backupCommands'
+import { createBackupOperationFixture } from './testSupport/backupOperationFixture'
 
 describe('importBackupCommand', () => {
-  const context = {
-    db: {
-      pragma: vi.fn()
-    },
-    runtime: {
-      userDataPath: 'D:/tmp/userData'
-    },
-    actor: {
-      id: 1,
-      username: 'admin',
-      permissions: {},
-      isAdmin: true,
-      source: 'cli' as const
-    },
-    outputMode: 'json' as const,
-    now: new Date('2026-04-11T10:00:00.000Z')
-  }
-
-  beforeEach(() => {
-    authenticateMockContext(context)
-    vi.clearAllMocks()
-    backupImportMocks.resolveBackupArtifactPaths.mockReturnValue({
-      backupPath: 'D:/imports/backups/ledger-backup/data.db',
-      manifestPath: 'D:/imports/backups/ledger-backup/manifest.json'
-    })
-    backupImportMocks.importLedgerBackupArtifact.mockReturnValue({
-      importedLedgerId: 12,
-      importedLedgerName: '导入账套'
-    })
-  })
-
-  it('remembers import directories when importing from a parent directory path', async () => {
-    const result = await importBackupCommand(context as never, {
-      packagePath: 'D:/imports/backups'
-    })
-
-    expect(result.status).toBe('success')
-    expect(backupImportMocks.rememberPathPreference).toHaveBeenCalledWith(
-      expect.anything(),
-      'backup_import_last_dir',
-      'D:/imports'
-    )
-    expect(backupImportMocks.importLedgerBackupArtifact).toHaveBeenCalledWith(
-      expect.objectContaining({
-        backupPath: 'D:/imports/backups/ledger-backup/data.db',
-        manifestPath: 'D:/imports/backups/ledger-backup/manifest.json',
-        targetPath: 'D:/tmp/dude-accounting.db'
+  it('规划后源清单变化拒绝导入，恢复原清单后同ID可重试', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const { context, root } = fixture
+      const created = await createBackupCommand(context, { ledgerId: 7, directoryPath: root })
+      expect(created.status).toBe('success')
+      const manifestPath = created.data!.manifestPath
+      const original = fs.readFileSync(manifestPath, 'utf8')
+      const operationId = requireOperationId(undefined)
+      const originalPlan = FileOperationJournal.prototype.plan
+      const fault = vi.spyOn(FileOperationJournal.prototype, 'plan').mockImplementation(function (this: FileOperationJournal, lease, identity) {
+        const result = originalPlan.call(this, lease, identity)
+        if (identity.operationId === operationId) fs.writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(original), ledgerName: '另一合法清单' }))
+        return result
       })
-    )
+      try {
+        const result = await importBackupCommand(context, { backupId: created.data!.backupId, operationId })
+        expect(result.status).toBe('error')
+        expect(result.error?.code).toBe('FILE_OPERATION_FAILED')
+        expect(result.error?.details).toMatchObject({ operationId, state: 'failed' })
+        expect(context.db.prepare('SELECT id FROM ledgers').all()).toHaveLength(1)
+      } finally { fault.mockRestore(); fs.writeFileSync(manifestPath, original) }
+      expect((await importBackupCommand(context, { backupId: created.data!.backupId, operationId })).status).toBe('success')
+      expect(context.db.prepare('SELECT id FROM ledgers').all()).toHaveLength(2)
+    } finally { fixture.cleanup() }
+  })
+  it('remembers import directories when importing from a parent directory path', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const { context, root } = fixture
+      const created = await createBackupCommand(context, { ledgerId: 7, directoryPath: root })
+      expect(created.status).toBe('success')
+      const container = path.dirname(path.dirname(created.data!.manifestPath))
+      const result = await importBackupCommand(context, { packagePath: container })
+      expect(result.status, JSON.stringify(result.error)).toBe('success')
+      expect(context.db.prepare("SELECT value FROM system_settings WHERE key='backup_import_last_dir'").get()).toEqual({ value: path.dirname(container) })
+      expect(context.db.prepare('SELECT id FROM ledgers WHERE id=?').get(result.data!.importedLedgerId)).toBeTruthy()
+      expect(context.db.prepare("SELECT id FROM operation_logs WHERE action='import' AND module='backup'").all()).toHaveLength(1)
+    } finally { fixture.cleanup() }
   })
 })
-import { authenticateMockContext } from './testSupport/sessionContext'
