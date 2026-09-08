@@ -8,6 +8,15 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   preload: {
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          print: resolve('src/preload/print.ts'),
+          printMeasurement: resolve('src/preload/printMeasurement.ts')
+        }
+      }
+    },
     plugins: [externalizeDepsPlugin()]
   },
   renderer: {

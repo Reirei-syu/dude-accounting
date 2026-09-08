@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -33,6 +33,7 @@ import { setRuntimeContext } from './runtime/runtimeContext'
 import { consumeEmbeddedCliState } from './runtime/embeddedCliState'
 import { runEmbeddedCli } from '../cli/embedded'
 import path from 'node:path'
+import { secureWindowContents } from './services/windowSecurity'
 
 const cliE2eAppDataOverride = process.env.DUDEACC_E2E_APPDATA_PATH?.trim()
 if (cliE2eAppDataOverride) {
@@ -67,17 +68,14 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
-  })
-
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
-    return { action: 'deny' }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -129,6 +127,7 @@ app.whenReady().then(() => {
   })
 
   app.on('browser-window-created', (_, window) => {
+    secureWindowContents(window.webContents)
     optimizer.watchWindowShortcuts(window)
   })
 

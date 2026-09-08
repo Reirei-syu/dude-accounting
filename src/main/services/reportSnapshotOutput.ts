@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
+import { createPrintLocalResource } from './printLocalResource'
+import { getRuntimeContext } from '../runtime/runtimeContext'
 import { buildTimestampToken, ensureDirectory, sanitizePathSegment } from './fileIntegrity'
 import type { ReportExportFormat, ReportSnapshotDetail, ReportSnapshotScope } from './reporting'
 import {
@@ -288,8 +290,7 @@ export function buildReportSnapshotHtml(
     )
     .join('')
   const totalsSectionHtml =
-    detail.report_type === 'balance_sheet' ||
-    (presentedTables && presentedTables.length > 0)
+    detail.report_type === 'balance_sheet' || (presentedTables && presentedTables.length > 0)
       ? ''
       : `
       <section class="report-section totals">
@@ -306,6 +307,7 @@ export function buildReportSnapshotHtml(
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'" />
     <title>${title}</title>
     <style>
       @page { size: ${pageSize}; margin: 16mm 14mm; }
@@ -528,9 +530,9 @@ export async function writeReportSnapshotExcel(
     worksheet.getCell(rowIndex, 1).font = { name: '宋体', size: 11, bold: true }
 
     rowIndex += 1
-      detail.content.totals.forEach((total) => {
-        worksheet.getCell(rowIndex, 1).value = total.label
-        worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
+    detail.content.totals.forEach((total) => {
+      worksheet.getCell(rowIndex, 1).value = total.label
+      worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
       for (let column = 1; column <= headers.length; column += 1) {
         const cell = worksheet.getCell(rowIndex, column)
         cell.font = { name: '宋体', size: 10 }
@@ -575,7 +577,7 @@ export async function writeReportSnapshotPdf(
 }
 
 type ElectronBrowserWindowLike = {
-  loadURL(url: string): Promise<void>
+  loadFile(filePath: string): Promise<void>
   webContents: {
     printToPDF(options: Record<string, unknown>): Promise<Buffer | Uint8Array>
   }
@@ -601,7 +603,9 @@ async function resolveElectronBrowserWindow(): Promise<ElectronBrowserWindowCons
   const BrowserWindow = (electronModule as { BrowserWindow?: ElectronBrowserWindowConstructor })
     .BrowserWindow
   if (typeof BrowserWindow !== 'function') {
-    throw new Error('无法生成 PDF：Electron/Chromium PDF 引擎不可用，请在桌面主进程中执行报表 PDF 导出。')
+    throw new Error(
+      '无法生成 PDF：Electron/Chromium PDF 引擎不可用，请在桌面主进程中执行报表 PDF 导出。'
+    )
   }
 
   return BrowserWindow
@@ -622,11 +626,13 @@ export async function writeHtmlSnapshotPdfWithChromium(
     }
   })
 
+  let resource: ReturnType<typeof createPrintLocalResource> | undefined
   try {
-    const htmlDataUrl = `data:text/html;charset=UTF-8;base64,${Buffer.from(html, 'utf8').toString(
-      'base64'
-    )}`
-    await window.loadURL(htmlDataUrl)
+    resource = createPrintLocalResource(
+      path.join(getRuntimeContext().userDataPath, 'print-pages'),
+      html
+    )
+    await window.loadFile(resource.filePath)
     const pdfBuffer = await window.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
@@ -641,6 +647,7 @@ export async function writeHtmlSnapshotPdfWithChromium(
     if (!window.isDestroyed?.()) {
       window.close()
     }
+    resource?.dispose()
   }
 }
 

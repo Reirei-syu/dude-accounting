@@ -63,6 +63,7 @@ export function buildTableMeasurementHtml(
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'" />
     <title>print-measure</title>
     <style>
       @page {

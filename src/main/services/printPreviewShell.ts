@@ -1,7 +1,5 @@
-import {
-  normalizePrintPreviewSettings,
-  type PrintPreviewModel
-} from './print'
+import { randomBytes } from 'node:crypto'
+import { normalizePrintPreviewSettings, type PrintPreviewModel } from './print'
 
 const VOUCHER_TABLE_GAP_PX = 10
 const VOUCHER_ROW_HEIGHT_PX = 38.4
@@ -25,6 +23,8 @@ export function buildPagedPrintPreviewHtml(
   options: PrintPreviewShellOptions = {}
 ): string {
   const staticExport = options.staticExport === true
+  const nonce = randomBytes(24).toString('base64')
+  const serializedJobId = JSON.stringify(jobId).replace(/</g, '\\u003c')
   const defaultSettings = normalizePrintPreviewSettings(
     initialModel.settings,
     initialModel.settings.orientation
@@ -34,7 +34,8 @@ export function buildPagedPrintPreviewHtml(
   )
   const orientationDisabledAttr =
     staticExport || initialModel.controlLocks?.orientation ? ' disabled' : ''
-  const scaleDisabledAttr = staticExport || initialModel.controlLocks?.scalePercent ? ' disabled' : ''
+  const scaleDisabledAttr =
+    staticExport || initialModel.controlLocks?.scalePercent ? ' disabled' : ''
   const settingsDisabledAttr = staticExport ? ' disabled' : ''
   const actionDisabledAttr = staticExport ? ' disabled aria-disabled="true"' : ''
   const scaleOptionsHtml = scaleOptions
@@ -42,7 +43,7 @@ export function buildPagedPrintPreviewHtml(
       (value) =>
         `<option value="${value}"${defaultSettings.scalePercent === value ? ' selected' : ''}>${value}%</option>`
     )
-      .join('')
+    .join('')
   const serializedModel = JSON.stringify(initialModel).replace(/</g, '\\u003c')
   const staticExportNote = staticExport
     ? '<span class="preview-static-note">离线 HTML 快照仅保留当前版式；如需 PDF，请改用 CLI `print export-pdf`。</span>'
@@ -52,6 +53,7 @@ export function buildPagedPrintPreviewHtml(
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'" />
     <title>${escapeHtml(initialModel.title)}</title>
     <style>
       @page {
@@ -383,18 +385,18 @@ export function buildPagedPrintPreviewHtml(
       <span id="preview-status" class="preview-status"></span>
       <label class="preview-control preview-control--orientation" for="preview-orientation-select">
         纸张方向
-        <select id="preview-orientation-select" onchange="handleSettingChange({ orientation: this.value })"${orientationDisabledAttr}>
+        <select id="preview-orientation-select"${orientationDisabledAttr}>
           <option value="portrait"${defaultSettings.orientation === 'portrait' ? ' selected' : ''}>竖向</option>
           <option value="landscape"${defaultSettings.orientation === 'landscape' ? ' selected' : ''}>横向</option>
         </select>
       </label>
       <label class="preview-control" for="preview-scale-select">
         缩放
-        <select id="preview-scale-select" onchange="handleSettingChange({ scalePercent: Number(this.value) })"${scaleDisabledAttr}>${scaleOptionsHtml}</select>
+        <select id="preview-scale-select"${scaleDisabledAttr}>${scaleOptionsHtml}</select>
       </label>
       <label class="preview-control preview-control--margin" for="preview-margin-select">
         页边距
-        <select id="preview-margin-select"${settingsDisabledAttr} onchange="handleSettingChange({ marginPreset: this.value })">
+        <select id="preview-margin-select"${settingsDisabledAttr}>
           <option value="default"${defaultSettings.marginPreset === 'default' ? ' selected' : ''}>标准</option>
           <option value="narrow"${defaultSettings.marginPreset === 'narrow' ? ' selected' : ''}>窄</option>
           <option value="extra-narrow"${defaultSettings.marginPreset === 'extra-narrow' ? ' selected' : ''}>极窄</option>
@@ -402,22 +404,23 @@ export function buildPagedPrintPreviewHtml(
       </label>
       <label class="preview-control preview-control--density" for="preview-density-select">
         内容密度
-        <select id="preview-density-select"${settingsDisabledAttr} onchange="handleSettingChange({ densityPreset: this.value })">
+        <select id="preview-density-select"${settingsDisabledAttr}>
           <option value="default"${defaultSettings.densityPreset === 'default' ? ' selected' : ''}>标准</option>
           <option value="compact"${defaultSettings.densityPreset === 'compact' ? ' selected' : ''}>紧凑</option>
           <option value="ultra-compact"${defaultSettings.densityPreset === 'ultra-compact' ? ' selected' : ''}>超紧凑</option>
         </select>
       </label>
-      <button type="button" id="preview-reset-button"${actionDisabledAttr} onclick="resetPreviewSettings()">恢复默认</button>
-      <button type="button"${actionDisabledAttr} onclick="triggerPrint('${jobId}')">打印</button>
-      <button type="button"${actionDisabledAttr} onclick="triggerExportPdf('${jobId}')">导出 PDF</button>
-      <button type="button" onclick="window.close()">关闭</button>
+      <button type="button" id="preview-reset-button"${actionDisabledAttr}>恢复默认</button>
+      <button type="button" id="preview-print-button"${actionDisabledAttr}>打印</button>
+      <button type="button" id="preview-export-button"${actionDisabledAttr}>导出 PDF</button>
+      <button type="button" id="preview-close-button">关闭</button>
       ${staticExportNote}
     </div>
     <main class="preview-canvas">
       <div id="preview-page-list" class="preview-page-list"></div>
     </main>
-    <script>
+    <script nonce="${nonce}">
+      const previewJobId = ${serializedJobId};
       window.__PRINT_PREVIEW_MODEL__ = null;
       const statusNode = document.getElementById('preview-status');
       const pageListNode = document.getElementById('preview-page-list');
@@ -584,7 +587,7 @@ export function buildPagedPrintPreviewHtml(
         }
         try {
           const result = await window.api.print.updatePreviewSettings({
-            jobId: '${jobId}',
+            jobId: previewJobId,
             settings: nextSettings
           });
           if (!result?.success || !result.model) {
@@ -661,6 +664,14 @@ export function buildPagedPrintPreviewHtml(
           : run(() => window.api.print.exportPdf(targetJobId), '打印版 PDF 已导出。', '导出 PDF 失败。');
 
       window.addEventListener('load', () => {
+        orientationSelect.addEventListener('change', () => window.handleSettingChange({ orientation: orientationSelect.value }));
+        scaleSelect.addEventListener('change', () => window.handleSettingChange({ scalePercent: Number(scaleSelect.value) }));
+        marginSelect.addEventListener('change', () => window.handleSettingChange({ marginPreset: marginSelect.value }));
+        densitySelect.addEventListener('change', () => window.handleSettingChange({ densityPreset: densitySelect.value }));
+        document.getElementById('preview-reset-button').addEventListener('click', () => window.resetPreviewSettings());
+        document.getElementById('preview-print-button').addEventListener('click', () => window.triggerPrint(previewJobId));
+        document.getElementById('preview-export-button').addEventListener('click', () => window.triggerExportPdf(previewJobId));
+        document.getElementById('preview-close-button').addEventListener('click', () => window.close());
         renderPreviewModel(initialPreviewModel);
       });
       window.addEventListener('resize', () => {

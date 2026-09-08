@@ -11,12 +11,15 @@ const printHandlerMocks = vi.hoisted(() => {
     static getAllWindows = vi.fn(() => [])
     webContents = {
       id: 999,
+      once: vi.fn(),
       printToPDF: vi.fn(async () => Buffer.from('pdf-bytes'))
     }
     setBounds = vi.fn()
     setSkipTaskbar = vi.fn()
     on = vi.fn()
-    loadURL = vi.fn(async () => undefined)
+    once = vi.fn()
+    loadFile = vi.fn(async () => undefined)
+    destroy = vi.fn()
     close = vi.fn()
   }
 

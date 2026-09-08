@@ -1,4 +1,6 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+export interface ElectronAPI {
+  readonly process: { readonly versions: Readonly<Record<string, string | undefined>> }
+}
 
 interface AuthAPI {
   login: (

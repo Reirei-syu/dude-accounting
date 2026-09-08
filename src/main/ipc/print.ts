@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import fsPromises from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 
 import { getDatabase } from '../database/init'
@@ -33,15 +34,15 @@ import {
 } from '../services/printLayout'
 import { buildTableMeasurementHtml } from '../services/printMeasurement'
 import { buildPagedPrintPreviewHtml } from '../services/printPreviewShell'
+import { createPrintLocalResource } from '../services/printLocalResource'
+import { authorizePrintWindow, bindPrintWindow } from '../services/printWindowAuthority'
 import { requestEmbeddedCliKeepAlive } from '../runtime/embeddedCliState'
 import { appendCliE2eEvent } from '../runtime/cliE2eEvents'
 import { requireCommandActor, requireCommandLedgerAccess } from '../commands/authz'
 import { CommandError } from '../commands/types'
+import { resolveSessionActor } from '../security/sessionAuthority'
 import type { CommandActor } from '../commands/types'
-import {
-  getPathPreferenceWithFallback,
-  rememberPathPreference
-} from '../services/pathPreference'
+import { getPathPreferenceWithFallback, rememberPathPreference } from '../services/pathPreference'
 import { requireAuth, requireLedgerAccess } from './session'
 import {
   buildPresentedReportTables,
@@ -179,6 +180,9 @@ function getPrintJobDirectory(): string {
 }
 
 function getPrintJobFilePath(jobId: string): string {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(jobId)) {
+    throw new CommandError('INVALID_ARGUMENT', '打印任务标识无效', null, 2)
+  }
   return path.join(getPrintJobDirectory(), `${jobId}.json`)
 }
 
@@ -196,14 +200,14 @@ function savePrintJob(job: PrintJobRecord): void {
 }
 
 function loadPrintJob(jobId: string): PrintJobRecord | null {
+  const filePath = getPrintJobFilePath(jobId)
+  if (!fs.existsSync(filePath)) {
+    printJobs.delete(jobId)
+    return null
+  }
   const cached = printJobs.get(jobId)
   if (cached) {
     return cached
-  }
-
-  const filePath = getPrintJobFilePath(jobId)
-  if (!fs.existsSync(filePath)) {
-    return null
   }
 
   try {
@@ -439,9 +443,7 @@ export function resolveMeasuredTableRowGroups(
   }
 }
 
-function buildPreviewModel(
-  job: PrintJobRecord
-): PrintPreviewModel | null {
+function buildPreviewModel(job: PrintJobRecord): PrintPreviewModel | null {
   if (!job.layoutResult) {
     return null
   }
@@ -461,10 +463,7 @@ function getPreferredPrintExportDir(
   db: ReturnType<typeof getDatabase>,
   preferenceKeys = [PRINT_EXPORT_PDF_LAST_DIR_KEY]
 ): string {
-  return (
-    getPathPreferenceWithFallback(db, preferenceKeys) ??
-    getDefaultPrintExportDir()
-  )
+  return getPathPreferenceWithFallback(db, preferenceKeys) ?? getDefaultPrintExportDir()
 }
 
 async function createPreviewWindowForJob(input: {
@@ -472,6 +471,7 @@ async function createPreviewWindowForJob(input: {
   previewModel: PrintLayoutResult & { layoutVersion: number }
   show: boolean
   trackPreviewWindow: boolean
+  assertAccess?: () => void
 }): Promise<BrowserWindow> {
   const previewWindow = new BrowserWindow({
     width: 1120,
@@ -479,8 +479,13 @@ async function createPreviewWindowForJob(input: {
     show: input.show,
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.js'),
-      sandbox: false
+      preload: path.join(
+        __dirname,
+        input.trackPreviewWindow ? '../preload/print.js' : '../preload/printMeasurement.js'
+      ),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
@@ -499,8 +504,26 @@ async function createPreviewWindowForJob(input: {
     })
   }
 
-  const previewHtml = buildPagedPrintPreviewHtml(input.jobId, input.previewModel)
-  await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(previewHtml)}`)
+  try {
+    const previewHtml = buildPagedPrintPreviewHtml(input.jobId, input.previewModel)
+    const resource = createPrintLocalResource(
+      path.join(app.getPath('userData'), 'print-pages'),
+      previewHtml
+    )
+    previewWindow.once('closed', resource.dispose)
+    if (input.assertAccess)
+      bindPrintWindow(
+        previewWindow.webContents,
+        input.jobId,
+        pathToFileURL(resource.filePath).href,
+        input.assertAccess
+      )
+    await previewWindow.loadFile(resource.filePath)
+    input.assertAccess?.()
+  } catch (error) {
+    previewWindow.destroy()
+    throw error
+  }
   appendCliE2eEvent('print.preview.window-opened', {
     jobId: input.jobId,
     webContentsId: previewWindow.webContents.id,
@@ -536,15 +559,21 @@ export async function measureTableRowGroups(
     skipTaskbar: true,
     autoHideMenuBar: true,
     webPreferences: {
-      sandbox: false
+      preload: path.join(__dirname, '../preload/printMeasurement.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
 
   try {
     const measurementHtml = buildTableMeasurementHtml(segment, settings)
-    await measurementWindow.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(measurementHtml)}`
+    const resource = createPrintLocalResource(
+      path.join(app.getPath('userData'), 'print-pages'),
+      measurementHtml
     )
+    measurementWindow.once('closed', resource.dispose)
+    await measurementWindow.loadFile(resource.filePath)
 
     const result = (await measurementWindow.webContents.executeJavaScript(`
       new Promise((resolve) => {
@@ -805,11 +834,9 @@ function getReportSegment(
     presentedTables?.[0]?.columns?.map((column) => ({
       key: column.key,
       label: column.label,
-      align: (
-        column.key === 'item' || column.key.endsWith('label') || column.key === 'label'
-          ? 'left'
-          : 'right'
-      ) as 'left' | 'right'
+      align: (column.key === 'item' || column.key.endsWith('label') || column.key === 'label'
+        ? 'left'
+        : 'right') as 'left' | 'right'
     })) ??
     (detail.content.tableColumns && detail.content.tableColumns.length > 0
       ? [
@@ -1163,10 +1190,9 @@ function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJ
   if (!job) {
     return null
   }
-  job.lastAccessAt = Date.now()
-  savePrintJob(job)
-
-  if (job.previewWebContentsId === event.sender.id) {
+  if (authorizePrintWindow(event, jobId)) {
+    job.lastAccessAt = Date.now()
+    savePrintJob(job)
     return job
   }
 
@@ -1174,11 +1200,13 @@ function getAccessiblePrintJob(event: IpcMainInvokeEvent, jobId: string): PrintJ
   if (job.createdBy !== user.id && !user.isAdmin) {
     throw new CommandError('FORBIDDEN', '无权访问该打印任务', { jobId }, 4)
   }
-
+  if (job.ledgerId !== null) requireLedgerAccess(event, getDatabase(), job.ledgerId)
+  job.lastAccessAt = Date.now()
+  savePrintJob(job)
   return job
 }
 
-async function openPreviewWindow(jobId: string): Promise<void> {
+async function openPreviewWindow(jobId: string, assertAccess: () => void): Promise<void> {
   const existing = getPreviewWindow(jobId)
   if (existing) {
     existing.focus()
@@ -1198,7 +1226,8 @@ async function openPreviewWindow(jobId: string): Promise<void> {
     jobId,
     previewModel,
     show: true,
-    trackPreviewWindow: true
+    trackPreviewWindow: true,
+    assertAccess
   })
 }
 
@@ -1208,14 +1237,15 @@ function getAccessiblePrintJobForActor(
   jobId: string
 ): PrintJobRecord | null {
   pruneExpiredPrintJobs()
-  const currentActor = requireCommandActor(actor)
+  const suppliedActor = requireCommandActor(actor)
+  const currentActor = resolveSessionActor(db, suppliedActor.session, suppliedActor.source)
   const job = loadPrintJob(jobId)
   if (!job) {
     return null
   }
 
   if (job.ledgerId !== null) {
-    requireCommandLedgerAccess(db, actor, job.ledgerId)
+    requireCommandLedgerAccess(db, currentActor, job.ledgerId)
   }
   if (job.createdBy !== currentActor.id && !currentActor.isAdmin) {
     throw new CommandError('FORBIDDEN', '无权访问该打印任务', { jobId }, 4)
@@ -1318,6 +1348,8 @@ export async function preparePrintJobForActor(
         prepared.orientation
       )
       const layoutResult = await layoutPrintDocument(prepared.document, settings)
+      if (loadPrintJob(jobId) !== job) return
+      getAccessiblePrintJobForActor(db, actor, jobId)
       job.type = prepared.type
       job.title = prepared.title
       job.ledgerId = prepared.ledgerId
@@ -1330,6 +1362,11 @@ export async function preparePrintJobForActor(
       job.error = null
       savePrintJob(job)
     } catch (error) {
+      if (loadPrintJob(jobId) !== job) return
+      if (error instanceof CommandError) {
+        deletePrintJob(jobId)
+        return
+      }
       job.status = 'failed'
       job.error = error instanceof Error ? error.message : '生成打印任务失败'
       job.layoutResult = null
@@ -1416,6 +1453,9 @@ export async function updatePrintPreviewSettingsForActor(
       ).settings
     : requestedSettings
   const layoutResult = await layoutPrintDocument(job.sourceDocument, nextSettings)
+  if (getAccessiblePrintJobForActor(db, actor, payload.jobId) !== job) {
+    throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: payload.jobId }, 4)
+  }
   job.settings = nextSettings
   job.orientation = nextSettings.orientation
   job.layoutResult = layoutResult
@@ -1442,7 +1482,11 @@ export async function openPrintPreviewForActor(
   if (options?.keepAlive) {
     requestEmbeddedCliKeepAlive()
   }
-  await openPreviewWindow(jobId)
+  await openPreviewWindow(jobId, () => {
+    if (getAccessiblePrintJobForActor(db, actor, jobId) !== job) {
+      throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId }, 4)
+    }
+  })
   return true
 }
 
@@ -1457,10 +1501,18 @@ export async function printPreparedJobForActor(
     return null
   }
 
-  return printJobToSystem(command.jobId, {
-    silent: command.silent,
-    deviceName: command.deviceName
-  })
+  return printJobToSystem(
+    command.jobId,
+    {
+      silent: command.silent,
+      deviceName: command.deviceName
+    },
+    () => {
+      if (getAccessiblePrintJobForActor(db, actor, command.jobId) !== job) {
+        throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: command.jobId }, 4)
+      }
+    }
+  )
 }
 
 export async function exportPreparedJobPdfForActor(
@@ -1480,7 +1532,11 @@ export async function exportPreparedJobPdfForActor(
     throw new Error('缺少 PDF 输出路径')
   }
 
-  const filePath = await exportPrintJobPdfToPath(command.jobId, outputPath)
+  const filePath = await exportPrintJobPdfToPath(command.jobId, outputPath, () => {
+    if (getAccessiblePrintJobForActor(db, actor, command.jobId) !== job) {
+      throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: command.jobId }, 4)
+    }
+  })
   rememberPathPreference(db, PRINT_EXPORT_PDF_LAST_DIR_KEY, filePath)
   return { filePath }
 }
@@ -1513,7 +1569,11 @@ export async function exportPreparedJobHtmlForActor(
       `${sanitizeFileName(job.title)}.html`
     )
 
-  const filePath = await exportPrintJobHtmlToPath(command.jobId, outputPath, previewModel)
+  const filePath = await exportPrintJobHtmlToPath(command.jobId, outputPath, previewModel, () => {
+    if (getAccessiblePrintJobForActor(db, actor, command.jobId) !== job) {
+      throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: command.jobId }, 4)
+    }
+  })
   rememberPathPreference(db, PRINT_EXPORT_HTML_LAST_DIR_KEY, filePath)
   return { filePath }
 }
@@ -1575,13 +1635,18 @@ async function acquirePrintWindow(
   }
 }
 
-async function exportPrintJobPdfToPath(jobId: string, outputPath: string): Promise<string> {
+async function exportPrintJobPdfToPath(
+  jobId: string,
+  outputPath: string,
+  assertAccess?: () => void
+): Promise<string> {
   const acquired = await acquirePrintWindow(jobId, {
     show: false,
     trackPreviewWindow: false
   })
 
   try {
+    assertAccess?.()
     const pdfBuffer = await acquired.window.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
@@ -1594,7 +1659,9 @@ async function exportPrintJobPdfToPath(jobId: string, outputPath: string): Promi
       }
     })
 
+    assertAccess?.()
     await fsPromises.mkdir(path.dirname(outputPath), { recursive: true })
+    assertAccess?.()
     await fsPromises.writeFile(outputPath, pdfBuffer)
     return outputPath
   } finally {
@@ -1607,24 +1674,28 @@ async function exportPrintJobPdfToPath(jobId: string, outputPath: string): Promi
 async function exportPrintJobHtmlToPath(
   jobId: string,
   outputPath: string,
-  previewModel?: PrintPreviewModel
+  previewModel?: PrintPreviewModel,
+  assertAccess?: () => void
 ): Promise<string> {
-  const resolvedPreviewModel = previewModel ?? (() => {
-    const job = loadPrintJob(jobId)
-    if (!job) {
-      throw new Error('打印任务不存在')
-    }
-    const nextPreviewModel = buildPreviewModel(job)
-    if (!nextPreviewModel) {
-      throw new Error(job.error ?? '打印任务尚未完成')
-    }
-    return nextPreviewModel
-  })()
+  const resolvedPreviewModel =
+    previewModel ??
+    (() => {
+      const job = loadPrintJob(jobId)
+      if (!job) {
+        throw new Error('打印任务不存在')
+      }
+      const nextPreviewModel = buildPreviewModel(job)
+      if (!nextPreviewModel) {
+        throw new Error(job.error ?? '打印任务尚未完成')
+      }
+      return nextPreviewModel
+    })()
 
   const html = buildPagedPrintPreviewHtml(jobId, resolvedPreviewModel, {
     staticExport: true
   })
   await fsPromises.mkdir(path.dirname(outputPath), { recursive: true })
+  assertAccess?.()
   await fsPromises.writeFile(outputPath, html, 'utf8')
   return outputPath
 }
@@ -1634,7 +1705,8 @@ async function printJobToSystem(
   options?: {
     silent?: boolean
     deviceName?: string
-  }
+  },
+  assertAccess?: () => void
 ): Promise<{ success: boolean; error?: string }> {
   const acquired = await acquirePrintWindow(jobId, {
     show: !options?.silent,
@@ -1642,6 +1714,7 @@ async function printJobToSystem(
   })
 
   try {
+    assertAccess?.()
     return await new Promise<{ success: boolean; error?: string }>((resolve) => {
       acquired.window.webContents.print(
         {
@@ -1729,6 +1802,8 @@ export function registerPrintHandlers(): void {
           ? prepared.settings
           : loadPersistedPreviewSettings(db, user.id, preferenceKey, prepared.orientation)
         const layoutResult = await layoutPrintDocument(prepared.document, settings)
+        if (loadPrintJob(jobId) !== job) return
+        getAccessiblePrintJob(event, jobId)
         job.type = prepared.type
         job.title = prepared.title
         job.ledgerId = prepared.ledgerId
@@ -1742,6 +1817,11 @@ export function registerPrintHandlers(): void {
         job.error = null
         savePrintJob(job)
       } catch (error) {
+        if (loadPrintJob(jobId) !== job) return
+        if (error instanceof CommandError) {
+          deletePrintJob(jobId)
+          return
+        }
         job.status = 'failed'
         job.error = error instanceof Error ? error.message : '生成打印任务失败'
         job.layoutResult = null
@@ -1819,6 +1899,9 @@ export function registerPrintHandlers(): void {
           job.settings.orientation
         )
         const layoutResult = await layoutPrintDocument(job.sourceDocument, nextSettings)
+        if (getAccessiblePrintJob(event, payload.jobId) !== job) {
+          throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: payload.jobId }, 4)
+        }
         job.settings = nextSettings
         job.orientation = nextSettings.orientation
         job.layoutResult = layoutResult
@@ -1833,6 +1916,9 @@ export function registerPrintHandlers(): void {
           model: buildPreviewModel(job)
         }
       } catch (error) {
+        if (error instanceof CommandError) {
+          return buildPrintFailureResponse(error.message, error.code, error.details)
+        }
         job.error = error instanceof Error ? error.message : '更新打印预览失败'
         savePrintJob(job)
         return buildPrintFailureResponse(job.error, 'CONFLICT', {
@@ -1858,7 +1944,11 @@ export function registerPrintHandlers(): void {
       })
     }
 
-    await openPreviewWindow(jobId)
+    await openPreviewWindow(jobId, () => {
+      if (getAccessiblePrintJob(event, jobId) !== job) {
+        throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId }, 4)
+      }
+    })
     return { success: true }
   })
 
@@ -1880,10 +1970,18 @@ export function registerPrintHandlers(): void {
       })
     }
 
-    return printJobToSystem(command.jobId, {
-      silent: command.silent,
-      deviceName: command.deviceName
-    })
+    return printJobToSystem(
+      command.jobId,
+      {
+        silent: command.silent,
+        deviceName: command.deviceName
+      },
+      () => {
+        if (getAccessiblePrintJob(event, command.jobId) !== job) {
+          throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: command.jobId }, 4)
+        }
+      }
+    )
 
     /*
     const previewWindow = getPreviewWindow(command.jobId)
@@ -1944,7 +2042,11 @@ export function registerPrintHandlers(): void {
       return { success: false, cancelled: true }
     }
 
-    const filePath = await exportPrintJobPdfToPath(command.jobId, saveResult.filePath)
+    const filePath = await exportPrintJobPdfToPath(command.jobId, saveResult.filePath, () => {
+      if (getAccessiblePrintJob(event, command.jobId) !== job) {
+        throw new CommandError('FORBIDDEN', '打印任务已失效', { jobId: command.jobId }, 4)
+      }
+    })
     rememberPathPreference(db, PRINT_EXPORT_PDF_LAST_DIR_KEY, filePath)
     return { success: true, filePath }
 

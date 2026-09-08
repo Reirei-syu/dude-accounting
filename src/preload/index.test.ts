@@ -52,7 +52,6 @@ describe('preload diagnostics bridge', () => {
         listeners.set(type, listener)
       }
     }
-
     ;(process as { contextIsolated?: boolean }).contextIsolated = true
 
     await import('./index')
@@ -70,10 +69,18 @@ describe('preload diagnostics bridge', () => {
     delete globalWithWindow.__listeners
   })
 
+  it('exposes only version metadata instead of generic Electron IPC', () => {
+    const metadata = preloadMocks.exposeInMainWorld.mock.calls.find(
+      ([name]) => name === 'electron'
+    )?.[1]
+    expect(Object.keys(metadata)).toEqual(['process'])
+    expect(Object.keys(metadata.process)).toEqual(['versions'])
+    expect(metadata.process.versions).toEqual(process.versions)
+    expect(metadata.ipcRenderer).toBeUndefined()
+  })
+
   it('exposes the new settings diagnostics APIs through contextBridge', async () => {
-    const apiExposeCall = preloadMocks.exposeInMainWorld.mock.calls.find(
-      ([name]) => name === 'api'
-    )
+    const apiExposeCall = preloadMocks.exposeInMainWorld.mock.calls.find(([name]) => name === 'api')
     expect(apiExposeCall).toBeTruthy()
 
     const api = apiExposeCall?.[1] as {
@@ -97,10 +104,7 @@ describe('preload diagnostics bridge', () => {
     expect(preloadMocks.invoke).toHaveBeenNthCalledWith(1, 'settings:getSystemParams')
     expect(preloadMocks.invoke).toHaveBeenNthCalledWith(2, 'settings:getRuntimeDefaults')
     expect(preloadMocks.invoke).toHaveBeenNthCalledWith(3, 'settings:getErrorLogStatus')
-    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(
-      4,
-      'settings:chooseDiagnosticsLogDirectory'
-    )
+    expect(preloadMocks.invoke).toHaveBeenNthCalledWith(4, 'settings:chooseDiagnosticsLogDirectory')
     expect(preloadMocks.invoke).toHaveBeenNthCalledWith(
       5,
       'settings:restoreDefaultDiagnosticsLogDirectory'

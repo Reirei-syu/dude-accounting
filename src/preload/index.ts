@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 
 const api = {
   auth: {
@@ -531,14 +530,11 @@ if (typeof window !== 'undefined') {
 
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
+    contextBridge.exposeInMainWorld('electron', {
+      process: { versions: { ...process.versions } }
+    })
     contextBridge.exposeInMainWorld('api', api)
   } catch (error) {
     console.error(error)
   }
-} else {
-  // @ts-expect-error: fallback mode writes the bridged Electron API onto window directly.
-  window.electron = electronAPI
-  // @ts-expect-error: fallback mode writes the bridged renderer API onto window directly.
-  window.api = api
 }

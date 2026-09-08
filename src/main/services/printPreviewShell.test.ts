@@ -41,13 +41,21 @@ describe('printPreviewShell service', () => {
     } satisfies PrintPreviewModel)
 
     expect(html).toContain('window.api.print.updatePreviewSettings')
+    const nonce = html.match(/<script nonce="([^"]+)"/)?.[1]
+    expect(nonce).toBeTruthy()
+    expect(html).toContain(`script-src 'nonce-${nonce}'`)
+    expect(html).not.toMatch(/\son(?:click|change)=/)
+    expect(html).not.toContain('unsafe-eval')
+    expect(html).toContain("default-src 'none'")
     expect(html).toContain('renderPreviewModel')
     expect(html).toContain('preview-page-list')
     expect(html).toContain('第 ')
     expect(html).toContain('"layoutVersion":3')
     expect(html).toContain('window.api.print.print(targetJobId)')
     expect(html).toContain('window.api.print.exportPdf(targetJobId)')
-    expect(html).toContain("orientationCandidate === 'landscape' || orientationCandidate === 'portrait'")
+    expect(html).toContain(
+      "orientationCandidate === 'landscape' || orientationCandidate === 'portrait'"
+    )
     expect(html).toContain('.print-row-subtotal td')
     expect(html).toContain('.print-row-total td')
     expect(html).toContain('-webkit-print-color-adjust: exact;')
