@@ -65,6 +65,7 @@ describe('accountCommands payload normalization', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     accountCommandMocks.searchSubjects.mockReturnValue([{ code: '1002', name: '银行存款' }])
     accountCommandMocks.createCashFlowMapping.mockReturnValue(18)
@@ -77,11 +78,7 @@ describe('accountCommands payload normalization', () => {
     })
 
     expect(result.status).toBe('success')
-    expect(accountCommandMocks.searchSubjects).toHaveBeenCalledWith(
-      expect.anything(),
-      12,
-      '1002'
-    )
+    expect(accountCommandMocks.searchSubjects).toHaveBeenCalledWith(expect.anything(), 12, '1002')
   })
 
   it('normalizes cashflow mapping code fields separately from numeric ids', async () => {
@@ -103,3 +100,4 @@ describe('accountCommands payload normalization', () => {
     })
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

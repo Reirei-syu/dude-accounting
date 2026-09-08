@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 import { runDatabaseMigrations } from '../database/migrations'
+import { createCurrentSchema } from '../database/schema'
 import { computeFileSha256 } from './fileIntegrity'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createLedgerBackupArtifact, importLedgerBackupArtifact } from './backupRecovery'
@@ -46,7 +47,10 @@ describe('ledger backup import', () => {
     fs.writeFileSync(sourceWallpaperPath, 'source-wallpaper', 'utf8')
 
     const sourceDb = new Database(sourcePath)
-    createLedgerSchema(sourceDb)
+    if (failure === 'success-legacy-schema') {
+      createCurrentSchema(sourceDb, 2)
+      sourceDb.pragma('user_version=2')
+    } else createLedgerSchema(sourceDb)
     const sourceVoucherPath = path.join(tempDir, 'source-voucher.ofd')
     fs.writeFileSync(sourceVoucherPath, 'source-voucher', 'utf8')
     sourceDb.exec(`

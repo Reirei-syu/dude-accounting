@@ -6,13 +6,17 @@ import type { Readable, Writable } from 'node:stream'
 import { renderCommandOutput } from './output'
 import { parseCliArgs } from './parse'
 import { resolveCliPayloadWithWarnings, type PayloadWarning } from './payload'
-import { loadCliSession } from './sessionStore'
 import { normalizeCliCommandTokens } from './commandAliases'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandOutputMode, CommandResult } from '../main/commands/types'
 import { CommandError } from '../main/commands/types'
-import { getCommandMetadata, listCommandHelpEntries, type CommandHelpEntry } from '../main/commands/catalog'
+import {
+  getCommandMetadata,
+  listCommandHelpEntries,
+  type CommandHelpEntry
+} from '../main/commands/catalog'
 import type { CliCommandInvocation } from './executor'
+import { loadCliSession } from './sessionStore'
 
 export interface InteractiveShellState {
   outputMode: CommandOutputMode
@@ -282,10 +286,10 @@ export function formatInteractiveStatusBar(state: InteractiveShellState): string
 }
 
 export function createInitialInteractiveShellState(runtime: RuntimeContext): InteractiveShellState {
-  const session = loadCliSession(runtime)
+  void runtime
   return {
     outputMode: 'pretty',
-    accountName: session?.actor.username
+    accountName: undefined
   }
 }
 
@@ -626,9 +630,7 @@ export function executeShellBuiltin(
         return {
           handled: true,
           nextState: state,
-          text: `完整帮助已导出：${String(
-            (exportResult.data as { filePath: string }).filePath
-          )}`,
+          text: `完整帮助已导出：${String((exportResult.data as { filePath: string }).filePath)}`,
           result: exportResult
         }
       }
@@ -988,9 +990,8 @@ async function promptForItem(
     case 'password':
       return await rl.question('密码: ')
     case 'ledgerId':
-      return (
-        await promptForLedgerSelection(runtime, rl, output, state.outputMode, executeCommand)
-      ).ledgerId
+      return (await promptForLedgerSelection(runtime, rl, output, state.outputMode, executeCommand))
+        .ledgerId
     case 'period': {
       const ledgerId =
         typeof payload.ledgerId === 'number'
@@ -1102,6 +1103,23 @@ export async function runInteractiveCli(
   let state: InteractiveShellState = createInitialInteractiveShellState(runtime)
 
   try {
+    try {
+      const identity = loadCliSession(runtime)
+        ? await executeCommand(runtime, {
+            domain: 'auth',
+            action: 'whoami',
+            payload: {},
+            outputMode: state.outputMode
+          })
+        : null
+      if (identity?.status === 'success' && identity.data && typeof identity.data === 'object') {
+        const actor = (identity.data as { actor?: { username?: string } }).actor
+        if (typeof actor?.username === 'string') state.accountName = actor.username
+      }
+    } catch {
+      // 身份查询失败时保持未登录展示；不影响帮助、退出等本地命令。
+      state.accountName = undefined
+    }
     while (true) {
       output.write(`${formatInteractiveStatusBar(state)}\n`)
       const line = await rl.question(formatInteractivePrompt(state))

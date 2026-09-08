@@ -171,6 +171,7 @@ describe('voucherCommands', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     currentPeriodQuery.get.mockReturnValue({ current_period: '2026-01' })
     systemSettingsQuery.get.mockReturnValue(undefined)
@@ -250,34 +251,37 @@ describe('voucherCommands', () => {
   })
 
   it('normalizes agent-style voucher save payload aliases before invoking lifecycle', async () => {
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      period: '2026-01',
-      date: '2026-01-03',
-      number: 1,
-      description: '收到客户付款活动款（张三）',
-      entries: [
-        {
-          subjectCode: 1002,
-          debit: 3000,
-          credit: 0,
-          cashflowItemCode: 'CF01',
-          auxiliaries: []
-        },
-        {
-          subjectCode: '2206',
-          debit: 0,
-          credit: 20,
-          auxiliaries: []
-        },
-        {
-          subjectCode: '430101',
-          debit: 0,
-          credit: 2980,
-          auxiliaries: []
-        }
-      ]
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        period: '2026-01',
+        date: '2026-01-03',
+        number: 1,
+        description: '收到客户付款活动款（张三）',
+        entries: [
+          {
+            subjectCode: 1002,
+            debit: 3000,
+            credit: 0,
+            cashflowItemCode: 'CF01',
+            auxiliaries: []
+          },
+          {
+            subjectCode: '2206',
+            debit: 0,
+            credit: 20,
+            auxiliaries: []
+          },
+          {
+            subjectCode: '430101',
+            debit: 0,
+            credit: 2980,
+            auxiliaries: []
+          }
+        ]
+      } as never
+    )
 
     expect(result.status).toBe('success')
     expect(voucherCommandMocks.createVoucherWithEntries).toHaveBeenCalledWith(
@@ -315,25 +319,28 @@ describe('voucherCommands', () => {
   })
 
   it('recovers classic mojibake voucher descriptions before invoking lifecycle', async () => {
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      period: '2026-01',
-      date: '2026-01-03',
-      description: '鏀粯瀵硅处鍗曟墜缁垂',
-      entries: [
-        {
-          subjectCode: 1002,
-          debit: 3.8,
-          credit: 0,
-          cashflowItemCode: 'CF01'
-        },
-        {
-          subjectCode: '430101',
-          debit: 0,
-          credit: 3.8
-        }
-      ]
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        period: '2026-01',
+        date: '2026-01-03',
+        description: '鏀粯瀵硅处鍗曟墜缁垂',
+        entries: [
+          {
+            subjectCode: 1002,
+            debit: 3.8,
+            credit: 0,
+            cashflowItemCode: 'CF01'
+          },
+          {
+            subjectCode: '430101',
+            debit: 0,
+            credit: 3.8
+          }
+        ]
+      } as never
+    )
 
     expect(result.status).toBe('success')
     expect(voucherCommandMocks.createVoucherWithEntries).toHaveBeenCalledWith(
@@ -354,25 +361,28 @@ describe('voucherCommands', () => {
   })
 
   it('rejects unrecoverable corrupted voucher summaries before invoking lifecycle', async () => {
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      period: '2026-01',
-      date: '2026-01-03',
-      entries: [
-        {
-          summary: '�յ���������Ϣ',
-          subjectCode: 1002,
-          debit: 3.8,
-          credit: 0
-        },
-        {
-          summary: '�յ���������Ϣ',
-          subjectCode: '430101',
-          debit: 0,
-          credit: 3.8
-        }
-      ]
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        period: '2026-01',
+        date: '2026-01-03',
+        entries: [
+          {
+            summary: '�յ���������Ϣ',
+            subjectCode: 1002,
+            debit: 3.8,
+            credit: 0
+          },
+          {
+            summary: '�յ���������Ϣ',
+            subjectCode: '430101',
+            debit: 0,
+            credit: 3.8
+          }
+        ]
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -383,10 +393,13 @@ describe('voucherCommands', () => {
   })
 
   it('returns a clear validation error when voucherDate/date is missing', async () => {
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      entries: []
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        entries: []
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -401,11 +414,14 @@ describe('voucherCommands', () => {
   it('returns a clear validation error when voucher date is outside current period', async () => {
     currentPeriodQuery.get.mockReturnValueOnce({ current_period: '2026-02' })
 
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      voucherDate: '2026-01-03',
-      entries: []
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        voucherDate: '2026-01-03',
+        entries: []
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -424,11 +440,14 @@ describe('voucherCommands', () => {
   it('returns a clear validation error when ledger current period is missing', async () => {
     currentPeriodQuery.get.mockReturnValueOnce({ current_period: '' })
 
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      voucherDate: '2026-01-03',
-      entries: []
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        voucherDate: '2026-01-03',
+        entries: []
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -449,11 +468,14 @@ describe('voucherCommands', () => {
       throw new Error('当前会计期间（2026-01）已结账，本期凭证不能新增或编辑')
     })
 
-    const result = await createVoucherCommand(context as never, {
-      ledgerId: 8,
-      voucherDate: '2026-01-03',
-      entries: []
-    } as never)
+    const result = await createVoucherCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        voucherDate: '2026-01-03',
+        entries: []
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -470,30 +492,39 @@ describe('voucherCommands', () => {
   })
 
   it('normalizes voucher list status filters before querying summaries', async () => {
-    const result = await listVouchersCommand(context as never, {
-      ledgerId: 8,
-      status: '3'
-    } as never)
+    const result = await listVouchersCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        status: '3'
+      } as never
+    )
 
     expect(result.status).toBe('success')
     expect(voucherListQuery.all).toHaveBeenCalledWith(8, 3)
   })
 
   it('passes voucher list status=all through as an explicit all-states query', async () => {
-    const result = await listVouchersCommand(context as never, {
-      ledgerId: 8,
-      status: 'all'
-    } as never)
+    const result = await listVouchersCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        status: 'all'
+      } as never
+    )
 
     expect(result.status).toBe('success')
     expect(voucherListQuery.all).toHaveBeenCalledWith(8)
   })
 
   it('rejects invalid voucher list status filters', async () => {
-    const result = await listVouchersCommand(context as never, {
-      ledgerId: 8,
-      status: 'deleted'
-    } as never)
+    const result = await listVouchersCommand(
+      context as never,
+      {
+        ledgerId: 8,
+        status: 'deleted'
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -509,25 +540,28 @@ describe('voucherCommands', () => {
   })
 
   it('normalizes update payload aliases before invoking lifecycle', async () => {
-    const result = await updateVoucherCommand(context as never, {
-      voucherId: 43,
-      ledgerId: 8,
-      date: '2026-01-05',
-      description: '更新后的摘要',
-      entries: [
-        {
-          subjectCode: '1002',
-          debit: 500,
-          credit: 0,
-          cashflowItemCode: 'CF01'
-        },
-        {
-          subjectCode: '430101',
-          debit: 0,
-          credit: 500
-        }
-      ]
-    } as never)
+    const result = await updateVoucherCommand(
+      context as never,
+      {
+        voucherId: 43,
+        ledgerId: 8,
+        date: '2026-01-05',
+        description: '更新后的摘要',
+        entries: [
+          {
+            subjectCode: '1002',
+            debit: 500,
+            credit: 0,
+            cashflowItemCode: 'CF01'
+          },
+          {
+            subjectCode: '430101',
+            debit: 0,
+            credit: 500
+          }
+        ]
+      } as never
+    )
 
     expect(result.status).toBe('success')
     expect(voucherCommandMocks.updateVoucherWithEntries).toHaveBeenCalledWith(
@@ -666,24 +700,27 @@ describe('voucherCommands', () => {
       status: 1
     })
 
-    const result = await updateVoucherCommand(context as never, {
-      voucherId: 43,
-      ledgerId: 8,
-      date: '2026-01-05',
-      description: '更新后的摘要',
-      entries: [
-        {
-          subjectCode: '1002',
-          debit: 500,
-          credit: 0
-        },
-        {
-          subjectCode: '430101',
-          debit: 0,
-          credit: 500
-        }
-      ]
-    } as never)
+    const result = await updateVoucherCommand(
+      context as never,
+      {
+        voucherId: 43,
+        ledgerId: 8,
+        date: '2026-01-05',
+        description: '更新后的摘要',
+        entries: [
+          {
+            subjectCode: '1002',
+            debit: 500,
+            credit: 0
+          },
+          {
+            subjectCode: '430101',
+            debit: 0,
+            credit: 500
+          }
+        ]
+      } as never
+    )
 
     expect(result.status).toBe('error')
     expect(result.error).toMatchObject({
@@ -807,3 +844,4 @@ describe('voucherCommands', () => {
     })
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

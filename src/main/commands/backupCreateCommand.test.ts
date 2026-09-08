@@ -77,6 +77,7 @@ describe('createBackupCommand', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     ledgerQuery.get.mockReturnValue({
       id: 7,
@@ -134,3 +135,4 @@ describe('createBackupCommand', () => {
     })
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

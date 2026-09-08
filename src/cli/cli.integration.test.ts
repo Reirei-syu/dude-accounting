@@ -99,6 +99,38 @@ async function runCliWithStdin(
 }
 
 describe('embedded cli integration', () => {
+  it('多个 CLI 进程读取同一会话，安全变更后均立即拒绝旧身份', async () => {
+    await runCliWithStdin(
+      ['auth', 'login', '--payload-stdin'],
+      JSON.stringify({ username: 'admin', password: '' })
+    )
+    const before = await Promise.all([runCli(['auth', 'whoami']), runCli(['auth', 'whoami'])])
+    expect(before.every((result) => result.status === 'success')).toBe(true)
+    const actor = (before[0].data as { actor: { id: number } }).actor
+    const changed = await runCliWithStdin(
+      ['auth', 'update-user', '--payload-stdin'],
+      JSON.stringify({ id: actor.id, password: 'temporary-test-password' })
+    )
+    expect(changed.status).toBe('success')
+    const after = await Promise.all([
+      runCliAllowError(['auth', 'whoami']),
+      runCliAllowError(['auth', 'whoami'])
+    ])
+    for (const result of after)
+      expect(result.error).toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: '登录态已失效或无权访问，请重新登录',
+        details: null
+      })
+    await runCliWithStdin(
+      ['auth', 'login', '--payload-stdin'],
+      JSON.stringify({ username: 'admin', password: 'temporary-test-password' })
+    )
+    await runCliWithStdin(
+      ['auth', 'update-user', '--payload-stdin'],
+      JSON.stringify({ id: actor.id, password: '' })
+    )
+  }, 120_000)
   afterAll(() => {
     if (fs.existsSync(tempRoot)) {
       cleanupCliTestRoot(tempRoot, appDataPath)

@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Database from 'better-sqlite3'
+import { runDatabaseMigrations } from '../database/migrations'
+import { issueSession, SESSION_DENIED_MESSAGE } from '../security/sessionAuthority'
+const state = vi.hoisted(() => ({ db: null as Database.Database | null }))
+vi.mock('../database/init', () => ({ getDatabase: () => state.db }))
 import {
   clearSessionByEvent,
   getSessionByEvent,
@@ -53,6 +58,17 @@ function createLedgerAccessDb(allowedPairs: Array<{ userId: number; ledgerId: nu
 }
 
 describe('ipc session', () => {
+  beforeEach(() => {
+    state.db = new Database(':memory:')
+    runDatabaseMigrations(state.db)
+  })
+  afterEach(() => state.db?.close())
+  const authorize = (user: SessionUser): SessionUser => {
+    state
+      .db!.prepare('INSERT OR IGNORE INTO users(id,username,permissions,is_admin) VALUES(?,?,?,?)')
+      .run(user.id, user.username, JSON.stringify(user.permissions), Number(user.isAdmin))
+    return { ...user, session: issueSession(state.db!, user.id) }
+  }
   it('stores and clears session by sender id', () => {
     const event = createMockEvent(1)
     const user: SessionUser = {
@@ -62,7 +78,7 @@ describe('ipc session', () => {
       isAdmin: false,
       source: 'ipc'
     }
-    setSessionByEvent(event as never, user)
+    setSessionByEvent(event as never, authorize(user))
     expect(getSessionByEvent(event as never)?.username).toBe('tester')
 
     clearSessionByEvent(event as never)
@@ -79,7 +95,7 @@ describe('ipc session', () => {
       source: 'ipc'
     }
 
-    setSessionByEvent(event as never, user)
+    setSessionByEvent(event as never, authorize(user))
     expect(getSessionByEvent(event as never)?.username).toBe('destroy-me')
 
     event.destroy()
@@ -97,7 +113,7 @@ describe('ipc session', () => {
       source: 'ipc'
     }
 
-    setSessionBySender(previewSender.sender, user)
+    setSessionBySender(previewSender.sender, authorize(user))
 
     expect(getSessionByEvent({ sender: previewSender.sender } as never)?.username).toBe(
       'preview-user'
@@ -106,7 +122,7 @@ describe('ipc session', () => {
     previewSender.destroy()
     expect(getSessionByEvent({ sender: previewSender.sender } as never)).toBeNull()
 
-    setSessionByEvent(previewEvent as never, user)
+    setSessionByEvent(previewEvent as never, authorize(user))
     expect(getSessionByEvent(previewEvent as never)?.username).toBe('preview-user')
   })
 
@@ -119,7 +135,7 @@ describe('ipc session', () => {
       isAdmin: false,
       source: 'ipc'
     }
-    setSessionByEvent(event as never, user)
+    setSessionByEvent(event as never, authorize(user))
 
     expect(requireAuth(event as never).id).toBe(2)
     expect(requirePermission(event as never, 'voucher_entry').id).toBe(2)
@@ -137,7 +153,7 @@ describe('ipc session', () => {
       isAdmin: false,
       source: 'ipc'
     }
-    setSessionByEvent(regularEvent as never, regularUser)
+    setSessionByEvent(regularEvent as never, authorize(regularUser))
 
     const db = createLedgerAccessDb([{ userId: 3, ledgerId: 11 }])
 
@@ -152,8 +168,24 @@ describe('ipc session', () => {
       isAdmin: true,
       source: 'ipc'
     }
-    setSessionByEvent(adminEvent as never, adminUser)
+    setSessionByEvent(adminEvent as never, authorize(adminUser))
 
     expect(requireLedgerAccess(adminEvent as never, db as never, 999).id).toBe(4)
+  })
+  it('多个窗口同时撤销，不使用传入 actor 的权限快照', () => {
+    const user = authorize({
+      id: 30,
+      username: 'multiple',
+      permissions: { audit: true },
+      isAdmin: false,
+      source: 'ipc'
+    })
+    const events = [createMockEvent(30), createMockEvent(31)]
+    for (const event of events) setSessionByEvent(event as never, user)
+    user.isAdmin = true
+    expect(() => requireAdmin(events[0] as never)).toThrow()
+    state.db!.exec("UPDATE users SET permissions='{}' WHERE id=30")
+    for (const event of events)
+      expect(() => requireAuth(event as never)).toThrow(SESSION_DENIED_MESSAGE)
   })
 })

@@ -65,6 +65,7 @@ describe('importBackupCommand', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     backupImportMocks.resolveBackupArtifactPaths.mockReturnValue({
       backupPath: 'D:/imports/backups/ledger-backup/data.db',
@@ -96,3 +97,4 @@ describe('importBackupCommand', () => {
     )
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

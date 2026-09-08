@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import type { RuntimeContext } from '../runtime/runtimeContext'
+import type { SessionIdentity } from '../security/sessionAuthority'
 
 export type PermissionKey =
   | 'voucher_entry'
@@ -17,6 +18,7 @@ export interface CommandActor {
   permissions: Record<string, boolean>
   isAdmin: boolean
   source: 'ipc' | 'cli'
+  session?: SessionIdentity
 }
 
 export interface CommandContext {

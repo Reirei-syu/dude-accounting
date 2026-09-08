@@ -7,6 +7,7 @@ import { createNodeRuntimeContext } from '../main/runtime/runtimeContext'
 import { runInteractiveCli, type InteractiveCommandExecutor } from './interactive'
 import type { CliCommandInvocation } from './executor'
 import type { CommandResult } from '../main/commands/types'
+import { saveCliSession } from './sessionStore'
 
 interface FakeLedger {
   id: number
@@ -66,7 +67,11 @@ function createFakeExecutor(): InteractiveCommandExecutor {
             })
           : failure('未登录')
       case 'ledger create': {
-        const payload = invocation.payload as { name: string; standardType: 'enterprise' | 'npo'; startPeriod: string }
+        const payload = invocation.payload as {
+          name: string
+          standardType: 'enterprise' | 'npo'
+          startPeriod: string
+        }
         const ledger: FakeLedger = {
           id: ledgers.length + 1,
           name: payload.name,
@@ -107,7 +112,11 @@ function createFakeExecutor(): InteractiveCommandExecutor {
   }
 }
 
-async function runSession(steps: Array<{ waitFor: string; input: string }>): Promise<string> {
+async function runSession(
+  steps: Array<{ waitFor: string; input: string }>,
+  executor = createFakeExecutor(),
+  initialSession = false
+): Promise<string> {
   const input = new PassThrough()
   const output = new PassThrough()
   const userDataPath = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-integration-'))
@@ -141,7 +150,20 @@ async function runSession(steps: Array<{ waitFor: string; input: string }>): Pro
     isPackaged: false,
     userDataPath
   })
-  const executor = createFakeExecutor()
+  if (initialSession)
+    saveCliSession(runtime, {
+      id: 1,
+      username: 'cached',
+      isAdmin: true,
+      permissions: {},
+      source: 'cli',
+      session: {
+        userId: 1,
+        authRevision: 1,
+        token: 'a'.repeat(64),
+        createdAt: new Date().toISOString()
+      }
+    })
   const sessionPromise = runInteractiveCli(runtime, { input, output, executeCommand: executor })
 
   try {
@@ -167,38 +189,47 @@ async function runSession(steps: Array<{ waitFor: string; input: string }>): Pro
 }
 
 describe('interactive shell integration', () => {
-  it(
-    'supports help, guided login, context selection and contextual commands',
-    async () => {
-      const output = await runSession([
+  it('身份查询不可用时仍可使用本地帮助和退出，不恢复缓存身份', async () => {
+    const output = await runSession(
+      [
         { waitFor: 'dudeacc>', input: 'help\n' },
-        { waitFor: 'DudeAcc 交互式 CLI', input: '登录\n' },
-        { waitFor: '用户名: ', input: 'admin\n' },
-        { waitFor: '密码: ', input: '\n' },
-        { waitFor: '"user": {', input: '我是谁\n' },
-        {
-          waitFor: '"actor": {',
-          input: 'ledger create --name 交互测试账套 --standardType enterprise --startPeriod 2026-04\n'
-        },
-        { waitFor: '"id": 1', input: '选择账套\n' },
-        { waitFor: '请输入账套ID: ', input: '1\n' },
-        { waitFor: '已选择当前账套：1', input: '选择期间\n' },
-        { waitFor: '请输入期间', input: '2026-04\n' },
-        { waitFor: '已选择当前期间：2026-04', input: '期间状态\n' },
-        { waitFor: '"period": "2026-04"', input: 'exit\n' }
-      ])
+        { waitFor: 'DudeAcc 交互式 CLI', input: 'exit\n' }
+      ],
+      async () => {
+        throw new Error('身份服务不可用')
+      },
+      true
+    )
+    expect(output).toContain('账号：未登录')
+  })
+  it('supports help, guided login, context selection and contextual commands', async () => {
+    const output = await runSession([
+      { waitFor: 'dudeacc>', input: 'help\n' },
+      { waitFor: 'DudeAcc 交互式 CLI', input: '登录\n' },
+      { waitFor: '用户名: ', input: 'admin\n' },
+      { waitFor: '密码: ', input: '\n' },
+      { waitFor: '"user": {', input: '我是谁\n' },
+      {
+        waitFor: '"actor": {',
+        input: 'ledger create --name 交互测试账套 --standardType enterprise --startPeriod 2026-04\n'
+      },
+      { waitFor: '"id": 1', input: '选择账套\n' },
+      { waitFor: '请输入账套ID: ', input: '1\n' },
+      { waitFor: '已选择当前账套：1', input: '选择期间\n' },
+      { waitFor: '请输入期间', input: '2026-04\n' },
+      { waitFor: '已选择当前期间：2026-04', input: '期间状态\n' },
+      { waitFor: '"period": "2026-04"', input: 'exit\n' }
+    ])
 
-      expect(output).toContain('dudeacc>')
-      expect(output).toContain('账号：未登录 | 账套：未选择 | 会计期间：未选择')
-      expect(output).toContain('账套列表')
-      expect(output).toContain('账号：admin | 账套：未选择 | 会计期间：未选择')
-      expect(output).toContain('"username": "admin"')
-      expect(output).toContain('账号：admin | 账套：交互测试账套 | 会计期间：未选择')
-      expect(output).toContain('已选择当前账套：1')
-      expect(output).toContain('账号：admin | 账套：交互测试账套 | 会计期间：2026-04')
-      expect(output).toContain('已选择当前期间：2026-04')
-      expect(output).toContain('"period": "2026-04"')
-    },
-    15_000
-  )
+    expect(output).toContain('dudeacc>')
+    expect(output).toContain('账号：未登录 | 账套：未选择 | 会计期间：未选择')
+    expect(output).toContain('账套列表')
+    expect(output).toContain('账号：admin | 账套：未选择 | 会计期间：未选择')
+    expect(output).toContain('"username": "admin"')
+    expect(output).toContain('账号：admin | 账套：交互测试账套 | 会计期间：未选择')
+    expect(output).toContain('已选择当前账套：1')
+    expect(output).toContain('账号：admin | 账套：交互测试账套 | 会计期间：2026-04')
+    expect(output).toContain('已选择当前期间：2026-04')
+    expect(output).toContain('"period": "2026-04"')
+  }, 15_000)
 })

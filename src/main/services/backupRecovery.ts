@@ -1729,6 +1729,8 @@ export function restoreBackupArtifact(input: {
       runDatabaseMigrations(candidate, {
         backupDirectory: path.join(path.dirname(copy), 'migration-backups')
       })
+      // 恢复不能复活快照中已撤销的令牌；所有客户端必须重新登录。
+      candidate.exec('DELETE FROM auth_sessions')
       candidate.pragma('wal_checkpoint(TRUNCATE)')
       candidate.pragma('journal_mode = DELETE')
     } finally {

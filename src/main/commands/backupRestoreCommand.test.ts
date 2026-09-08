@@ -90,6 +90,7 @@ describe('restoreBackupCommand', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     backupMocks.restoreBackupArtifact.mockImplementation(() => undefined)
     backupMocks.getBackupPackageById.mockReturnValue({
@@ -246,3 +247,4 @@ describe('restoreBackupCommand', () => {
     expect(backupMocks.validateBackupArtifact).not.toHaveBeenCalled()
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

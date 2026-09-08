@@ -7,10 +7,17 @@ import {
   requireCommandPermission
 } from '../commands/authz'
 import type { CommandActor, PermissionKey } from '../commands/types'
+import { getDatabase } from '../database/init'
+import {
+  isSessionIdentity,
+  resolveSessionActor,
+  sessionDenied,
+  type SessionIdentity
+} from '../security/sessionAuthority'
 
 export type SessionUser = CommandActor
 
-const senderSessionMap = new Map<number, SessionUser>()
+const senderSessionMap = new Map<number, SessionIdentity>()
 const senderCleanupBoundSet = new Set<number>()
 
 interface SessionSenderLike {
@@ -33,7 +40,8 @@ export function setSessionByEvent(event: IpcMainInvokeEvent, user: SessionUser):
 
 export function setSessionBySender(sender: SessionSenderLike, user: SessionUser): void {
   const senderId = sender.id
-  senderSessionMap.set(senderId, user)
+  if (!isSessionIdentity(user.session)) throw sessionDenied()
+  senderSessionMap.set(senderId, { ...user.session })
 
   if (!senderCleanupBoundSet.has(senderId)) {
     senderCleanupBoundSet.add(senderId)
@@ -48,7 +56,14 @@ export function clearSessionByEvent(event: IpcMainInvokeEvent): void {
 }
 
 export function getSessionByEvent(event: IpcMainInvokeEvent): SessionUser | null {
-  return senderSessionMap.get(event.sender.id) || null
+  const identity = senderSessionMap.get(event.sender.id)
+  if (!identity) return null
+  try {
+    return resolveSessionActor(getDatabase(), identity, 'ipc')
+  } catch {
+    senderSessionMap.delete(event.sender.id)
+    throw sessionDenied()
+  }
 }
 
 export function requireAuth(event: IpcMainInvokeEvent): SessionUser {

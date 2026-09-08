@@ -1,4 +1,4 @@
-import { createCommandContext } from '../main/commands/context'
+import { createCommandContext, createSessionCommandContext } from '../main/commands/context'
 import {
   createUserCommand,
   deleteUserCommand,
@@ -164,9 +164,9 @@ function createAuthedContext(
   token?: string
 ): ReturnType<typeof createCommandContext> {
   const session = requireCliSession(runtime, token)
-  return createCommandContext({
+  return createSessionCommandContext({
     runtime,
-    actor: session.actor,
+    session,
     outputMode
   })
 }
@@ -199,9 +199,9 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
     },
     whoami: async (runtime, _payload, outputMode, token) => {
       const session = requireCliSession(runtime, token)
-      const context = createCommandContext({
+      const context = createSessionCommandContext({
         runtime,
-        actor: session.actor,
+        session,
         outputMode
       })
       const result = await whoamiCommand(context)

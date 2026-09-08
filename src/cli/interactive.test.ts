@@ -124,7 +124,7 @@ describe('interactive cli helpers', () => {
     ).toBe('dudeacc>')
   })
 
-  it('hydrates initial shell state from persisted cli session', async () => {
+  it('does not hydrate account names from unvalidated persisted identity', async () => {
     const interactive = await loadInteractiveModule()
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-cli-state-'))
     const runtime = createNodeRuntimeContext({
@@ -139,12 +139,18 @@ describe('interactive cli helpers', () => {
         username: 'admin',
         permissions: {},
         isAdmin: true,
-        source: 'cli'
+        source: 'cli',
+        session: {
+          userId: 1,
+          authRevision: 1,
+          token: 'a'.repeat(64),
+          createdAt: new Date().toISOString()
+        }
       })
 
       expect(interactive?.createInitialInteractiveShellState?.(runtime)).toMatchObject({
         outputMode: 'pretty',
-        accountName: 'admin'
+        accountName: undefined
       })
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true })
@@ -222,8 +228,7 @@ describe('interactive cli helpers', () => {
               aliasZh: '创建用户'
             }),
             expect.objectContaining({
-              command: 'print open-preview'
-            ,
+              command: 'print open-preview',
               headlessAlternatives: ['print export-html']
             }),
             expect.objectContaining({

@@ -76,6 +76,7 @@ describe('settingsCommands', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     settingsCommandMocks.readCustomTopLevelSubjectTemplateImport.mockResolvedValue({
       templateName: '导入模板',
@@ -175,3 +176,4 @@ describe('settingsCommands', () => {
     )
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

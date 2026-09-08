@@ -66,6 +66,7 @@ describe('printCommands', () => {
   }
 
   beforeEach(() => {
+    authenticateMockContext(context)
     vi.clearAllMocks()
     printCommandMocks.getPrintJobStatusForActor.mockReturnValue({
       status: 'ready',
@@ -221,3 +222,4 @@ describe('printCommands', () => {
     })
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

@@ -16,6 +16,8 @@ const api = {
     }) => ipcRenderer.invoke('auth:createUser', data),
     updateUser: (data: {
       id: number
+      isAdmin?: boolean
+      isEnabled?: boolean
       realName?: string
       password?: string
       permissions?: Record<string, boolean>
@@ -30,15 +32,13 @@ const api = {
       standardType: 'enterprise' | 'npo'
       startPeriod: string
       taxpayerIdentificationNumber?: string
-    }) =>
-      ipcRenderer.invoke('ledger:create', data),
+    }) => ipcRenderer.invoke('ledger:create', data),
     update: (data: {
       id: number
       name?: string
       currentPeriod?: string
       taxpayerIdentificationNumber?: string
-    }) =>
-      ipcRenderer.invoke('ledger:update', data),
+    }) => ipcRenderer.invoke('ledger:update', data),
     delete: (payload: { ledgerId: number; riskAcknowledged?: boolean }) =>
       ipcRenderer.invoke('ledger:delete', payload),
     getDeletionRisk: (ledgerId: number) => ipcRenderer.invoke('ledger:getDeletionRisk', ledgerId),
@@ -206,29 +206,29 @@ const api = {
         | 'new_voucher_date_strategy'
         | 'voucher_list_default_status',
       value: string
-    ) =>
-      ipcRenderer.invoke('settings:setSystemParam', key, value),
+    ) => ipcRenderer.invoke('settings:setSystemParam', key, value),
     setUserPreferences: (preferences: Record<string, string>) =>
       ipcRenderer.invoke('settings:setUserPreferences', preferences),
     openErrorLogDirectory: () => ipcRenderer.invoke('settings:openErrorLogDirectory'),
     exportDiagnosticsLogs: (payload?: { directoryPath?: string }) =>
       ipcRenderer.invoke('settings:exportDiagnosticsLogs', payload),
     chooseWallpaper: () => ipcRenderer.invoke('settings:chooseWallpaper'),
-    applyWallpaperCrop: (payload:
-      | { extension: string; bytes: number[]; sourcePath?: string }
-      | {
-          sourcePath: string
-          extension?: string
-          viewport?: {
-            scale: number
-            minScale: number
-            maxScale: number
-            offsetX: number
-            offsetY: number
+    applyWallpaperCrop: (
+      payload:
+        | { extension: string; bytes: number[]; sourcePath?: string }
+        | {
+            sourcePath: string
+            extension?: string
+            viewport?: {
+              scale: number
+              minScale: number
+              maxScale: number
+              offsetX: number
+              offsetY: number
+            }
+            useSuggestedViewport?: boolean
           }
-          useSuggestedViewport?: boolean
-        }) =>
-      ipcRenderer.invoke('settings:applyWallpaperCrop', payload),
+    ) => ipcRenderer.invoke('settings:applyWallpaperCrop', payload),
     restoreDefaultWallpaper: () => ipcRenderer.invoke('settings:restoreDefaultWallpaper'),
     getSubjectTemplate: (standardType: 'enterprise' | 'npo') =>
       ipcRenderer.invoke('settings:getSubjectTemplate', standardType),
@@ -385,8 +385,7 @@ const api = {
       renderOptions?: {
         showCashflowPreviousAmount?: boolean
       }
-    }) =>
-      ipcRenderer.invoke('reporting:export', payload),
+    }) => ipcRenderer.invoke('reporting:export', payload),
     exportBatch: (payload: {
       snapshotIds: number[]
       ledgerId?: number
@@ -426,7 +425,8 @@ const api = {
       }
     }) => ipcRenderer.invoke('print:updatePreviewSettings', payload),
     print: (payload: string | { jobId: string }) => ipcRenderer.invoke('print:print', payload),
-    exportPdf: (payload: string | { jobId: string }) => ipcRenderer.invoke('print:exportPdf', payload),
+    exportPdf: (payload: string | { jobId: string }) =>
+      ipcRenderer.invoke('print:exportPdf', payload),
     dispose: (jobId: string) => ipcRenderer.invoke('print:dispose', jobId)
   },
   bookQuery: {
@@ -501,7 +501,7 @@ if (typeof window !== 'undefined') {
     ipcRenderer.send('diagnostics:rendererError', {
       type: 'error',
       message: event.message,
-      stack: event.error instanceof Error ? event.error.stack ?? null : null,
+      stack: event.error instanceof Error ? (event.error.stack ?? null) : null,
       filename: event.filename || null,
       lineno: event.lineno ?? null,
       colno: event.colno ?? null,
@@ -522,7 +522,7 @@ if (typeof window !== 'undefined') {
     ipcRenderer.send('diagnostics:rendererError', {
       type: 'unhandledrejection',
       message: reason,
-      stack: event.reason instanceof Error ? event.reason.stack ?? null : null,
+      stack: event.reason instanceof Error ? (event.reason.stack ?? null) : null,
       reason,
       href: window.location.href
     })

@@ -31,7 +31,7 @@ describe('exportTaxTemplateCommand', () => {
   })
 
   function createContext(): CommandContext {
-    return {
+    const context: CommandContext = {
       db: {} as never,
       runtime: {} as never,
       actor: {
@@ -44,6 +44,8 @@ describe('exportTaxTemplateCommand', () => {
       outputMode: 'json',
       now: new Date('2026-07-07T00:00:00.000Z')
     }
+    authenticateMockContext({ db: context.db, actor: context.actor! })
+    return context
   }
 
   it('accepts CLI kebab-case payload flags and returns the tax template contract', async () => {
@@ -158,3 +160,4 @@ describe('exportTaxTemplateCommand', () => {
     })
   })
 })
+import { authenticateMockContext } from './testSupport/sessionContext'

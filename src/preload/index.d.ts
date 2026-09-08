@@ -13,6 +13,7 @@ interface AuthAPI {
       realName: string
       permissions: Record<string, boolean>
       isAdmin: boolean
+      isEnabled: boolean
       ledgerIds: number[]
     }
   }>
@@ -24,6 +25,7 @@ interface AuthAPI {
       realName: string
       permissions: Record<string, boolean>
       isAdmin: boolean
+      isEnabled: boolean
       ledgerIds: number[]
     }>
   >
@@ -36,6 +38,8 @@ interface AuthAPI {
   }) => Promise<{ success: boolean; error?: string }>
   updateUser: (data: {
     id: number
+    isAdmin?: boolean
+    isEnabled?: boolean
     realName?: string
     password?: string
     permissions?: Record<string, boolean>

@@ -10,11 +10,7 @@ import {
 } from '../commands/authCommands'
 import { createCommandContext } from '../commands/context'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
-import {
-  clearSessionByEvent,
-  requireAdmin,
-  setSessionByEvent
-} from './session'
+import { clearSessionByEvent, requireAdmin, setSessionByEvent } from './session'
 
 export function registerAuthHandlers(): void {
   getDatabase()
@@ -93,6 +89,8 @@ export function registerAuthHandlers(): void {
       event,
       data: {
         id: number
+        isAdmin?: boolean
+        isEnabled?: boolean
         realName?: string
         password?: string
         permissions?: Record<string, boolean>

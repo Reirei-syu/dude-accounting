@@ -3,13 +3,14 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { RuntimeContext } from '../main/runtime/runtimeContext'
 import type { CommandActor } from '../main/commands/types'
-import { CommandError } from '../main/commands/types'
+import {
+  isSessionIdentity,
+  sessionDenied,
+  type SessionIdentity
+} from '../main/security/sessionAuthority'
 
-export interface CliSession {
-  token: string
-  actor: CommandActor
-  createdAt: string
-  updatedAt: string
+export interface CliSession extends SessionIdentity {
+  formatVersion: 2
 }
 
 function getCliSessionDir(runtime: RuntimeContext): string {
@@ -27,27 +28,44 @@ export function loadCliSession(runtime: RuntimeContext): CliSession | null {
   }
 
   try {
-    return JSON.parse(fs.readFileSync(sessionPath, 'utf8')) as CliSession
+    const value: unknown = JSON.parse(fs.readFileSync(sessionPath, 'utf8'))
+    if (!isSessionIdentity(value) || (value as CliSession).formatVersion !== 2 || 'actor' in value)
+      return null
+    return {
+      formatVersion: 2,
+      userId: value.userId,
+      authRevision: value.authRevision,
+      token: value.token,
+      createdAt: value.createdAt
+    }
   } catch {
     return null
   }
 }
 
 export function saveCliSession(runtime: RuntimeContext, actor: CommandActor): CliSession {
-  const now = new Date().toISOString()
-  const existing = loadCliSession(runtime)
+  if (!isSessionIdentity(actor.session)) throw sessionDenied()
   const session: CliSession = {
-    token: existing?.token || randomUUID(),
-    actor: {
-      ...actor,
-      source: 'cli'
-    },
-    createdAt: existing?.createdAt || now,
-    updatedAt: now
+    formatVersion: 2,
+    userId: actor.session.userId,
+    authRevision: actor.session.authRevision,
+    token: actor.session.token,
+    createdAt: actor.session.createdAt
   }
 
-  fs.mkdirSync(getCliSessionDir(runtime), { recursive: true })
-  fs.writeFileSync(getCliSessionPath(runtime), JSON.stringify(session, null, 2), 'utf8')
+  fs.mkdirSync(getCliSessionDir(runtime), { recursive: true, mode: 0o700 })
+  const temporaryPath = path.join(getCliSessionDir(runtime), `session-${randomUUID()}.tmp`)
+  try {
+    fs.writeFileSync(temporaryPath, JSON.stringify(session), {
+      encoding: 'utf8',
+      mode: 0o600,
+      flag: 'wx'
+    })
+    fs.renameSync(temporaryPath, getCliSessionPath(runtime))
+    fs.chmodSync(getCliSessionPath(runtime), 0o600)
+  } finally {
+    fs.rmSync(temporaryPath, { force: true })
+  }
   return session
 }
 
@@ -61,11 +79,11 @@ export function clearCliSession(runtime: RuntimeContext): void {
 export function requireCliSession(runtime: RuntimeContext, token?: string): CliSession {
   const session = loadCliSession(runtime)
   if (!session) {
-    throw new CommandError('UNAUTHORIZED', '当前没有有效的 CLI 登录态，请先执行 auth login', null, 3)
+    throw sessionDenied()
   }
 
   if (token && session.token !== token) {
-    throw new CommandError('UNAUTHORIZED', 'CLI token 无效', null, 3)
+    throw sessionDenied()
   }
 
   return session

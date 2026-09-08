@@ -1,5 +1,6 @@
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
+import { resolveSessionActor } from '../security/sessionAuthority'
 
 export function createSuccessResult<T>(data: T): CommandResult<T> {
   return {
@@ -50,10 +51,12 @@ export function getCommandExitCode(error: unknown): number {
 }
 
 export async function withCommandResult<T>(
-  _context: CommandContext,
+  context: CommandContext,
   handler: () => Promise<T> | T
 ): Promise<CommandResult<T>> {
   try {
+    if (context.actor)
+      context.actor = resolveSessionActor(context.db, context.actor.session, context.actor.source)
     return createSuccessResult(await handler())
   } catch (error) {
     return createErrorResult<T>(error)
