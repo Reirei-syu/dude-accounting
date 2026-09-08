@@ -1,47 +1,15 @@
-import { describe, expect, it } from 'vitest'
+import Database from 'better-sqlite3'
+import { expect, it } from 'vitest'
+import { createHistoricalFixture } from './migrationFixtures'
+import { runDatabaseMigrations } from './migrations'
 
-import { ensureUserPreferenceSchema } from './init'
-
-class MockUserPreferenceDb {
-  userPreferenceColumns: Array<{ name: string }> = []
-
-  exec(sql: string): void {
-    if (sql.includes('CREATE TABLE IF NOT EXISTS user_preferences')) {
-      this.userPreferenceColumns = [
-        { name: 'user_id' },
-        { name: 'key' },
-        { name: 'value' },
-        { name: 'updated_at' }
-      ]
-    }
-  }
-
-  prepare(sql: string): { all: () => unknown[]; run: () => void } {
-    if (sql === "PRAGMA table_info('user_preferences')") {
-      return {
-        all: () => this.userPreferenceColumns,
-        run: () => undefined
-      }
-    }
-
-    return {
-      all: () => [],
-      run: () => undefined
-    }
-  }
-}
-
-describe('user preference schema', () => {
-  it('creates the user preferences table when it is missing', () => {
-    const db = new MockUserPreferenceDb()
-
-    ensureUserPreferenceSchema(db as never)
-
-    expect(db.userPreferenceColumns.map((column) => column.name)).toEqual([
-      'user_id',
-      'key',
-      'value',
-      'updated_at'
-    ])
-  })
+it('历史库创建用户偏好表并保留后续写入', () => {
+  const db = new Database(':memory:')
+  try {
+    createHistoricalFixture(db, 'minimal')
+    runDatabaseMigrations(db)
+    db.prepare('INSERT INTO user_preferences(user_id,key,value) VALUES(2,?,?)').run('theme','dark')
+    runDatabaseMigrations(db)
+    expect(db.prepare('SELECT value FROM user_preferences WHERE user_id=2').get()).toEqual({ value: 'dark' })
+  } finally { db.close() }
 })

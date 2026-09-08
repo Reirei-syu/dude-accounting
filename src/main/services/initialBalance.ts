@@ -1,6 +1,5 @@
 import Decimal from 'decimal.js'
 import type Database from 'better-sqlite3'
-import { ensureInitialBalanceSchema } from '../database/init'
 
 export interface InitialBalanceEntryInput {
   subjectCode: string
@@ -37,7 +36,6 @@ export function listInitialBalances(
   debit_amount: number
   credit_amount: number
 }> {
-  ensureInitialBalanceSchema(db)
   return db
     .prepare(
       `SELECT
@@ -71,7 +69,6 @@ export function saveInitialBalances(
     entries: InitialBalanceEntryInput[]
   }
 ): void {
-  ensureInitialBalanceSchema(db)
 
   const { ledgerId, period, entries } = payload
   if (!ledgerId) {
