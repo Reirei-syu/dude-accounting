@@ -493,6 +493,8 @@ export function registerBackupHandlers(): void {
 
             restoreBackupArtifact({
               backupPath,
+              manifestPath,
+              expectedChecksum,
               targetPath: getDatabasePath()
             })
             app.relaunch()

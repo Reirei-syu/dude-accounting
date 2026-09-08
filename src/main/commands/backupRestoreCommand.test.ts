@@ -125,6 +125,8 @@ describe('restoreBackupCommand', () => {
     expect(backupMocks.closeDatabase).toHaveBeenCalledTimes(1)
     expect(backupMocks.restoreBackupArtifact).toHaveBeenCalledWith({
       backupPath: 'D:/backup/package/data.db',
+      manifestPath: 'D:/backup/package/manifest.json',
+      expectedChecksum: 'checksum-1',
       targetPath: 'D:/tmp/dude-accounting.db'
     })
     expect(backupMocks.requestEmbeddedCliRelaunch).toHaveBeenCalledTimes(1)

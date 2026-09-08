@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { closeDatabase, getDatabasePath, initializeDatabase } from '../database/init'
+import { closeDatabase, getDatabase, getDatabasePath, initializeDatabase } from '../database/init'
 import {
   createBackupPackageRecord,
   deleteBackupPackageRecord,
@@ -31,10 +31,7 @@ import {
 } from '../services/pendingRestoreLog'
 import { assertHistoricalVersionDeletable } from '../services/versionRetention'
 import { requestEmbeddedCliRelaunch } from '../runtime/embeddedCliState'
-import {
-  appendCliE2eEvent,
-  shouldSuppressCliE2eRelaunch
-} from '../runtime/cliE2eEvents'
+import { appendCliE2eEvent, shouldSuppressCliE2eRelaunch } from '../runtime/cliE2eEvents'
 import { requireCommandAdmin, requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
@@ -269,38 +266,51 @@ export async function importBackupCommand(
     }
 
     context.db.pragma('wal_checkpoint(TRUNCATE)')
-    const imported = importLedgerBackupArtifact({
-      backupPath,
-      manifestPath,
-      targetPath: getDatabasePath(),
-      attachmentRootDir: getElectronicVoucherRootDir(context),
-      operatorUserId: actor.id,
-      operatorIsAdmin: actor.isAdmin
-    })
+    let closedForSwitch = false
+    try {
+      const imported = importLedgerBackupArtifact({
+        backupPath,
+        manifestPath,
+        targetPath: getDatabasePath(),
+        attachmentRootDir: getElectronicVoucherRootDir(context),
+        operatorUserId: actor.id,
+        operatorIsAdmin: actor.isAdmin,
+        beforeSwitch: () => {
+          closeDatabase()
+          closedForSwitch = true
+        },
+        appendImportLog: (db, imported) =>
+          appendActorOperationLog(
+            {
+              ...context,
+              db,
+              actor
+            },
+            {
+              ledgerId: imported.importedLedgerId,
+              module: 'backup',
+              action: 'import',
+              targetType: 'ledger',
+              targetId: imported.importedLedgerId,
+              details: {
+                sourceBackupId,
+                sourceLedgerId,
+                sourcePackagePath: backupPath,
+                manifestPath,
+                packageType: 'ledger_backup',
+                importedLedgerName: imported.importedLedgerName
+              }
+            }
+          )
+      })
 
-    appendActorOperationLog(
-      {
-        ...context,
-        actor
-      },
-      {
-        ledgerId: imported.importedLedgerId,
-        module: 'backup',
-        action: 'import',
-        targetType: 'ledger',
-        targetId: imported.importedLedgerId,
-        details: {
-          sourceBackupId,
-          sourceLedgerId,
-          sourcePackagePath: backupPath,
-          manifestPath,
-          packageType: 'ledger_backup',
-          importedLedgerName: imported.importedLedgerName
-        }
+      return imported
+    } finally {
+      if (closedForSwitch) {
+        initializeDatabase()
+        context.db = getDatabase()
       }
-    )
-
-    return imported
+    }
   })
 }
 
@@ -472,6 +482,8 @@ export async function restoreBackupCommand(
       databaseClosed = true
       restoreBackupArtifact({
         backupPath,
+        manifestPath,
+        expectedChecksum,
         targetPath: getDatabasePath()
       })
       appendCliE2eEvent('backup.restore.relaunch-requested', {

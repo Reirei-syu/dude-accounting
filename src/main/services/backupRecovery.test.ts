@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it } from 'vitest'
+import { runDatabaseMigrations } from '../database/migrations'
 import {
   createBackupArtifact,
   createLedgerBackupArtifact,
@@ -135,7 +136,9 @@ describe('backupRecovery service', () => {
     const sourcePath = path.join(tempDir, 'ledger.db')
     const backupDir = path.join(tempDir, 'backups')
     const targetPath = path.join(tempDir, 'restored.db')
-    fs.writeFileSync(sourcePath, 'sqlite-bytes', 'utf8')
+    const sourceDb = new Database(sourcePath)
+    runDatabaseMigrations(sourceDb)
+    sourceDb.close()
     fs.writeFileSync(targetPath, 'old-bytes', 'utf8')
 
     const result = createBackupArtifact({
@@ -153,7 +156,7 @@ describe('backupRecovery service', () => {
       targetPath
     })
 
-    expect(fs.readFileSync(targetPath, 'utf8')).toBe('sqlite-bytes')
+    expect(fs.readFileSync(targetPath)).toEqual(fs.readFileSync(sourcePath))
     expect(fs.existsSync(`${targetPath}.restore-tmp`)).toBe(false)
   })
 

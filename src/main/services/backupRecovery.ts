@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import Database from 'better-sqlite3'
 import { hashPassword } from '../security/password'
 import {
@@ -10,6 +11,16 @@ import {
   sanitizePathSegment
 } from './fileIntegrity'
 import { formatLocalDateTime } from './localTime'
+import { requireStoredFilename, resolveContainedPath } from './containedPath'
+import { switchDatabaseFile, withDatabaseImportStaging } from './databaseFileSwitch'
+import { withDatabaseSnapshot } from '../database/databaseSnapshot'
+import { runDatabaseMigrations } from '../database/migrations'
+import {
+  checkDatabaseIntegrity,
+  getSchemaObjects,
+  quoteIdentifier
+} from '../database/migrationSchema'
+import { CURRENT_SCHEMA_VERSION } from '../database/schema'
 import { LAST_LOGIN_USER_ID_KEY, USER_WALLPAPER_KEY } from './wallpaperPreference'
 
 export interface BackupManifest {
@@ -105,7 +116,9 @@ export interface ResolvedBackupArtifactPaths {
   manifestPath: string
 }
 
-function tryResolveDirectBackupArtifactPaths(packageDir: string): ResolvedBackupArtifactPaths | null {
+function tryResolveDirectBackupArtifactPaths(
+  packageDir: string
+): ResolvedBackupArtifactPaths | null {
   const manifestPath = path.join(packageDir, 'manifest.json')
   if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
     return null
@@ -197,13 +210,20 @@ function copyLedgerAttachments(
   )
 
   const attachments: LedgerBackupAttachment[] = []
+  const storedNames = new Set<string>()
+  for (const row of rows) {
+    requireStoredFilename(row.stored_name)
+    const key = row.stored_name.toLowerCase()
+    if (storedNames.has(key)) throw new Error('电子凭证附件存储名称重复')
+    storedNames.add(key)
+  }
   for (const row of rows) {
     if (!fs.existsSync(row.stored_path)) {
       throw new Error(`电子凭证附件缺失：${row.stored_path}`)
     }
 
     const relativePath = path.posix.join('electronic-vouchers', row.stored_name)
-    const targetPath = path.join(packageDir, 'electronic-vouchers', row.stored_name)
+    const targetPath = resolveContainedPath(packageDir, relativePath)
     fs.copyFileSync(row.stored_path, targetPath)
     const attachmentChecksum = computeFileSha256(targetPath)
     const attachmentFileSize = fs.statSync(targetPath).size
@@ -256,7 +276,7 @@ function copyLedgerSettingsAssets(
 
   const assets: LedgerBackupSettingsAsset[] = []
   for (const row of wallpaperRows) {
-    const sourcePath = path.resolve(sourceUserDataPath, row.relative_path)
+    const sourcePath = resolveContainedPath(sourceUserDataPath, row.relative_path)
     if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
       throw new Error(`备份缺少用户壁纸文件：${row.username}`)
     }
@@ -437,6 +457,14 @@ export function validateBackupArtifact(
   expectedChecksum: string,
   manifestPath?: string | null
 ): BackupValidationResult {
+  if (['-wal', '-shm', '-journal'].some((suffix) => fs.existsSync(filePath + suffix))) {
+    return {
+      valid: false,
+      actualChecksum: null,
+      error: '备份载荷必须是独立数据库文件，不允许旁置日志',
+      manifest: null
+    }
+  }
   if (!fs.existsSync(filePath)) {
     return { valid: false, actualChecksum: null, error: '备份文件不存在', manifest: null }
   }
@@ -460,6 +488,7 @@ export function validateBackupArtifact(
 
     const fileSize = fs.statSync(filePath).size
     const isManifestValid =
+      manifest !== null &&
       manifest.schemaVersion === '1.0' &&
       manifest.packageType === 'system_backup' &&
       manifest.databaseFile === path.basename(filePath) &&
@@ -501,6 +530,7 @@ export function validateLedgerBackupArtifact(
 
   const fileSize = fs.statSync(filePath).size
   const isManifestValid =
+    manifest !== null &&
     (manifest.schemaVersion === '2.0' || manifest.schemaVersion === '2.1') &&
     manifest.packageType === 'ledger_backup' &&
     manifest.databaseFile === path.basename(filePath) &&
@@ -518,75 +548,219 @@ export function validateLedgerBackupArtifact(
     }
   }
 
-  const packageDir = path.dirname(manifestPath)
-  for (const attachment of manifest.attachments) {
-    const attachmentPath = path.join(packageDir, ...attachment.relativePath.split('/'))
-    if (!fs.existsSync(attachmentPath)) {
-      return {
-        valid: false,
-        actualChecksum,
-        error: `账套备份附件缺失：${attachment.relativePath}`,
-        manifest
+  try {
+    const packageDir = path.dirname(manifestPath)
+    requireStoredFilename(manifest.databaseFile)
+    if (resolveContainedPath(packageDir, manifest.databaseFile) !== path.resolve(filePath)) {
+      throw new Error('备份数据库必须位于备份包内')
+    }
+    resolveContainedPath(packageDir, path.basename(manifestPath))
+    const declaredPaths = new Set<string>([
+      manifest.databaseFile.toLowerCase(),
+      path.basename(manifestPath).toLowerCase()
+    ])
+    for (const entry of [...manifest.attachments, ...(manifest.settingsAssets ?? [])]) {
+      resolveContainedPath(packageDir, entry.relativePath)
+      const key = entry.relativePath.toLowerCase()
+      if (declaredPaths.has(key)) throw new Error('备份清单包含重复文件')
+      declaredPaths.add(key)
+    }
+    for (const attachment of manifest.attachments) {
+      requireStoredFilename(attachment.storedName)
+      if (attachment.relativePath !== `electronic-vouchers/${attachment.storedName}`) {
+        throw new Error('附件存储名称与相对路径不一致')
+      }
+    }
+    withDatabaseSnapshot(filePath, (copy) => {
+      if (computeFileSha256(copy) !== actualChecksum) throw new Error('校验期间备份载荷发生变化')
+      const packageDb = new Database(copy, { readonly: true, fileMustExist: true })
+      try {
+        const schemaVersion = packageDb.pragma('user_version', { simple: true }) as number
+        if (
+          !Number.isInteger(schemaVersion) ||
+          schemaVersion < 0 ||
+          schemaVersion > CURRENT_SCHEMA_VERSION
+        ) {
+          throw new Error('账套载荷数据库版本不受支持')
+        }
+        checkDatabaseIntegrity(packageDb)
+        const ledgers = packageDb.prepare('SELECT id FROM ledgers').all() as Array<{ id: number }>
+        if (ledgers.length !== 1 || ledgers[0].id !== manifest.ledgerId)
+          throw new Error('备份包必须仅包含清单声明的一个账套')
+        for (const object of getSchemaObjects(packageDb).filter(
+          (object) => object.type === 'table'
+        )) {
+          const table = quoteIdentifier(object.name)
+          const columns = packageDb.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+            name: string
+          }>
+          if (
+            columns.some((column) => column.name === 'ledger_id') &&
+            packageDb
+              .prepare(
+                `SELECT 1 FROM ${table} WHERE ledger_id IS NOT NULL AND ledger_id <> ? LIMIT 1`
+              )
+              .get(manifest.ledgerId)
+          ) {
+            throw new Error(`备份包混入其他账套记录：${object.name}`)
+          }
+        }
+        const rows = packageDb
+          .prepare(
+            'SELECT stored_name, stored_path, sha256, file_size FROM electronic_voucher_files'
+          )
+          .all() as Array<{
+          stored_name: string
+          stored_path: string
+          sha256: string
+          file_size: number
+        }>
+        if (rows.length !== manifest.attachments.length)
+          throw new Error('数据库附件记录与清单数量不一致')
+        const matched = new Set<string>()
+        for (const row of rows) {
+          requireStoredFilename(row.stored_name)
+          resolveContainedPath(packageDir, row.stored_path)
+          const attachment = manifest.attachments.find(
+            (item) => item.relativePath === row.stored_path
+          )
+          if (
+            !attachment ||
+            matched.has(row.stored_path.toLowerCase()) ||
+            attachment.storedName !== row.stored_name ||
+            attachment.checksum !== row.sha256 ||
+            attachment.fileSize !== row.file_size
+          )
+            throw new Error('数据库附件记录与清单不一致或重复')
+          matched.add(row.stored_path.toLowerCase())
+        }
+        if (manifest.schemaVersion === '2.1' || manifest.settingsAssets?.length) {
+          const owners = new Set<string>()
+          for (const asset of manifest.settingsAssets ?? []) {
+            if (
+              asset.kind !== 'wallpaper' ||
+              typeof asset.ownerUsername !== 'string' ||
+              owners.has(asset.ownerUsername)
+            ) {
+              throw new Error('设置资产类型或用户对应关系无效')
+            }
+            if (!asset.relativePath.startsWith('settings-assets/'))
+              throw new Error('设置资产路径不在受控目录')
+            const owner = packageDb
+              .prepare('SELECT id FROM users WHERE username = ?')
+              .get(asset.ownerUsername) as { id: number } | undefined
+            if (
+              !owner ||
+              !packageDb
+                .prepare(
+                  'SELECT 1 FROM user_preferences WHERE user_id = ? AND key = ? AND TRIM(value) <> ?'
+                )
+                .get(owner.id, USER_WALLPAPER_KEY, '')
+            ) {
+              throw new Error('设置资产缺少对应用户壁纸记录')
+            }
+            owners.add(asset.ownerUsername)
+          }
+          const preferences = packageDb
+            .prepare(
+              'SELECT u.username, up.value FROM user_preferences up JOIN users u ON u.id = up.user_id WHERE up.key = ? AND TRIM(up.value) <> ?'
+            )
+            .all(USER_WALLPAPER_KEY, '') as Array<{ username: string; value: string }>
+          for (const preference of preferences) {
+            resolveContainedPath(packageDir, preference.value)
+            if (!owners.has(preference.username)) throw new Error('用户壁纸记录缺少对应设置资产')
+          }
+          if (preferences.length !== owners.size)
+            throw new Error('设置资产与用户壁纸记录数量不一致')
+        }
+      } finally {
+        packageDb.close()
+      }
+    })
+    const inspectFiles = (relativeDir: string): void => {
+      const directory = relativeDir ? resolveContainedPath(packageDir, relativeDir) : packageDir
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const relative = relativeDir ? `${relativeDir}/${entry.name}` : entry.name
+        const absolute = resolveContainedPath(packageDir, relative)
+        if (entry.isDirectory()) inspectFiles(relative)
+        else if (!fs.lstatSync(absolute).isFile() || !declaredPaths.has(relative.toLowerCase())) {
+          throw new Error(`备份包包含未声明文件：${relative}`)
+        }
+      }
+    }
+    for (const attachment of manifest.attachments) {
+      const attachmentPath = resolveContainedPath(packageDir, attachment.relativePath)
+      if (!fs.existsSync(attachmentPath)) {
+        return {
+          valid: false,
+          actualChecksum,
+          error: `账套备份附件缺失：${attachment.relativePath}`,
+          manifest
+        }
+      }
+
+      const attachmentChecksum = computeFileSha256(attachmentPath)
+      if (attachmentChecksum !== attachment.checksum) {
+        return {
+          valid: false,
+          actualChecksum,
+          error: `账套备份附件校验失败：${attachment.relativePath}`,
+          manifest
+        }
+      }
+
+      const attachmentSize = fs.statSync(attachmentPath).size
+      if (attachmentSize !== attachment.fileSize) {
+        return {
+          valid: false,
+          actualChecksum,
+          error: `账套备份附件大小不一致：${attachment.relativePath}`,
+          manifest
+        }
       }
     }
 
-    const attachmentChecksum = computeFileSha256(attachmentPath)
-    if (attachmentChecksum !== attachment.checksum) {
-      return {
-        valid: false,
-        actualChecksum,
-        error: `账套备份附件校验失败：${attachment.relativePath}`,
-        manifest
+    for (const settingsAsset of manifest.settingsAssets ?? []) {
+      const assetPath = resolveContainedPath(packageDir, settingsAsset.relativePath)
+      if (!fs.existsSync(assetPath)) {
+        return {
+          valid: false,
+          actualChecksum,
+          error: `备份设置资产缺失：${settingsAsset.relativePath}`,
+          manifest
+        }
+      }
+
+      const assetChecksum = computeFileSha256(assetPath)
+      if (assetChecksum !== settingsAsset.checksum) {
+        return {
+          valid: false,
+          actualChecksum,
+          error: `备份设置资产校验失败：${settingsAsset.relativePath}`,
+          manifest
+        }
+      }
+
+      const assetSize = fs.statSync(assetPath).size
+      if (assetSize !== settingsAsset.fileSize) {
+        return {
+          valid: false,
+          actualChecksum,
+          error: `备份设置资产大小不一致：${settingsAsset.relativePath}`,
+          manifest
+        }
       }
     }
 
-    const attachmentSize = fs.statSync(attachmentPath).size
-    if (attachmentSize !== attachment.fileSize) {
-      return {
-        valid: false,
-        actualChecksum,
-        error: `账套备份附件大小不一致：${attachment.relativePath}`,
-        manifest
-      }
+    inspectFiles('')
+    return { valid: true, actualChecksum, manifest }
+  } catch (error) {
+    return {
+      valid: false,
+      actualChecksum,
+      manifest,
+      error: error instanceof Error ? error.message : '备份包校验失败'
     }
-  }
-
-  for (const settingsAsset of manifest.settingsAssets ?? []) {
-    const assetPath = path.join(packageDir, ...settingsAsset.relativePath.split('/'))
-    if (!fs.existsSync(assetPath)) {
-      return {
-        valid: false,
-        actualChecksum,
-        error: `备份设置资产缺失：${settingsAsset.relativePath}`,
-        manifest
-      }
-    }
-
-    const assetChecksum = computeFileSha256(assetPath)
-    if (assetChecksum !== settingsAsset.checksum) {
-      return {
-        valid: false,
-        actualChecksum,
-        error: `备份设置资产校验失败：${settingsAsset.relativePath}`,
-        manifest
-      }
-    }
-
-    const assetSize = fs.statSync(assetPath).size
-    if (assetSize !== settingsAsset.fileSize) {
-      return {
-        valid: false,
-        actualChecksum,
-        error: `备份设置资产大小不一致：${settingsAsset.relativePath}`,
-        manifest
-      }
-    }
-  }
-
-  return {
-    valid: true,
-    actualChecksum,
-    manifest
   }
 }
 
@@ -631,14 +805,93 @@ function hasLedgerColumn(db: Database.Database, columnName: string): boolean {
   return columns.some((column) => column.name === columnName)
 }
 
-export function importLedgerBackupArtifact(input: {
+interface LedgerImportInput {
   backupPath: string
   manifestPath: string
   targetPath: string
   attachmentRootDir: string
   operatorUserId: number
   operatorIsAdmin: boolean
-}): LedgerBackupImportResult {
+  beforeSwitch?: () => void
+  appendImportLog?: (db: Database.Database, result: LedgerBackupImportResult) => void
+}
+
+export function importLedgerBackupArtifact(input: LedgerImportInput): LedgerBackupImportResult {
+  const validation = validateLedgerBackupArtifact(input.backupPath, input.manifestPath)
+  if (!validation.valid || !validation.manifest)
+    throw new Error(validation.error ?? '账套备份包校验失败')
+  const generation = randomUUID()
+  const parent = path.dirname(path.resolve(input.targetPath))
+  const finalAssets = resolveContainedPath(parent, `import-assets/${generation}`)
+  const manifest = validation.manifest
+  return withDatabaseImportStaging(input.targetPath, (staging) => {
+    const snapshotRoot = resolveContainedPath(staging, 'package')
+    fs.mkdirSync(snapshotRoot)
+    const sourceRoot = path.dirname(input.manifestPath)
+    const files = [
+      {
+        relativePath: manifest.databaseFile,
+        checksum: manifest.checksum,
+        fileSize: manifest.fileSize
+      },
+      ...manifest.attachments,
+      ...(manifest.settingsAssets ?? [])
+    ]
+    for (const file of files) {
+      const source = resolveContainedPath(sourceRoot, file.relativePath)
+      const destination = resolveContainedPath(snapshotRoot, file.relativePath)
+      fs.mkdirSync(path.dirname(destination), { recursive: true })
+      fs.copyFileSync(source, destination)
+      if (
+        computeFileSha256(destination) !== file.checksum ||
+        fs.statSync(destination).size !== file.fileSize
+      ) {
+        throw new Error('创建导入副本时源包发生变化或复制不完整')
+      }
+    }
+    const snapshotManifest = resolveContainedPath(snapshotRoot, 'manifest.json')
+    const snapshotDatabase = resolveContainedPath(snapshotRoot, manifest.databaseFile)
+    const sourceCopy = new Database(snapshotDatabase)
+    try {
+      runDatabaseMigrations(sourceCopy, {
+        backupDirectory: resolveContainedPath(staging, 'migration-backups')
+      })
+      sourceCopy.pragma('wal_checkpoint(TRUNCATE)')
+      sourceCopy.pragma('journal_mode = DELETE')
+    } finally {
+      sourceCopy.close()
+    }
+    const upgradedManifest = {
+      ...manifest,
+      checksum: computeFileSha256(snapshotDatabase),
+      fileSize: fs.statSync(snapshotDatabase).size
+    }
+    fs.writeFileSync(snapshotManifest, JSON.stringify(upgradedManifest), { flag: 'wx' })
+    const assets = resolveContainedPath(staging, 'assets')
+    fs.mkdirSync(assets)
+    return withDatabaseSnapshot(input.targetPath, (copy) => {
+      const result = importLedgerIntoStaging(
+        {
+          ...input,
+          backupPath: resolveContainedPath(snapshotRoot, manifest.databaseFile),
+          manifestPath: snapshotManifest,
+          targetPath: copy
+        },
+        assets,
+        finalAssets
+      )
+      input.beforeSwitch?.()
+      switchDatabaseFile(copy, input.targetPath, { preparedPath: assets, generation })
+      return result
+    })
+  })
+}
+
+function importLedgerIntoStaging(
+  input: LedgerImportInput,
+  stagedAssets: string,
+  finalAssets: string
+): LedgerBackupImportResult {
   const validation = validateLedgerBackupArtifact(input.backupPath, input.manifestPath)
   if (!validation.valid || !validation.manifest) {
     throw new Error(validation.error ?? '账套备份包校验失败')
@@ -734,7 +987,9 @@ export function importLedgerBackupArtifact(input: {
 
     for (const sourceUser of sourceUsers) {
       sourceUserById.set(sourceUser.id, { username: sourceUser.username })
-      const existingUser = selectUserByUsername.get(sourceUser.username) as { id: number } | undefined
+      const existingUser = selectUserByUsername.get(sourceUser.username) as
+        | { id: number }
+        | undefined
       if (existingUser) {
         userIdMap.set(sourceUser.id, existingUser.id)
         targetUserIdByUsername.set(sourceUser.username, existingUser.id)
@@ -972,7 +1227,7 @@ export function importLedgerBackupArtifact(input: {
     const voucherIdMap = new Map<number, number>()
     const sourceVouchers = packageDb
       .prepare(
-        `SELECT id, period, voucher_date, voucher_number, voucher_word, status, deleted_from_status, creator_id, auditor_id, bookkeeper_id, attachment_count, is_carry_forward, created_at, updated_at
+        `SELECT *
            FROM vouchers
           ORDER BY id ASC`
       )
@@ -987,6 +1242,11 @@ export function importLedgerBackupArtifact(input: {
       creator_id: number | null
       auditor_id: number | null
       bookkeeper_id: number | null
+      posted_at?: string | null
+      emergency_reversal_reason?: string | null
+      emergency_reversal_by?: number | null
+      emergency_reversal_at?: string | null
+      reversal_approval_tag?: string | null
       attachment_count: number
       is_carry_forward: number
       created_at: string
@@ -1006,15 +1266,37 @@ export function importLedgerBackupArtifact(input: {
         row.voucher_word,
         row.status,
         row.deleted_from_status,
-        row.creator_id === null ? null : userIdMap.get(row.creator_id) ?? null,
-        row.auditor_id === null ? null : userIdMap.get(row.auditor_id) ?? null,
-        row.bookkeeper_id === null ? null : userIdMap.get(row.bookkeeper_id) ?? null,
+        row.creator_id === null ? null : (userIdMap.get(row.creator_id) ?? null),
+        row.auditor_id === null ? null : (userIdMap.get(row.auditor_id) ?? null),
+        row.bookkeeper_id === null ? null : (userIdMap.get(row.bookkeeper_id) ?? null),
         row.attachment_count,
         row.is_carry_forward,
         row.created_at,
         row.updated_at
       )
-      voucherIdMap.set(row.id, Number(inserted.lastInsertRowid))
+      const targetVoucherId = Number(inserted.lastInsertRowid)
+      const complianceFields = {
+        posted_at: row.posted_at,
+        emergency_reversal_reason: row.emergency_reversal_reason,
+        emergency_reversal_by:
+          row.emergency_reversal_by == null
+            ? row.emergency_reversal_by
+            : requireMappedId(userIdMap, row.emergency_reversal_by, '紧急逆转操作人'),
+        emergency_reversal_at: row.emergency_reversal_at,
+        reversal_approval_tag: row.reversal_approval_tag
+      }
+      const targetColumns = targetDb.prepare('PRAGMA table_info(vouchers)').all() as Array<{
+        name: string
+      }>
+      for (const [column, value] of Object.entries(complianceFields)) {
+        if (value === undefined || value === null) continue
+        if (!targetColumns.some((item) => item.name === column))
+          throw new Error(`目标数据库缺少凭证合规字段：${column}`)
+        targetDb
+          .prepare(`UPDATE vouchers SET ${quoteIdentifier(column)} = ? WHERE id = ?`)
+          .run(value, targetVoucherId)
+      }
+      voucherIdMap.set(row.id, targetVoucherId)
     }
 
     const sourceVoucherEntries = packageDb
@@ -1080,21 +1362,28 @@ export function importLedgerBackupArtifact(input: {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     for (const row of sourceElectronicFiles) {
-      const sourceAttachmentPath = path.join(packageDir, ...row.stored_path.split('/'))
-      const targetAttachmentDir = path.join(input.attachmentRootDir, `ledger-${importedLedgerId}`)
+      requireStoredFilename(row.stored_name)
+      const sourceAttachmentPath = resolveContainedPath(packageDir, row.stored_path)
+      const targetAttachmentDir = resolveContainedPath(stagedAssets, `ledger-${importedLedgerId}`)
       ensureDirectory(targetAttachmentDir)
-      const targetAttachmentPath = path.join(targetAttachmentDir, row.stored_name)
+      const targetAttachmentPath = resolveContainedPath(targetAttachmentDir, row.stored_name)
       fs.copyFileSync(sourceAttachmentPath, targetAttachmentPath)
+      if (
+        computeFileSha256(targetAttachmentPath) !== row.sha256 ||
+        fs.statSync(targetAttachmentPath).size !== row.file_size
+      ) {
+        throw new Error('staging 附件完整性校验失败')
+      }
       const inserted = insertElectronicFile.run(
         importedLedgerId,
         row.original_name,
         row.stored_name,
-        targetAttachmentPath,
+        resolveContainedPath(finalAssets, `ledger-${importedLedgerId}/${row.stored_name}`),
         row.file_ext,
         row.mime_type,
         row.sha256,
         row.file_size,
-        row.imported_by === null ? null : userIdMap.get(row.imported_by) ?? null,
+        row.imported_by === null ? null : (userIdMap.get(row.imported_by) ?? null),
         row.imported_at
       )
       fileIdMap.set(row.id, Number(inserted.lastInsertRowid))
@@ -1230,7 +1519,7 @@ export function importLedgerBackupArtifact(input: {
         row.end_period,
         row.as_of_date,
         row.include_unposted_vouchers,
-        row.generated_by === null ? null : userIdMap.get(row.generated_by) ?? null,
+        row.generated_by === null ? null : (userIdMap.get(row.generated_by) ?? null),
         row.generated_at,
         row.content_json
       )
@@ -1262,7 +1551,7 @@ export function importLedgerBackupArtifact(input: {
     for (const row of sourceLogs) {
       insertLog.run(
         importedLedgerId,
-        row.user_id === null ? null : userIdMap.get(row.user_id) ?? null,
+        row.user_id === null ? null : (userIdMap.get(row.user_id) ?? null),
         row.username,
         row.module,
         row.action,
@@ -1312,7 +1601,7 @@ export function importLedgerBackupArtifact(input: {
         const sourceLastLoginId = Number(row.value)
         const sourceUsername = sourceUserById.get(sourceLastLoginId)?.username
         const targetUserId = sourceUsername
-          ? targetUserIdByUsername.get(sourceUsername) ?? null
+          ? (targetUserIdByUsername.get(sourceUsername) ?? null)
           : null
         if (targetUserId !== null) {
           insertSystemSetting.run(row.key, String(targetUserId))
@@ -1344,17 +1633,27 @@ export function importLedgerBackupArtifact(input: {
       if (!targetUserId) {
         continue
       }
-      const sourceAssetPath = path.join(packageDir, ...asset.relativePath.split('/'))
+      const sourceAssetPath = resolveContainedPath(packageDir, asset.relativePath)
       const extension = path.extname(asset.relativePath)
-      const targetRelativePath = path.posix.join(
-        'wallpapers',
-        `user-${targetUserId}`,
-        `current${extension}`
+      const assetRelative = `wallpapers/user-${targetUserId}/current${extension}`
+      const targetRelativePath = path
+        .relative(targetUserDataPath, resolveContainedPath(finalAssets, assetRelative))
+        .split(path.sep)
+        .join('/')
+      resolveContainedPath(targetUserDataPath, targetRelativePath)
+      const targetAbsoluteDir = resolveContainedPath(
+        stagedAssets,
+        `wallpapers/user-${targetUserId}`
       )
-      const targetAbsoluteDir = path.join(targetUserDataPath, 'wallpapers', `user-${targetUserId}`)
       ensureDirectory(targetAbsoluteDir)
       const targetAbsolutePath = path.join(targetAbsoluteDir, `current${extension}`)
       fs.copyFileSync(sourceAssetPath, targetAbsolutePath)
+      if (
+        computeFileSha256(targetAbsolutePath) !== asset.checksum ||
+        fs.statSync(targetAbsolutePath).size !== asset.fileSize
+      ) {
+        throw new Error('staging 壁纸完整性校验失败')
+      }
       wallpaperPathByUsername.set(asset.ownerUsername, targetRelativePath)
     }
 
@@ -1371,7 +1670,7 @@ export function importLedgerBackupArtifact(input: {
       const sourceUsername = sourceUserById.get(row.user_id)?.username
       if (row.key === USER_WALLPAPER_KEY) {
         const targetRelativePath = sourceUsername
-          ? wallpaperPathByUsername.get(sourceUsername) ?? ''
+          ? (wallpaperPathByUsername.get(sourceUsername) ?? '')
           : ''
         if (!targetRelativePath) {
           continue
@@ -1383,13 +1682,16 @@ export function importLedgerBackupArtifact(input: {
       insertUserPreference.run(targetUserId, row.key, row.value, row.updated_at)
     }
 
+    input.appendImportLog?.(targetDb, { importedLedgerId, importedLedgerName })
     targetDb.exec('COMMIT;')
+    targetDb.pragma('wal_checkpoint(TRUNCATE)')
+    targetDb.pragma('journal_mode = DELETE')
     return {
       importedLedgerId,
       importedLedgerName
     }
   } catch (error) {
-    targetDb.exec('ROLLBACK;')
+    if (targetDb.inTransaction) targetDb.exec('ROLLBACK;')
     throw error
   } finally {
     packageDb.close()
@@ -1401,22 +1703,39 @@ export function restoreBackupArtifact(input: {
   backupPath: string
   targetPath: string
   tempPath?: string
+  manifestPath?: string | null
+  expectedChecksum?: string
 }): BackupRestoreResult {
-  const tempPath = input.tempPath ?? `${input.targetPath}.restore-tmp`
-
-  if (fs.existsSync(tempPath)) {
-    fs.rmSync(tempPath, { force: true })
-  }
-
-  fs.copyFileSync(input.backupPath, tempPath)
-
-  for (const candidatePath of [input.targetPath, `${input.targetPath}-wal`, `${input.targetPath}-shm`]) {
-    if (fs.existsSync(candidatePath)) {
-      fs.rmSync(candidatePath, { force: true })
+  const manifestPath =
+    input.manifestPath === undefined
+      ? path.join(path.dirname(input.backupPath), 'manifest.json')
+      : input.manifestPath
+  const expectedChecksum =
+    input.expectedChecksum ??
+    (manifestPath && fs.existsSync(manifestPath)
+      ? (JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as BackupManifest | null)?.checksum
+      : undefined)
+  if (!expectedChecksum) throw new Error('恢复必须提供备份清单或历史记录的完整性摘要')
+  const validation = validateBackupArtifact(input.backupPath, expectedChecksum, manifestPath)
+  if (!validation.valid) throw new Error(validation.error ?? '整库恢复校验失败')
+  withDatabaseSnapshot(input.backupPath, (copy) => {
+    if (fs.existsSync(`${copy}-wal`)) throw new Error('恢复载荷包含未声明 WAL')
+    if (computeFileSha256(copy) !== expectedChecksum) throw new Error('校验后恢复载荷发生变化')
+    const candidate = new Database(copy, { fileMustExist: true })
+    try {
+      checkDatabaseIntegrity(candidate)
+      if (getSchemaObjects(candidate).length === 0) throw new Error('恢复载荷不能是空白数据库')
+      // 旧结构只在隔离副本上升级；当前结构也必须通过完整 schema 校验。
+      runDatabaseMigrations(candidate, {
+        backupDirectory: path.join(path.dirname(copy), 'migration-backups')
+      })
+      candidate.pragma('wal_checkpoint(TRUNCATE)')
+      candidate.pragma('journal_mode = DELETE')
+    } finally {
+      candidate.close()
     }
-  }
-
-  fs.renameSync(tempPath, input.targetPath)
+    switchDatabaseFile(copy, input.targetPath)
+  })
 
   return {
     targetPath: input.targetPath,
