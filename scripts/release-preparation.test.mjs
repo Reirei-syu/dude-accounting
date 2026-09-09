@@ -29,6 +29,33 @@ function run(output, prefix = '') {
 }
 
 describe.runIf(process.platform === 'win32')('Windows 产物准备实际文件系统边界', () => {
+  it('Windows PowerShell 能从含中文的 UTF-8 package.json 读取安装包版本', () => {
+    const output = fixture()
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+    fs.writeFileSync(
+      path.join(output, 'package.json'),
+      JSON.stringify({ version: pkg.version, description: pkg.description }),
+      'utf8'
+    )
+    const versionLine = fs
+      .readFileSync(path.join(root, 'scripts/build-win-installer.ps1'), 'utf8')
+      .split(/\r?\n/)
+      .find((line) => line.startsWith('$version ='))
+    expect(versionLine).toBeTruthy()
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `$ErrorActionPreference='Stop'; $repoRoot=${quote(output)}; & ([scriptblock]::Create(${quote(`${versionLine}\nWrite-Output $version`)}))`
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 20_000 }
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout.trim()).toBe(pkg.version)
+  })
+
   it('Windows PowerShell 可按文件编码解析两个发布脚本', () => {
     for (const name of ['prepare-cli-release-e2e.ps1', 'build-win-installer.ps1']) {
       const file = path.join(root, 'scripts', name)

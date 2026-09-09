@@ -12,7 +12,7 @@ Write-Host "Installer output: $releaseOutput"
 & (Join-Path $PSScriptRoot 'prepare-cli-release-e2e.ps1')
 New-Item -ItemType Directory -Force -Path $releaseOutput | Out-Null
 
-$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
+$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw -Encoding UTF8 | ConvertFrom-Json).version
 if ($version -notmatch '^\d+\.\d+\.\d+([-.][a-zA-Z0-9.-]+)?$') { throw '版本号不合法。' }
 $installerName = "dude-app-$version-setup.exe"
 $artifactNames = @($installerName, "$installerName.blockmap", 'latest.yml', 'builder-debug.yml', 'builder-effective-config.yaml')
