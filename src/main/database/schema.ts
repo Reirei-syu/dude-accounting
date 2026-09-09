@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3'
 import { migrateAuthRevision } from './authRevisionMigration'
 import { migrateFileOperationCommits } from './fileOperationMigration'
+import { migrateAuditLogIndex } from './auditLogMigration'
 
-export const CURRENT_SCHEMA_VERSION = 4
+export const CURRENT_SCHEMA_VERSION = 5
 
 // 当前结构的唯一事实源；历史升级与新库使用相同定义。
 export const TABLE_SQL: Readonly<Record<string, string>> = {
@@ -311,7 +312,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_unique_active_number
 CREATE INDEX IF NOT EXISTS idx_voucher_entries_voucher ON voucher_entries(voucher_id);
 CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(voucher_date);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_created_at ON operation_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_operation_logs_audit_time ON operation_logs(julianday(created_at) DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_module_action ON operation_logs(module, action);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_ledger_user ON operation_logs(ledger_id, user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_electronic_voucher_records_fingerprint
@@ -342,4 +342,5 @@ export function createCurrentSchema(db: Database.Database, version = CURRENT_SCH
   db.exec(Object.values(TABLE_SQL).join(';\n') + ';' + INDEX_SQL)
   if (version >= 3) migrateAuthRevision(db)
   if (version >= 4) migrateFileOperationCommits(db)
+  if (version >= 5) migrateAuditLogIndex(db)
 }

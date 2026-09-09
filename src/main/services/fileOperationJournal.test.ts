@@ -902,7 +902,7 @@ describe('文件操作控制记录基础', () => {
       expect(
         db.prepare("SELECT name FROM sqlite_master WHERE name='file_operation_commits'").all()
       ).toHaveLength(0)
-      expect(runDatabaseMigrations(db).applied).toEqual([4])
+      expect(runDatabaseMigrations(db).applied).toEqual([4, 5])
       expect(db.prepare('SELECT username FROM users').get()).toEqual({ username: 'keep' })
     } finally {
       db.close()
