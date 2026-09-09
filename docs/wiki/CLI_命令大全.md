@@ -57,6 +57,7 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | `ledger update` | 更新账套 | 更新账套 | 是 | 否 |
 | `ledger delete` | 删除账套 | 删除账套；缺少已校验备份或档案时需传 riskAcknowledged=true 明确确认风险 | 是 | 否 |
 | `ledger risk` | 获取账套删除风险快照 | 获取账套删除风险快照 | 是 | 否 |
+| `ledger overview` | 账套年度概览 | 查看账套年度概览（--ledgerId、--year；有效凭证张数与每月结账状态） | 是 | 否 |
 | `ledger periods` | 期间列表 | 查看账套期间列表 | 是 | 否 |
 | `ledger templates` | 列出标准账套模板 | 列出标准账套模板 | 是 | 否 |
 | `ledger apply-template` | 应用账套标准模板 | 应用账套标准模板 | 是 | 否 |

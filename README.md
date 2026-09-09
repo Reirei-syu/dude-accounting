@@ -309,6 +309,8 @@ dude-accounting.cmd -> dude-app.exe --cli <domain> <action> ...
 
 ## CLI 覆盖说明
 
+- 首页年度概览：`ledger overview --ledgerId <id> --year <year>`，中文别名“账套年度概览”。返回指定账套 12 个月的结账状态与有效已保存凭证张数；只读查询，不改变当前账期。
+
 当前 CLI 已补齐以下原本只在 UI 中可做的能力：
 
 - `initial-balance list/save`

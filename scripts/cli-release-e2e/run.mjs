@@ -2007,6 +2007,12 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       ledgerId: this.state.ledgers.enterpriseId
     }
   })
+  await this.runBatchCommand('ledger overview', {
+    payload: {
+      ledgerId: this.state.ledgers.enterpriseId,
+      year: 2026
+    }
+  })
   await this.runBatchCommand('ledger risk', {
     payload: {
       ledgerId: this.state.ledgers.deleteId

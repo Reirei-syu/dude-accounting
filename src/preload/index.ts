@@ -29,6 +29,7 @@ const api = {
     deleteUser: (userId: number) => invoke('auth:deleteUser', userId)
   },
   ledger: {
+    getYearOverview: (query) => invoke('ledger:getYearOverview', query),
     getAll: () => invoke('ledger:getAll'),
     create: (data: {
       name: string

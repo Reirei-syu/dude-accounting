@@ -1,5 +1,6 @@
 import { BLANK_TAB_COMPONENT, useUIStore } from '../stores/uiStore'
 import PlaceholderPage from './PlaceholderPage'
+import Home from '../pages/Home'
 import VoucherEntry from '../pages/VoucherEntry'
 import VoucherList from '../pages/VoucherList'
 import VoucherQuery from '../pages/VoucherQuery'
@@ -34,6 +35,7 @@ type WorkspaceComponentProps = {
 } & Record<string, unknown>
 
 const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>> = {
+  Home: Home as React.ComponentType<WorkspaceComponentProps>,
   VoucherEntry: VoucherEntry as React.ComponentType<WorkspaceComponentProps>,
   VoucherList: VoucherList as React.ComponentType<WorkspaceComponentProps>,
   VoucherQuery: VoucherQuery as React.ComponentType<WorkspaceComponentProps>,
@@ -104,7 +106,12 @@ export default function Workspace(): JSX.Element {
             aria-labelledby={`workspace-tab-button-${tab.id}`}
             aria-hidden={!isActive}
           >
-            <Component title={tab.title} componentType={tab.componentType} {...tab.params} />
+            <Component
+              title={tab.title}
+              componentType={tab.componentType}
+              {...tab.params}
+              isActive={isActive}
+            />
           </div>
         )
       })}

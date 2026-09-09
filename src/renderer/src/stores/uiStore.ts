@@ -11,6 +11,7 @@ export const BLANK_TAB_COMPONENT = '__blank_tab__'
 
 export type AccountingStandardType = 'enterprise' | 'npo'
 export type MainModule =
+  | 'home'
   | 'ledger-settings'
   | 'accounting'
   | 'ledger-query'
@@ -54,6 +55,7 @@ export interface SubMenuItem extends PermissionBoundItem {
 }
 
 export const MAIN_MODULES: MainModuleItem[] = [
+  { id: 'home', label: '首页' },
   { id: 'ledger-settings', label: '账套设置', requiredPermission: 'ledger_settings' },
   { id: 'accounting', label: '账务处理' },
   { id: 'ledger-query', label: '账簿查询' },
@@ -62,6 +64,7 @@ export const MAIN_MODULES: MainModuleItem[] = [
 ]
 
 export const HOME_TAB_PRESETS: HomeTabPreset[] = [
+  { id: 'home', title: '首页', componentType: 'Home' },
   { id: 'voucher-entry', title: '凭证录入', componentType: 'VoucherEntry' },
   { id: 'voucher-list', title: '凭证管理', componentType: 'VoucherList' },
   { id: 'voucher-query', title: '凭证查询', componentType: 'VoucherQuery' },
@@ -87,6 +90,7 @@ const REPORT_SUB_MENUS: Record<AccountingStandardType, SubMenuItem[]> = {
 }
 
 const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> = {
+  home: [],
   'ledger-settings': [
     {
       id: 'subject-settings',
@@ -191,6 +195,10 @@ export function getHomeTabPreset(key: string): HomeTabPreset | null {
   return HOME_TAB_PRESETS.find((preset) => preset.id === key) ?? null
 }
 
+export function resolveStartupTabPreset(key?: string): HomeTabPreset {
+  return getHomeTabPreset(key ?? 'home') ?? HOME_TAB_PRESETS[0]
+}
+
 export function getModuleSubMenus(
   module: MainModule,
   standardType: AccountingStandardType = 'enterprise'
@@ -238,6 +246,13 @@ export const useUIStore = create<UIState>((set, get) => ({
 
   openTab: (tab) => {
     const { tabs, activeTabId } = get()
+    // 首页可能占用了空白标签的 ID，按页面类型复用，不改变其他页面的多标签规则。
+    const existingHome =
+      tab.componentType === 'Home' ? tabs.find((item) => item.componentType === 'Home') : undefined
+    if (existingHome) {
+      set({ activeTabId: existingHome.id, isMenuSuspended: false, suspendedModule: null })
+      return
+    }
     const activeIndex = tabs.findIndex((item) => item.id === activeTabId)
 
     if (activeIndex >= 0 && isBlankTab(tabs[activeIndex])) {

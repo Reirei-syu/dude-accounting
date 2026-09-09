@@ -1,6 +1,7 @@
 import type { PrintPreparePayload } from './print'
 import type { ElectronicVoucherListRow } from './electronicVoucher'
 import type { AuditLogCursor, AuditLogFilters, AuditLogRow } from './auditLog'
+import type { LedgerYearOverview, LedgerYearOverviewQuery } from './ledgerOverview'
 
 export interface ElectronAPI {
   readonly process: { readonly versions: Readonly<Record<string, string | undefined>> }
@@ -55,6 +56,7 @@ interface AuthAPI {
 }
 
 interface LedgerAPI {
+  getYearOverview: (query: LedgerYearOverviewQuery) => Promise<LedgerYearOverview>
   getAll: () => Promise<
     Array<{
       id: number

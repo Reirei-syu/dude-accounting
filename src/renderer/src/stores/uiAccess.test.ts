@@ -39,14 +39,13 @@ describe('ui access control', () => {
   it('hides permission-gated main modules for regular users without authorization', () => {
     const getVisibleMainModules = (
       uiStore as {
-        getVisibleMainModules?: (
-          user: typeof regularUser
-        ) => Array<{ id: string; label: string }>
+        getVisibleMainModules?: (user: typeof regularUser) => Array<{ id: string; label: string }>
       }
     ).getVisibleMainModules
 
     expect(typeof getVisibleMainModules).toBe('function')
     expect(getVisibleMainModules?.(regularUser).map((item) => item.id)).toEqual([
+      'home',
       'accounting',
       'ledger-query',
       'reports'
@@ -146,14 +145,17 @@ describe('ui access control', () => {
   it('keeps all modules visible for administrators', () => {
     const getVisibleMainModules = (
       uiStore as {
-        getVisibleMainModules?: (
-          user: typeof regularUser
-        ) => Array<{ id: string; label: string }>
+        getVisibleMainModules?: (user: typeof regularUser) => Array<{ id: string; label: string }>
       }
     ).getVisibleMainModules
 
-    expect(
-      getVisibleMainModules?.(adminUser).map((item) => item.id)
-    ).toEqual(['ledger-settings', 'accounting', 'ledger-query', 'reports', 'system-settings'])
+    expect(getVisibleMainModules?.(adminUser).map((item) => item.id)).toEqual([
+      'home',
+      'ledger-settings',
+      'accounting',
+      'ledger-query',
+      'reports',
+      'system-settings'
+    ])
   })
 })

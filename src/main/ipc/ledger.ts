@@ -6,6 +6,7 @@ import {
   createLedgerCommand,
   deleteLedgerCommand,
   getLedgerDeletionRiskCommand,
+  getLedgerYearOverviewCommand,
   listLedgersCommand,
   listLedgerPeriodsCommand,
   listLedgerTemplatesCommand,
@@ -16,6 +17,24 @@ import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from
 
 export function registerLedgerHandlers(): void {
   getDatabase()
+
+  handleInvoke('ledger:getYearOverview', (event, query) =>
+    withIpcTelemetry(
+      {
+        channel: 'ledger:getYearOverview',
+        baseDir: app.getPath('userData'),
+        context: { ledgerId: query?.ledgerId, year: query?.year }
+      },
+      async () => {
+        const result = await getLedgerYearOverviewCommand(
+          createCommandContextFromEvent(event),
+          query
+        )
+        if (isCommandSuccess(result)) return result.data
+        throw new Error(result.error?.message ?? '获取账套年度概览失败')
+      }
+    )
+  )
 
   handleInvoke('ledger:getAll', (event) =>
     withIpcTelemetry(

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 
 import wallpaper from '../assets/wallpaper.png'
 import { useLedgerStore } from '../stores/ledgerStore'
-import { HOME_TAB_PRESETS } from '../stores/uiStore'
+import { resolveStartupTabPreset, HOME_TAB_PRESETS } from '../stores/uiStore'
 import { useWallpaperStore } from '../stores/wallpaperStore'
 import { clampCropViewport, type ContentBounds, type CropViewportState } from './wallpaperCrop'
 
@@ -30,7 +30,7 @@ export default function MyPreferences(): JSX.Element {
   const wallpaperState = useWallpaperStore((state) => state.wallpaper)
   const setWallpaper = useWallpaperStore((state) => state.setWallpaper)
   const [defaultLedgerId, setDefaultLedgerId] = useState('')
-  const [defaultHomeTab, setDefaultHomeTab] = useState('voucher-entry')
+  const [defaultHomeTab, setDefaultHomeTab] = useState(resolveStartupTabPreset().id)
   const [saving, setSaving] = useState(false)
   const [wallpaperBusy, setWallpaperBusy] = useState(false)
   const [message, setMessage] = useState<{ type: 'error' | 'success'; text: string } | null>(null)
@@ -56,7 +56,7 @@ export default function MyPreferences(): JSX.Element {
       .then((preferences) => {
         if (cancelled) return
         setDefaultLedgerId(preferences.default_ledger_id ?? '')
-        setDefaultHomeTab(preferences.default_home_tab ?? 'voucher-entry')
+        setDefaultHomeTab(resolveStartupTabPreset(preferences.default_home_tab).id)
       })
       .catch((error) => {
         if (cancelled) return

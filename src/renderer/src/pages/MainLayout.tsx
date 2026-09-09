@@ -2,7 +2,7 @@
 import TabBar from '../components/TabBar'
 import Workspace from '../components/Workspace'
 import SuspendedOverlay from '../components/SuspendedOverlay'
-import { getHomeTabPreset, hasPermissionAccess, useUIStore } from '../stores/uiStore'
+import { resolveStartupTabPreset, hasPermissionAccess, useUIStore } from '../stores/uiStore'
 import { resolveCurrentLedger, useLedgerStore } from '../stores/ledgerStore'
 import { useAuthStore } from '../stores/authStore'
 import { useWallpaperStore } from '../stores/wallpaperStore'
@@ -274,6 +274,7 @@ export default function MainLayout(): JSX.Element {
   }
 
   useEffect(() => {
+    let cancelled = false
     async function loadLedgers(): Promise<void> {
       try {
         if (!window.electron) {
@@ -286,6 +287,7 @@ export default function MainLayout(): JSX.Element {
           window.api.ledger.getAll(),
           window.api.settings.getUserPreferences()
         ])
+        if (cancelled) return
         setLedgers(finalLedgers)
         const preferredLedgerId = Number(preferences.default_ledger_id || 0)
         const nextLedger = resolveCurrentLedger(
@@ -300,19 +302,19 @@ export default function MainLayout(): JSX.Element {
           setCurrentLedger(nextLedger)
         }
 
-        if (!startupAppliedRef.current && tabs.length === 0 && finalLedgers.length > 0) {
-          const preset = getHomeTabPreset(preferences.default_home_tab || 'voucher-entry')
-          if (preset) {
-            openTab(preset)
-          }
+        if (!startupAppliedRef.current && tabs.length === 0) {
+          openTab(resolveStartupTabPreset(preferences.default_home_tab))
           startupAppliedRef.current = true
         }
       } catch (error) {
-        console.error('load ledgers failed', error)
+        if (!cancelled) console.error('load ledgers failed', error)
       }
     }
 
     void loadLedgers()
+    return () => {
+      cancelled = true
+    }
   }, [
     currentLedger?.id,
     openTab,

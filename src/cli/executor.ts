@@ -53,6 +53,7 @@ import {
   createLedgerCommand,
   deleteLedgerCommand,
   getLedgerDeletionRiskCommand,
+  getLedgerYearOverviewCommand,
   listLedgerPeriodsCommand,
   listLedgersCommand,
   listLedgerTemplatesCommand,
@@ -247,6 +248,8 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       deleteLedgerCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     periods: async (runtime, payload, outputMode, token) =>
       listLedgerPeriodsCommand(createAuthedContext(runtime, outputMode, token), payload as never),
+    overview: async (runtime, payload, outputMode, token) =>
+      getLedgerYearOverviewCommand(createAuthedContext(runtime, outputMode, token), payload as never),
     templates: async (runtime, _payload, outputMode, token) =>
       listLedgerTemplatesCommand(createAuthedContext(runtime, outputMode, token)),
     'apply-template': async (runtime, payload, outputMode, token) =>

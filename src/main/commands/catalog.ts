@@ -218,6 +218,19 @@ const commandMetadata: CommandMetadata[] = [
   },
   {
     domain: 'ledger',
+    action: 'overview',
+    description: '查看账套年度概览（--ledgerId、--year；有效凭证张数与每月结账状态）',
+    aliases: ['账套年度概览'],
+    batchSafe: true,
+    desktopAssisted: false,
+    requiresSession: true,
+    sessionEffect: 'none',
+    uiMethods: ['window.api.ledger.getYearOverview'],
+    uiAssistedMethods: [],
+    promptHints: ['ledgerId']
+  },
+  {
+    domain: 'ledger',
     action: 'periods',
     description: '查看账套期间列表',
     aliases: ['期间列表'],

@@ -24,6 +24,7 @@ export const IPC_CHANNELS = {
   'auth:updateUser': true,
   'auth:deleteUser': true,
   'ledger:getAll': true,
+  'ledger:getYearOverview': true,
   'ledger:create': true,
   'ledger:update': true,
   'ledger:delete': true,

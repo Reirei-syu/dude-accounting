@@ -1,5 +1,10 @@
 import { getStandardTemplateSummaries } from '../database/seed'
 import { listAccessibleLedgers, listLedgerPeriods } from '../services/ledgerCatalog'
+import { getLedgerYearOverview } from '../services/ledgerOverview'
+import type {
+  LedgerYearOverview,
+  LedgerYearOverviewQuery
+} from '../../shared/contracts/ledgerOverview'
 import { getLedgerDeletionRiskSnapshot } from '../services/ledgerCompliance'
 import {
   applyLedgerStandardTemplate,
@@ -124,6 +129,28 @@ export async function listLedgersCommand(
       userId: actor.id,
       isAdmin: actor.isAdmin
     })
+  })
+}
+
+export async function getLedgerYearOverviewCommand(
+  context: CommandContext,
+  payload: LedgerYearOverviewQuery
+): Promise<CommandResult<LedgerYearOverview>> {
+  return withCommandResult(context, () => {
+    requireCommandActor(context.actor)
+    const raw = asCommandPayloadRecord(payload, '账套年度概览参数格式不正确')
+    const ledgerId = normalizePositiveInteger(raw.ledgerId, 'ledgerId', '缺少账套 ledgerId')
+    const year = normalizePositiveInteger(raw.year, 'year', '缺少年份 year')
+    if (!Number.isSafeInteger(ledgerId) || ledgerId < 1) {
+      throw new CommandError('VALIDATION_ERROR', '账套 ID 应为正整数', null, 2)
+    }
+    if (!Number.isInteger(year) || year < 1 || year > 9999) {
+      throw new CommandError('VALIDATION_ERROR', '年份应为 1 至 9999 的整数', null, 2)
+    }
+    requireCommandLedgerAccess(context.db, context.actor, ledgerId)
+    const overview = getLedgerYearOverview(context.db, ledgerId, year)
+    if (!overview) throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId }, 3)
+    return overview
   })
 }
 

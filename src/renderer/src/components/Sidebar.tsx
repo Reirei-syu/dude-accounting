@@ -1,14 +1,25 @@
 import type { JSX } from 'react'
 
 import { useAuthStore } from '../stores/authStore'
-import { getVisibleMainModules, useUIStore, type MainModule } from '../stores/uiStore'
+import {
+  resolveStartupTabPreset,
+  getVisibleMainModules,
+  useUIStore,
+  type MainModule
+} from '../stores/uiStore'
 
 export default function Sidebar(): JSX.Element {
-  const { suspendedModule, setSuspended } = useUIStore()
+  const { suspendedModule, setSuspended, tabs, activeTabId, openTab } = useUIStore()
+  const homeActive =
+    !suspendedModule && tabs.some((tab) => tab.id === activeTabId && tab.componentType === 'Home')
   const currentUser = useAuthStore((state) => state.user)
   const visibleModules = getVisibleMainModules(currentUser)
 
   const handleModuleClick = (moduleId: MainModule): void => {
+    if (moduleId === 'home') {
+      openTab(resolveStartupTabPreset('home'))
+      return
+    }
     if (suspendedModule === moduleId) {
       setSuspended(null)
     } else {
@@ -28,9 +39,9 @@ export default function Sidebar(): JSX.Element {
           <button
             key={module.id}
             type="button"
-            className={`sidebar-btn ${suspendedModule === module.id ? 'active' : ''}`}
+            className={`sidebar-btn ${(module.id === 'home' ? homeActive : suspendedModule === module.id) ? 'active' : ''}`}
             onClick={() => handleModuleClick(module.id)}
-            aria-pressed={suspendedModule === module.id}
+            aria-pressed={module.id === 'home' ? homeActive : suspendedModule === module.id}
           >
             {module.label}
           </button>
