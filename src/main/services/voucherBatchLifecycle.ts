@@ -125,6 +125,10 @@ export function applyVoucherBatchAction(
 ): { applicable: VoucherBatchTarget[]; skipped: VoucherBatchTarget[] } {
   const { applicable, skipped } = splitVouchersByBatchAction(action, vouchers)
 
+  if (action === 'purgeDelete' && applicable.some((voucher) => voucher.deleted_from_status === 2)) {
+    throw new Error('历史已记账凭证不得彻底删除，请先恢复其已记账状态')
+  }
+
   const runTx = db.transaction(() => {
     for (const voucher of applicable) {
       if (action === 'audit') {

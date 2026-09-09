@@ -6,3 +6,10 @@ export async function runEmbeddedCli(argv: string[]): Promise<void> {
   process.exitCode = exitCode
 }
 
+export async function flushEmbeddedCliOutput(): Promise<void> {
+  await Promise.all(
+    [process.stdout, process.stderr].map(
+      (stream) => new Promise<void>((resolve) => stream.write('', () => resolve()))
+    )
+  )
+}

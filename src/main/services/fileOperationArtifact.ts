@@ -161,6 +161,10 @@ export function prepareFileOperationArtifact<T>(
   }
   journal.saveRecoveryPlan(lease, operationId, { ...plan })
   const root = artifactRoot(plan)
+  // 显式输出目录可尚不存在；先完成祖先链接检查，再创建父目录。
+  // 父目录不属于 operation 容器，补偿时保留，不递归清理用户输出目录。
+  fs.mkdirSync(path.dirname(root), { recursive: true, mode: 0o700 })
+  artifactRoot(plan)
   fs.mkdirSync(root, { mode: 0o700 })
   fs.writeFileSync(resolveContainedPath(root, '.owner'), plan.owner, { flag: 'wx', mode: 0o600 })
   const staging = resolveContainedPath(root, 'staging')

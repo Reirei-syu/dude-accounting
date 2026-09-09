@@ -10,6 +10,33 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8')
 
 describe('本地打包与未确认发布信息的安全边界', () => {
+  it('实际 builder 文件过滤只收运行内容，不收本机配置、业务库和QA历史', () => {
+    const builder = yaml.load(read('electron-builder.yml'))
+    const { FileMatcher } = require('app-builder-lib/out/fileMatcher')
+    const filter = new FileMatcher(root, root, (value) => value, builder.files).createFilter()
+    const accepted = (file) => filter(path.join(root, file), { isDirectory: () => false })
+    for (const file of [
+      'package.json',
+      'out/main/index.js',
+      'out/preload/index.js',
+      'out/renderer/index.html',
+      'out/cli/cli/runner.js',
+      'resources/icon.png'
+    ])
+      expect(accepted(file), file).toBe(true)
+    for (const file of [
+      '.codex/config.toml',
+      '.env',
+      'prds/PROJECT_SPEC.md',
+      'docs/stress/run/database.db',
+      'out/cli-e2e/run/appdata/main.db',
+      '.tmp/secret.json',
+      'out/cli/cli/runner.test.js',
+      'src/main/index.ts',
+      'scripts/phase15-soak.mjs'
+    ])
+      expect(accepted(file), file).toBe(false)
+  })
   it('禁用更新 provider，保留旧安装身份并去掉模板宣传信息', () => {
     const pkg = JSON.parse(read('package.json'))
     const builder = yaml.load(read('electron-builder.yml'))
@@ -33,7 +60,7 @@ describe('本地打包与未确认发布信息的安全边界', () => {
     for (const file of ['scripts/build-win-installer.ps1', 'scripts/build-mac-installer.sh']) {
       const commands = read(file)
         .split(/\r?\n/)
-        .filter((line) => line.includes('npx electron-builder'))
+        .filter((line) => /npx(?:\.cmd)?\s+electron-builder/.test(line))
       expect(commands.length).toBeGreaterThan(0)
       for (const command of commands) expect(command).toContain('--publish never')
     }

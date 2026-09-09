@@ -261,7 +261,10 @@ export default function VoucherList(): JSX.Element {
   useEffect(() => {
     if (!window.electron) return
 
-    Promise.all([window.api.settings.getRuntimeDefaults(), window.api.settings.getUserPreferences()])
+    Promise.all([
+      window.api.settings.getRuntimeDefaults(),
+      window.api.settings.getUserPreferences()
+    ])
       .then(([settings, preferences]) => {
         if (
           settings.voucher_list_default_status === 'pending' ||
@@ -281,8 +284,7 @@ export default function VoucherList(): JSX.Element {
   }, [])
 
   const canOperate = Boolean(window.electron && currentLedger)
-  const canReverseBookkeep =
-    currentUser?.isAdmin === true || currentUser?.permissions?.unbookkeep === true
+  const canReverseBookkeep = currentUser?.isAdmin === true
   const isClosedPeriod = periodStatus?.is_closed === 1
   const closedPeriodMessage =
     currentPeriod && currentPeriod.trim() !== '' ? buildClosedPeriodEditMessage(currentPeriod) : ''
@@ -798,7 +800,11 @@ export default function VoucherList(): JSX.Element {
     if (activeStatusTab === 'posted') {
       return [
         { key: 'print', label: '打印预览', onClick: handleOpenPrintDialog },
-        { key: 'unbookkeep', label: '反记账', onClick: () => void runBatchAction('unbookkeep') }
+        {
+          key: 'unbookkeep',
+          label: '管理员紧急逆转',
+          onClick: () => void runBatchAction('unbookkeep')
+        }
       ]
     }
 
@@ -850,7 +856,7 @@ export default function VoucherList(): JSX.Element {
     if (canReverseBookkeep) {
       buttons.splice(5, 0, {
         key: 'unbookkeep',
-        label: '反记账',
+        label: '管理员紧急逆转',
         onClick: () => void runBatchAction('unbookkeep')
       })
     }

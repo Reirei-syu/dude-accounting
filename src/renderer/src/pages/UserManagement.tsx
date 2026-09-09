@@ -28,7 +28,6 @@ const PERMISSION_OPTIONS: Array<{ key: keyof typeof DEFAULT_PERMISSIONS; label: 
   { key: 'voucher_entry', label: '凭证录入' },
   { key: 'audit', label: '审核' },
   { key: 'bookkeeping', label: '记账' },
-  { key: 'unbookkeep', label: '反记账' },
   { key: 'system_settings', label: '系统设置' },
   { key: 'ledger_settings', label: '账套设置' }
 ]
@@ -474,9 +473,7 @@ export default function UserManagement(): JSX.Element {
                         type="password"
                         placeholder="新密码"
                         value={passwordDrafts[user.id] ?? ''}
-                        onChange={(event) =>
-                          handlePasswordDraftChange(user.id, event.target.value)
-                        }
+                        onChange={(event) => handlePasswordDraftChange(user.id, event.target.value)}
                         autoComplete="new-password"
                       />
                       <div className="flex justify-end gap-2 flex-wrap">

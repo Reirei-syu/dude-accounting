@@ -1,65 +1,50 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $releaseOutput = 'D:\coding\completed\dude-app'
 
 Set-Location $repoRoot
-New-Item -ItemType Directory -Force -Path $releaseOutput | Out-Null
 
 Write-Host "Repository: $repoRoot"
 Write-Host "Installer output: $releaseOutput"
 
-$staleArtifacts = @(
-  (Join-Path $releaseOutput '*-setup.exe'),
-  (Join-Path $releaseOutput '*-setup.exe.blockmap'),
-  (Join-Path $releaseOutput 'latest*.yml'),
-  (Join-Path $releaseOutput 'builder-debug.yml')
-)
+& (Join-Path $PSScriptRoot 'prepare-cli-release-e2e.ps1')
+New-Item -ItemType Directory -Force -Path $releaseOutput | Out-Null
 
-foreach ($pattern in $staleArtifacts) {
-  Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | Remove-Item -Force
+$version = (Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json).version
+if ($version -notmatch '^\d+\.\d+\.\d+([-.][a-zA-Z0-9.-]+)?$') { throw '版本号不合法。' }
+$installerName = "dude-app-$version-setup.exe"
+$artifactNames = @($installerName, "$installerName.blockmap", 'latest.yml', 'builder-debug.yml', 'builder-effective-config.yaml')
+foreach ($name in $artifactNames) {
+  $target = [IO.Path]::GetFullPath((Join-Path $releaseOutput $name))
+  if ([IO.Path]::GetDirectoryName($target) -ne $releaseOutput) { throw '产物路径越界。' }
+  if (Test-Path -LiteralPath $target) {
+    $item = Get-Item -LiteralPath $target
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw '产物不是普通文件。' }
+    Move-Item -LiteralPath $target -Destination ($target + '.previous-' + [Guid]::NewGuid().ToString('N'))
+  }
 }
 
-Get-ChildItem -Path (Join-Path $releaseOutput 'win-unpacked') -ErrorAction SilentlyContinue |
-  Remove-Item -Recurse -Force
-
-npm run build
+npm.cmd run build
 if ($LASTEXITCODE -ne 0) {
   throw "Build step failed with exit code $LASTEXITCODE."
 }
 
-npm run build:cli-host:win
+npm.cmd run build:cli-host:win
 if ($LASTEXITCODE -ne 0) {
   throw "CLI host build failed with exit code $LASTEXITCODE."
 }
 
-npx electron-builder --win nsis --publish never
+npx.cmd electron-builder --win nsis --publish never
 if ($LASTEXITCODE -ne 0) {
   throw "Windows installer build failed with exit code $LASTEXITCODE."
 }
 
-$installer = Get-ChildItem -Path $releaseOutput -Filter '*-setup.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$installer = Get-Item -LiteralPath (Join-Path $releaseOutput $installerName) -ErrorAction SilentlyContinue
 if (-not $installer) {
   throw 'Windows installer was not generated.'
 }
 
-$itemsToRemove = Get-ChildItem -Path $releaseOutput -Force -ErrorAction SilentlyContinue |
-  Where-Object {
-    if ($_.PSIsContainer) {
-      return $true
-    }
-
-    return $_.FullName -ne $installer.FullName
-  }
-
-foreach ($item in $itemsToRemove) {
-  if ($item.PSIsContainer) {
-    Remove-Item -Path $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
-  } else {
-    Remove-Item -Path $item.FullName -Force -ErrorAction SilentlyContinue
-  }
-}
-
 Write-Host "Windows installer build completed: $($installer.FullName)"
-Write-Host "Only installer retained in output directory."
+Write-Host '已保留 installer、win-unpacked、校验元数据及原有产物。'

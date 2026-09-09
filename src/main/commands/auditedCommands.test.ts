@@ -520,6 +520,49 @@ describe('关键命令与真实审计表同事务', () => {
           : 'delete_independent_custom_subject_template'
     )
   })
+  it('混合清除批次包含历史已记账删除态时整批拒绝且保留审计', async () => {
+    vouchers(3)
+    db.exec('UPDATE vouchers SET deleted_from_status=2 WHERE id=2')
+    const before = snapshot()
+    const result = await voucherBatchActionCommand(context, {
+      action: 'purgeDelete',
+      voucherIds: [1, 2]
+    })
+    expect(result.status).toBe('error')
+    expect(result.error?.message).toContain('历史已记账凭证不得彻底删除')
+    expect(snapshot()).toEqual(before)
+  })
+  it('普通用户即使拥有旧反记账权限也不能逆转且不产生任何业务变更', async () => {
+    vouchers(2)
+    db.prepare('UPDATE users SET permissions=? WHERE id=2').run(
+      JSON.stringify({ unbookkeep: true, bookkeeping: true })
+    )
+    db.exec('INSERT INTO user_ledger_permissions(user_id,ledger_id) VALUES(2,1)')
+    context.actor = resolveSessionActor(db, issueSession(db, 2), 'cli')
+    const before = snapshot()
+    const result = await voucherBatchActionCommand(context, {
+      action: 'unbookkeep',
+      voucherIds: [1, 2],
+      reason: '不能以旧权限绕过管理员限制',
+      approvalTag: 'APPROVED-TEST'
+    })
+    expect(result.error?.code).toBe('FORBIDDEN')
+    expect(snapshot()).toEqual(before)
+  })
+  it.each([
+    { reason: '', approvalTag: 'APPROVED-TEST' },
+    { reason: '隔离回归', approvalTag: '' }
+  ])('管理员紧急逆转仍强制原因和审批标记：%j', async (fields) => {
+    vouchers(2)
+    const before = snapshot()
+    const result = await voucherBatchActionCommand(context, {
+      action: 'unbookkeep',
+      voucherIds: [1, 2],
+      ...fields
+    })
+    expect(result.status).toBe('error')
+    expect(snapshot()).toEqual(before)
+  })
   it.each<[VoucherBatchAction, number]>([
     ['audit', 0],
     ['bookkeep', 1],

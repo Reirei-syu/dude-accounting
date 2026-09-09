@@ -14,7 +14,10 @@ const __dirname = path.dirname(__filename)
 const repoRoot = path.resolve(__dirname, '..', '..')
 
 function createRunId() {
-  return new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+  return new Date()
+    .toISOString()
+    .replace(/[-:TZ.]/g, '')
+    .slice(0, 14)
 }
 
 function ensureDir(directoryPath) {
@@ -354,11 +357,15 @@ async function ensureSourceBuildArtifacts() {
         'electron-vite.js'
       )
 
-      const cliBuild = await spawnBuffered(process.execPath, [tscCliPath, '-p', 'tsconfig.cli.json'], {
-        cwd: repoRoot,
-        env: process.env,
-        timeoutMs: 240_000
-      })
+      const cliBuild = await spawnBuffered(
+        process.execPath,
+        [tscCliPath, '-p', 'tsconfig.cli.json'],
+        {
+          cwd: repoRoot,
+          env: process.env,
+          timeoutMs: 240_000
+        }
+      )
       if (cliBuild.code !== 0) {
         throw new Error(`源码态 CLI 构建失败：tsc exit=${cliBuild.code}`)
       }
@@ -526,7 +533,15 @@ function createSourceSurfaceAdapter() {
     spawnPreviewProcess(envContext, jobId, port) {
       return spawn(
         sourcePaths.electronPath,
-        ['.', `--remote-debugging-port=${port}`, '--cli', 'print', 'open-preview', '--jobId', jobId],
+        [
+          '.',
+          `--remote-debugging-port=${port}`,
+          '--cli',
+          'print',
+          'open-preview',
+          '--jobId',
+          jobId
+        ],
         {
           cwd: sourcePaths.repoRoot,
           env: envContext.env,
@@ -607,7 +622,12 @@ function buildAliasReplayLine(alias, example, payloadFilePath) {
 }
 
 function sanitizeForFileName(value) {
-  return value.replace(/[^a-z0-9_-]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'payload'
+  return (
+    value
+      .replace(/[^a-z0-9_-]+/gi, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 80) || 'payload'
+  )
 }
 
 function createBatchPayloadFile(envContext, commandKey, payload, sequenceNo) {
@@ -646,7 +666,14 @@ function computeFileSha256(filePath) {
   return hash.digest('hex')
 }
 
-function createSystemBackupFixture({ databasePath, backupDir, ledgerId, ledgerName, period, fiscalYear }) {
+function createSystemBackupFixture({
+  databasePath,
+  backupDir,
+  ledgerId,
+  ledgerName,
+  period,
+  fiscalYear
+}) {
   ensureDir(backupDir)
   const safeLedgerName = ledgerName.replace(/[\\/:*?"<>|]/g, '_')
   const safePeriod = period.replace(/[\\/:*?"<>|]/g, '_')
@@ -945,7 +972,12 @@ class CliReleaseHarness {
     const sequenceNo = this.nextSequence()
     const payloadFilePath =
       input.payload !== undefined
-        ? createBatchPayloadFile(this.mainEnv, `${commandKey}-expected-error`, input.payload, sequenceNo)
+        ? createBatchPayloadFile(
+            this.mainEnv,
+            `${commandKey}-expected-error`,
+            input.payload,
+            sequenceNo
+          )
         : null
     const cliArgs = buildCliArgs(commandKey, input, payloadFilePath)
     const execution = await this.spawnCliExecution(entrypointKind, cliArgs, this.mainEnv, {
@@ -1144,9 +1176,7 @@ CliReleaseHarness.prototype.runInteractiveCoverage = async function () {
     if (options.assertPromptHints) {
       const actualPromptHints = promptPlan.map((item) => item.key)
       if (JSON.stringify(actualPromptHints) !== JSON.stringify(options.assertPromptHints)) {
-        throw new Error(
-          `命令 ${line} 的 prompt hints 不匹配：${JSON.stringify(actualPromptHints)}`
-        )
+        throw new Error(`命令 ${line} 的 prompt hints 不匹配：${JSON.stringify(actualPromptHints)}`)
       }
     } else if (promptPlan.length > 0) {
       throw new Error(`命令 ${line} 仍需补问：${promptPlan.map((item) => item.key).join(', ')}`)
@@ -1467,7 +1497,9 @@ CliReleaseHarness.prototype.pickNpoLoopSubjects = async function (ledgerId) {
   })
   const subjects = subjectList.data
   const parentCodes = new Set(
-    subjects.map((row) => row.parent_code).filter((value) => typeof value === 'string' && value.trim())
+    subjects
+      .map((row) => row.parent_code)
+      .filter((value) => typeof value === 'string' && value.trim())
   )
   const findFirst = (predicate, message) => {
     const matched = subjects.find(predicate)
@@ -1480,9 +1512,7 @@ CliReleaseHarness.prototype.pickNpoLoopSubjects = async function (ledgerId) {
   return {
     assetCode: findFirst(
       (row) =>
-        row.category === 'asset' &&
-        Number(row.is_cash_flow) !== 1 &&
-        !parentCodes.has(row.code),
+        row.category === 'asset' && Number(row.is_cash_flow) !== 1 && !parentCodes.has(row.code),
       '无法找到民非账套两个月闭环所需的资产类科目'
     ),
     liabilityCode: findFirst(
@@ -1506,7 +1536,11 @@ CliReleaseHarness.prototype.pickNpoLoopSubjects = async function (ledgerId) {
   }
 }
 
-CliReleaseHarness.prototype.generateMonthReports = async function ({ ledgerId, ledgerType, period }) {
+CliReleaseHarness.prototype.generateMonthReports = async function ({
+  ledgerId,
+  ledgerType,
+  period
+}) {
   const generatedSnapshotIds = []
   const balance = await this.runBatchCommand('report generate', {
     payload: {
@@ -1542,7 +1576,11 @@ CliReleaseHarness.prototype.generateMonthReports = async function ({ ledgerId, l
         endPeriod: period
       }
     })
-    generatedSnapshotIds.push(income.data.snapshot.id, cashflow.data.snapshot.id, equity.data.snapshot.id)
+    generatedSnapshotIds.push(
+      income.data.snapshot.id,
+      cashflow.data.snapshot.id,
+      equity.data.snapshot.id
+    )
   } else {
     const activity = await this.runBatchCommand('report generate', {
       payload: {
@@ -1685,9 +1723,14 @@ CliReleaseHarness.prototype.runRestoreSuccessCoverage = async function () {
         ? createBatchPayloadFile(restoreEnv, commandKey, input.payload, this.nextSequence())
         : null
     const cliArgs = buildCliArgs(commandKey, input, payloadFilePath)
-    const execution = await this.spawnCliExecution(options.entrypointKind ?? 'batch', cliArgs, restoreEnv, {
-      timeoutMs: options.timeoutMs
-    })
+    const execution = await this.spawnCliExecution(
+      options.entrypointKind ?? 'batch',
+      cliArgs,
+      restoreEnv,
+      {
+        timeoutMs: options.timeoutMs
+      }
+    )
     const result = extractCommandResult(`${execution.stdout}\n${execution.stderr}`)
     if (execution.code !== 0 || result.status !== 'success') {
       throw new Error(
@@ -1871,7 +1914,11 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     'wallpaper.png'
   )
   this.state.files.evoucherSource = path.join(this.mainEnv.fixtureDirectory, 'bank_receipt.pdf')
-  fs.writeFileSync(this.state.files.evoucherSource, '%PDF-1.4\nbank receipt test fixture\n%%EOF\n', 'utf8')
+  fs.writeFileSync(
+    this.state.files.evoucherSource,
+    '%PDF-1.4\nbank receipt test fixture\n%%EOF\n',
+    'utf8'
+  )
 
   await this.runBatchCommand('auth login', {
     payload: {
@@ -1896,6 +1943,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     payload: {
       name: `npo-ledger-${this.runId}`,
       standardType: 'npo',
+      taxpayerIdentificationNumber: 'TEST-NPO-TAX-ID',
       startPeriod: '2026-03'
     }
   })
@@ -2040,11 +2088,9 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       directoryPath: path.join(this.mainEnv.workDirectory, 'custom-diagnostics')
     }
   })
-  await this.runDesktopAssistedSuccess(
-    'settings diagnostics-open-dir',
-    {},
-    ['settings.diagnostics-open-dir.requested']
-  )
+  await this.runDesktopAssistedSuccess('settings diagnostics-open-dir', {}, [
+    'settings.diagnostics-open-dir.requested'
+  ])
   await this.runBatchCommand('settings diagnostics-reset-dir')
   await this.runBatchCommand('settings wallpaper-status')
   await this.runBatchCommand('settings wallpaper-login-status')
@@ -2156,9 +2202,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   )
   const nonCashflowAssetSubject = firstBy(
     (row) =>
-      row.category === 'asset' &&
-      Number(row.is_cash_flow) !== 1 &&
-      row.code !== assetSubject?.code
+      row.category === 'asset' && Number(row.is_cash_flow) !== 1 && row.code !== assetSubject?.code
   )
   const liabilitySubject = firstBy(
     (row) => row.category === 'liability' && row.code !== assetSubject?.code
@@ -2237,13 +2281,13 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   })
   this.state.subjects.auxSubjectId = auxSubject.data.subjectId
   const deletableSubject = await this.runBatchCommand('subject create', {
-      payload: {
-        ledgerId: this.state.ledgers.enterpriseId,
+    payload: {
+      ledgerId: this.state.ledgers.enterpriseId,
       parentCode: this.state.subjects.expenseParentCode,
       code: `${this.state.subjects.expenseParentCode}99`,
-        name: 'CLI Deletable Subject',
-        auxiliaryCategories: [],
-        customAuxiliaryItemIds: [],
+      name: 'CLI Deletable Subject',
+      auxiliaryCategories: [],
+      customAuxiliaryItemIds: [],
       isCashFlow: false
     }
   })
@@ -2286,9 +2330,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
   const createCounterpart = enterpriseSubjects.find(
     (row) =>
       row.code !== this.state.subjects.cashFlowSourceCode &&
-      !existingCashflowKeys.has(
-        `${this.state.subjects.cashFlowSourceCode}|${row.code}|inflow`
-      )
+      !existingCashflowKeys.has(`${this.state.subjects.cashFlowSourceCode}|${row.code}|inflow`)
   )
   if (!createCounterpart) {
     throw new Error('无法为 cashflow create 找到唯一可用的对方科目')
@@ -2297,9 +2339,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     (row) =>
       row.code !== this.state.subjects.cashFlowSourceCode &&
       row.code !== createCounterpart.code &&
-      !existingCashflowKeys.has(
-        `${this.state.subjects.cashFlowSourceCode}|${row.code}|outflow`
-      )
+      !existingCashflowKeys.has(`${this.state.subjects.cashFlowSourceCode}|${row.code}|outflow`)
   )
   if (!updateCounterpart) {
     throw new Error('无法为 cashflow update 找到唯一可用的对方科目')
@@ -2457,6 +2497,17 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       voucherId: voucherA.data.voucherId
     }
   })
+  const editPayloadPath = path.join(this.mainEnv.exportDirectory, 'voucher-edit.json')
+  await this.runBatchCommand(
+    'voucher export-edit-payload',
+    {
+      payload: { voucherId: voucherA.data.voucherId, filePath: editPayloadPath }
+    },
+    { artifactPaths: [editPayloadPath] }
+  )
+  await this.runBatchCommand('voucher renumber', {
+    payload: { ledgerId: this.state.ledgers.enterpriseId, period: '2026-03' }
+  })
   await this.runBatchCommand('voucher update', {
     payload: {
       voucherId: voucherA.data.voucherId,
@@ -2506,12 +2557,12 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   })
   await this.runBatchCommand('book detail-ledger', {
-      payload: {
-        ledgerId: this.state.ledgers.enterpriseId,
-        subjectCode: this.state.subjects.revenueCode,
-        startDate: '2026-03-01',
-        endDate: '2026-03-31'
-      }
+    payload: {
+      ledgerId: this.state.ledgers.enterpriseId,
+      subjectCode: this.state.subjects.revenueCode,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31'
+    }
   })
   await this.runBatchCommand('book journal', {
     payload: {
@@ -2521,14 +2572,14 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   })
   await this.runBatchCommand('book aux-balances', {
-      payload: {
-        ledgerId: this.state.ledgers.enterpriseId,
-        startDate: '2026-03-01',
-        endDate: '2026-03-31',
-        subjectCodeStart: `${this.state.subjects.assetParentCode}01`,
-        subjectCodeEnd: `${this.state.subjects.assetParentCode}01`
-      }
-    })
+    payload: {
+      ledgerId: this.state.ledgers.enterpriseId,
+      startDate: '2026-03-01',
+      endDate: '2026-03-31',
+      subjectCodeStart: `${this.state.subjects.assetParentCode}01`,
+      subjectCodeEnd: `${this.state.subjects.assetParentCode}01`
+    }
+  })
   await this.runBatchCommand('book aux-detail', {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId,
@@ -2743,6 +2794,21 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     }
   })
 
+  const taxTemplatePath = path.join(this.mainEnv.exportDirectory, 'npo-tax-template.xlsx')
+  await this.runBatchCommand(
+    'report export-tax-template',
+    {
+      payload: {
+        ledgerId: this.state.ledgers.npoId,
+        declarationType: 'monthly',
+        year: 2026,
+        month: 3,
+        output: taxTemplatePath
+      }
+    },
+    { artifactPaths: [taxTemplatePath] }
+  )
+
   const importedElectronicVoucher = await this.runBatchCommand('evoucher import', {
     payload: {
       ledgerId: this.state.ledgers.enterpriseId,
@@ -2780,6 +2846,20 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       recordId: this.state.evouchers.recordId,
       voucherDate: '2026-03-06',
       voucherWord: '记'
+    }
+  })
+
+  const reviewedElectronicVouchers = await this.runBatchCommand('evoucher list', {
+    payload: { ledgerId: this.state.ledgers.enterpriseId }
+  })
+  const reviewedSource = reviewedElectronicVouchers.data.find(
+    (row) => row.id === this.state.evouchers.recordId
+  )
+  await this.runBatchCommand('evoucher link', {
+    payload: {
+      recordId: this.state.evouchers.recordId,
+      voucherId: voucherA.data.voucherId,
+      sourceFingerprint: reviewedSource.fingerprint
     }
   })
 
@@ -2885,10 +2965,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       rows: [
         {
           key: 'row-1',
-          cells: [
-            { value: 'CLI Release Row' },
-            { value: 1234.56, isAmount: true }
-          ]
+          cells: [{ value: 'CLI Release Row' }, { value: 1234.56, isAmount: true }]
         }
       ]
     }
@@ -3024,7 +3101,7 @@ CliReleaseHarness.prototype.run = async function () {
   const sortCommands = (commands) => [...commands].sort((left, right) => left.localeCompare(right))
   if (
     JSON.stringify(sortCommands(helpCmdCommands)) !==
-      JSON.stringify(sortCommands(this.surface.canonicalCommands))
+    JSON.stringify(sortCommands(this.surface.canonicalCommands))
   ) {
     throw new Error('catalog.ts 与发布态 CLI help 命令列表不一致')
   }
@@ -3151,7 +3228,7 @@ function isDirectRun() {
 
 if (isDirectRun()) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.stack ?? error.message : error)
+    console.error(error instanceof Error ? (error.stack ?? error.message) : error)
     process.exit(1)
   })
 }

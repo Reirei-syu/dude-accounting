@@ -37,7 +37,12 @@ import {
   VoucherNumberRenumberValidationError,
   type VoucherNumberRenumberResult
 } from '../services/voucherNumberLifecycle'
-import { requireCommandActor, requireCommandLedgerAccess, requireCommandPermission } from './authz'
+import {
+  requireCommandActor,
+  requireCommandAdmin,
+  requireCommandLedgerAccess,
+  requireCommandPermission
+} from './authz'
 import { writeContextDiagnostic } from './contextDiagnostics'
 import { appendActorOperationLog } from './operationLog'
 import {
@@ -1046,7 +1051,7 @@ export async function voucherBatchActionCommand(
         : action === 'bookkeep'
           ? requireCommandPermission(context.actor, 'bookkeeping')
           : action === 'unbookkeep'
-            ? requireCommandPermission(context.actor, 'unbookkeep')
+            ? requireCommandAdmin(context.actor)
             : requireCommandPermission(context.actor, 'voucher_entry')
     const emergencyReversal: EmergencyReversalPayload | null =
       action === 'unbookkeep'

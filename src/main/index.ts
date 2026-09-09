@@ -14,7 +14,7 @@ import { installGlobalErrorLogging } from './services/errorLog'
 import { getRuntimeUserDataPath } from './services/runtimeAppPaths'
 import { setRuntimeContext } from './runtime/runtimeContext'
 import { consumeEmbeddedCliState } from './runtime/embeddedCliState'
-import { runEmbeddedCli } from '../cli/embedded'
+import { flushEmbeddedCliOutput, runEmbeddedCli } from '../cli/embedded'
 import path from 'node:path'
 import { secureWindowContents } from './services/windowSecurity'
 
@@ -129,18 +129,32 @@ app.whenReady().then(() => {
   const embeddedCliArgv = getEmbeddedCliArgv(process.argv)
   if (embeddedCliArgv) {
     embeddedCliRunning = true
-    void runEmbeddedCli(embeddedCliArgv).finally(() => {
-      embeddedCliRunning = false
-      const cliState = consumeEmbeddedCliState()
-      if (cliState.relaunchRequested) {
-        app.relaunch()
-        app.exit(0)
-        return
-      }
-      if (!cliState.keepAliveUntilWindowClose) {
-        app.quit()
-      }
-    })
+    void runEmbeddedCli(embeddedCliArgv)
+      .catch((error) => {
+        console.error('CLI 执行异常', error)
+        process.exitCode = 10
+      })
+      .finally(async () => {
+        const cliState = consumeEmbeddedCliState()
+        if (
+          cliState.keepAliveUntilWindowClose &&
+          !cliState.relaunchRequested &&
+          Number(process.exitCode) === 0 &&
+          BrowserWindow.getAllWindows().length > 0
+        ) {
+          embeddedCliRunning = false
+          return
+        }
+        try {
+          closeDatabase()
+        } catch (error) {
+          console.error('CLI 数据库关闭失败', error)
+          process.exitCode = 10
+        }
+        await flushEmbeddedCliOutput()
+        if (cliState.relaunchRequested) app.relaunch()
+        app.exit(Number(process.exitCode) || 0)
+      })
     return
   }
 

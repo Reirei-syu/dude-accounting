@@ -6,13 +6,16 @@ directories:
   buildResources: build
 afterPack: scripts/after-pack-win-icon.cjs
 files:
+  - 'out/main/**'
+  - 'out/preload/**'
+  - 'out/renderer/**'
+  - 'out/cli/**'
+  - 'resources/**'
+  - 'package.json'
   - '!.tmp/**'
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!.codex/**'
+  - '!**/*.test.*'
+  - '!**/__tests__/**'
 extraFiles:
   - from: build/cli/
     to: .

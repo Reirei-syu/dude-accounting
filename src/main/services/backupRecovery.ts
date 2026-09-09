@@ -207,33 +207,44 @@ function copyLedgerAttachments(
 
   const updateStoredPath = db.prepare(
     `UPDATE electronic_voucher_files
-        SET stored_path = ?, sha256 = ?, file_size = ?
+        SET stored_name = ?, stored_path = ?, sha256 = ?, file_size = ?
       WHERE id = ?`
   )
 
   const attachments: LedgerBackupAttachment[] = []
-  const storedNames = new Set<string>()
+  const reservedNames = new Set<string>()
   for (const row of rows) {
     requireStoredFilename(row.stored_name)
-    const key = row.stored_name.toLowerCase()
-    if (storedNames.has(key)) throw new Error('电子凭证附件存储名称重复')
-    storedNames.add(key)
+    reservedNames.add(row.stored_name.toLowerCase())
   }
+  const usedNames = new Set<string>()
   for (const row of rows) {
     if (!fs.existsSync(row.stored_path)) {
       throw new Error(`电子凭证附件缺失：${row.stored_path}`)
     }
 
-    const relativePath = path.posix.join('electronic-vouchers', row.stored_name)
+    // 运行时按 operation 目录隔离同名原件；扁平备份仅在副本内消歧。
+    let storedName = row.stored_name
+    if (usedNames.has(storedName.toLowerCase())) {
+      const extension = path.extname(storedName).slice(0, 16)
+      let suffix = 0
+      do {
+        storedName = `file-${row.id}-${suffix++}${extension}`
+      } while (reservedNames.has(storedName.toLowerCase()))
+      requireStoredFilename(storedName)
+      reservedNames.add(storedName.toLowerCase())
+    }
+    usedNames.add(storedName.toLowerCase())
+    const relativePath = path.posix.join('electronic-vouchers', storedName)
     const targetPath = resolveContainedPath(packageDir, relativePath)
     fs.copyFileSync(row.stored_path, targetPath)
     const attachmentChecksum = computeFileSha256(targetPath)
     const attachmentFileSize = fs.statSync(targetPath).size
-    updateStoredPath.run(relativePath, attachmentChecksum, attachmentFileSize, row.id)
+    updateStoredPath.run(storedName, relativePath, attachmentChecksum, attachmentFileSize, row.id)
     attachments.push({
       relativePath,
       originalName: row.original_name,
-      storedName: row.stored_name,
+      storedName,
       checksum: attachmentChecksum,
       fileSize: attachmentFileSize
     })
@@ -413,7 +424,8 @@ export function createLedgerBackupArtifact(input: {
   ensureDirectory(packageDir)
   fs.copyFileSync(input.sourcePath, backupPath)
 
-  const packageDb = new Database(backupPath)
+  // Node 文件操作可处理长路径，SQLite 在 Windows 上需显式扩展路径。
+  const packageDb = new Database(path.toNamespacedPath(backupPath))
   let attachments: LedgerBackupAttachment[] = []
   let settingsAssets: LedgerBackupSettingsAsset[] = []
   try {
@@ -825,7 +837,11 @@ export function importLedgerBackupArtifact(input: LedgerImportInput): LedgerBack
   const validation = validateLedgerBackupArtifact(input.backupPath, input.manifestPath)
   if (!validation.valid || !validation.manifest)
     throw new Error(validation.error ?? '账套备份包校验失败')
-  if (input.expectedManifestDigest && createHash('sha256').update(JSON.stringify(validation.manifest)).digest('hex') !== input.expectedManifestDigest)
+  if (
+    input.expectedManifestDigest &&
+    createHash('sha256').update(JSON.stringify(validation.manifest)).digest('hex') !==
+      input.expectedManifestDigest
+  )
     throw new Error('操作规划后源备份清单发生变化，禁止导入')
   const generation = input.operationId ? requireOperationId(input.operationId) : randomUUID()
   const parent = path.dirname(path.resolve(input.targetPath))
@@ -889,7 +905,8 @@ export function importLedgerBackupArtifact(input: LedgerImportInput): LedgerBack
       )
       if (input.preparedAssets) {
         assertSynchronousOperation(input.preparedAssets as () => unknown)
-        if (input.preparedAssets(assets, finalAssets) !== undefined) throw new Error('导入附件准备必须同步完成')
+        if (input.preparedAssets(assets, finalAssets) !== undefined)
+          throw new Error('导入附件准备必须同步完成')
       }
       input.beforeSwitch?.()
       switchDatabaseFile(copy, input.targetPath, { preparedPath: assets, generation })
@@ -1757,10 +1774,12 @@ export function restoreBackupArtifact(input: {
       if (candidate.prepare('SELECT 1 FROM file_operation_commits LIMIT 1').get())
         candidate.exec('DELETE FROM file_operation_commits')
       if (input.commitCandidate) {
-        candidate.transaction(() => {
-          const result = input.commitCandidate!(candidate)
-          if (result !== undefined) throw new TypeError('恢复候选库提交必须同步完成')
-        }).immediate()
+        candidate
+          .transaction(() => {
+            const result = input.commitCandidate!(candidate)
+            if (result !== undefined) throw new TypeError('恢复候选库提交必须同步完成')
+          })
+          .immediate()
       }
       candidate.pragma('wal_checkpoint(TRUNCATE)')
       candidate.pragma('journal_mode = DELETE')
