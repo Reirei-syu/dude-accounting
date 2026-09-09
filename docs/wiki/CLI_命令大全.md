@@ -45,8 +45,8 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 
 | 英文命令 | 中文命令 | 功能说明 | 需登录 | 桌面辅助 |
 | --- | --- | --- | --- | --- |
-| `audit-log list` | 查询操作日志 | 查询操作日志 | 是 | 否 |
-| `audit-log export` | 导出操作日志 | 导出操作日志 | 是 | 否 |
+| `audit-log list` | 查询操作日志 | 查询操作日志（管理员；支持状态、operationId、带时区时间范围与cursor；limit默认200、最多1000） | 是 | 否 |
+| `audit-log export` | 导出操作日志 | 限量导出操作日志（管理员；返回hasMore/nextCursor，使用filters.cursor继续导出后续页） | 是 | 否 |
 
 ## ledger
 

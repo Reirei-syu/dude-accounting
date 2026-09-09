@@ -10,6 +10,7 @@ import CashFlowMapping from '../pages/CashFlowMapping'
 import SystemParams from '../pages/SystemParams'
 import MyPreferences from '../pages/MyPreferences'
 import UserManagement from '../pages/UserManagement'
+import AuditLogPage from '../pages/AuditLogPage'
 import AccountingStandard from '../pages/AccountingStandard'
 import PeriodClose from '../pages/PeriodClose'
 import PLCarryForward from '../pages/PLCarryForward'
@@ -42,6 +43,7 @@ const componentMap: Record<string, React.ComponentType<WorkspaceComponentProps>>
   SystemParams: SystemParams as React.ComponentType<WorkspaceComponentProps>,
   MyPreferences: MyPreferences as React.ComponentType<WorkspaceComponentProps>,
   UserManagement: UserManagement as React.ComponentType<WorkspaceComponentProps>,
+  AuditLogPage: AuditLogPage as React.ComponentType<WorkspaceComponentProps>,
   AccountingStandard: AccountingStandard as React.ComponentType<WorkspaceComponentProps>,
   PeriodClose: PeriodClose as React.ComponentType<WorkspaceComponentProps>,
   PLCarryForward: PLCarryForward as React.ComponentType<WorkspaceComponentProps>,

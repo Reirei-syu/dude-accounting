@@ -1,5 +1,6 @@
 import type { PrintPreparePayload } from './print'
 import type { ElectronicVoucherListRow } from './electronicVoucher'
+import type { AuditLogCursor, AuditLogFilters, AuditLogRow } from './auditLog'
 
 export interface ElectronAPI {
   readonly process: { readonly versions: Readonly<Record<string, string | undefined>> }
@@ -973,44 +974,19 @@ interface PeriodAPI {
 }
 
 interface AuditLogAPI {
-  list: (filters?: {
-    ledgerId?: number
-    module?: string
-    action?: string
-    userId?: number
-    keyword?: string
-    limit?: number
-  }) => Promise<
-    Array<{
-      id: number
-      ledger_id: number | null
-      user_id: number | null
-      username: string | null
-      module: string
-      action: string
-      target_type: string | null
-      target_id: string | null
-      reason: string | null
-      approval_tag: string | null
-      details_json: string
-      created_at: string
-    }>
-  >
+  list: (filters?: AuditLogFilters) => Promise<AuditLogRow[]>
   export: (payload?: {
-    filters?: {
-      ledgerId?: number
-      module?: string
-      action?: string
-      userId?: number
-      keyword?: string
-      limit?: number
-    }
+    filters?: AuditLogFilters
     filePath?: string
     operationId?: string
+    choosePath?: boolean
   }) => Promise<{
     success: boolean
+    cancelled?: boolean
     error?: string
     rowCount?: number
+    hasMore?: boolean
+    nextCursor?: AuditLogCursor
     operationId?: string
     errorCode?: string
     details?: unknown

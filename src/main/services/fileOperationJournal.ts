@@ -81,6 +81,8 @@ export class FileOperationJournal {
   readonly journalId: string
   private readonly db: Database.Database
   private readonly root: string
+  /** 仅供主进程审计 SQL 联合查询使用，不得返回 IPC/CLI。 */
+  readonly databasePath: string
   constructor(targetDatabasePath: string) {
     if (!path.isAbsolute(targetDatabasePath)) throw new Error('操作记录必须使用显式绝对数据库路径')
     this.root = resolveContainedPath(
@@ -89,6 +91,7 @@ export class FileOperationJournal {
     )
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 })
     const file = resolveContainedPath(this.root, 'journal.sqlite')
+    this.databasePath = file
     this.db = new Database(file)
     try {
       const version = this.db.pragma('user_version', { simple: true }) as number
@@ -111,7 +114,10 @@ export class FileOperationJournal {
         CREATE TABLE IF NOT EXISTS events (
           id INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL,
           state TEXT NOT NULL, created_at TEXT NOT NULL, error_code TEXT, compensation TEXT NOT NULL
-        );`)
+        );
+        CREATE INDEX IF NOT EXISTS idx_events_audit_time ON events(julianday(created_at) DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_events_operation ON events(operation_id, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_operations_audit_actor ON operations(actor_id, ledger_id, kind);`)
           this.db
             .prepare("INSERT OR IGNORE INTO metadata(key,value) VALUES('journal_id',?)")
             .run(randomUUID())

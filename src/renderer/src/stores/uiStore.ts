@@ -33,6 +33,7 @@ const isBlankTab = (tab: TabItem): boolean => tab.componentType === BLANK_TAB_CO
 
 interface PermissionBoundItem {
   requiredPermission?: PermissionKey
+  adminOnly?: boolean
 }
 
 export interface MainModuleItem extends PermissionBoundItem {
@@ -139,6 +140,7 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
     { id: 'auxiliary-detail', title: '辅助明细账', componentType: 'AuxiliaryDetail' }
   ],
   'system-settings': [
+    { id: 'audit-log', title: '操作日志', componentType: 'AuditLogPage', adminOnly: true },
     {
       id: 'system-params',
       title: '系统参数设置',
@@ -156,7 +158,7 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
       title: '会计准则设置',
       componentType: 'AccountingStandard',
       requiredPermission: 'system_settings'
-    },
+    }
   ]
 }
 
@@ -201,8 +203,10 @@ export function getVisibleModuleSubMenus(
   if (!getVisibleMainModules(user).some((item) => item.id === module)) {
     return []
   }
-  return getModuleSubMenus(module, standardType).filter((item) =>
-    hasPermissionAccess(user, item.requiredPermission)
+  return getModuleSubMenus(module, standardType).filter(
+    (item) =>
+      (!item.adminOnly || user?.isAdmin === true) &&
+      hasPermissionAccess(user, item.requiredPermission)
   )
 }
 

@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import type { AuditLogFilters } from '../../shared/contracts/auditLog'
 
 export interface OperationLogInput {
   ledgerId?: number | null
@@ -13,14 +14,7 @@ export interface OperationLogInput {
   details?: Record<string, unknown> | null
 }
 
-export interface OperationLogFilters {
-  ledgerId?: number
-  module?: string
-  action?: string
-  userId?: number
-  keyword?: string
-  limit?: number
-}
+export type OperationLogFilters = AuditLogFilters
 
 export interface OperationLogRow {
   id: number
@@ -45,17 +39,14 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
 
 function escapeCsv(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return ''
-  const text = String(value)
+  const text = typeof value === 'string' && /^[\s]*[=+@-]/.test(value) ? `'${value}` : String(value)
   if (!/[",\r\n]/.test(text)) {
     return text
   }
   return `"${text.replace(/"/g, '""')}"`
 }
 
-export function appendOperationLog(
-  db: Database.Database,
-  input: OperationLogInput
-): number {
+export function appendOperationLog(db: Database.Database, input: OperationLogInput): number {
   const result = db
     .prepare(
       `INSERT INTO operation_logs (
@@ -68,8 +59,9 @@ export function appendOperationLog(
          target_id,
          reason,
          approval_tag,
-         details_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         details_json,
+         created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`
     )
     .run(
       input.ledgerId ?? null,

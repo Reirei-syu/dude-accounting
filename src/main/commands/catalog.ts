@@ -128,7 +128,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'audit-log',
     action: 'list',
-    description: '查询操作日志',
+    description: '查询操作日志（管理员；支持状态、operationId、带时区时间范围与cursor；limit默认200、最多1000）',
     aliases: [],
     batchSafe: true,
     desktopAssisted: false,
@@ -141,7 +141,7 @@ const commandMetadata: CommandMetadata[] = [
   {
     domain: 'audit-log',
     action: 'export',
-    description: '导出操作日志',
+    description: '限量导出操作日志（管理员；返回hasMore/nextCursor，使用filters.cursor继续导出后续页）',
     aliases: [],
     batchSafe: true,
     desktopAssisted: false,

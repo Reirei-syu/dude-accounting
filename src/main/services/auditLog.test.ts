@@ -28,7 +28,7 @@ class FakeAuditLogDb {
 
     if (
       normalized ===
-      "INSERT INTO operation_logs ( ledger_id, user_id, username, module, action, target_type, target_id, reason, approval_tag, details_json ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO operation_logs ( ledger_id, user_id, username, module, action, target_type, target_id, reason, approval_tag, details_json, created_at ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
     ) {
       return {
         run: (

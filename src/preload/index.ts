@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { TypedInvoke } from './invoke'
 import type { DudeAPI } from '../shared/contracts/desktopApi'
+import type { AuditLogFilters } from '../shared/contracts/auditLog'
 
 const invoke: TypedInvoke = ipcRenderer.invoke.bind(ipcRenderer)
 
@@ -282,25 +283,12 @@ const api = {
       invoke('settings:deleteIndependentCustomSubjectTemplate', templateId)
   },
   auditLog: {
-    list: (filters?: {
-      ledgerId?: number
-      module?: string
-      action?: string
-      userId?: number
-      keyword?: string
-      limit?: number
-    }) => invoke('auditLog:list', filters),
+    list: (filters?: AuditLogFilters) => invoke('auditLog:list', filters),
     export: (payload?: {
-      filters?: {
-        ledgerId?: number
-        module?: string
-        action?: string
-        userId?: number
-        keyword?: string
-        limit?: number
-      }
+      filters?: AuditLogFilters
       filePath?: string
       operationId?: string
+      choosePath?: boolean
     }) => invoke('auditLog:export', payload)
   },
   backup: {
