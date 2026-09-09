@@ -9,14 +9,22 @@ const timelinePath = path.join(root, 'timeline.jsonl')
 const timeline = fs.readFileSync(timelinePath, 'utf8')
 const commandsPath = path.join(root, 'commands.jsonl')
 const commandsBefore = fs.readFileSync(commandsPath, 'utf8')
-const last = timeline
-  .trim()
-  .split('\n')
-  .map(JSON.parse)
-  .findLast((row) => row.event === 'cycle-complete')
+const events = timeline.trim().split('\n').map(JSON.parse)
+const last = events.findLast((row) => row.event === 'cycle-complete')
 assert.ok(last)
+// 重启后的登录发生在 cycle-complete 之后，以已经完成的重启/最终事件为静止边界。
+const boundary = events.at(-1)
+assert.ok(
+  [
+    'cycle-complete',
+    'graceful-restart',
+    'forced-main-process-restart-at-cycle-boundary',
+    'complete'
+  ].includes(boundary.event)
+)
+assert.equal(boundary.cycle ?? boundary.cycles, last.cycle)
 const lastCommand = commandsBefore.trim().split('\n').map(JSON.parse).at(-1)
-if (lastCommand && Date.parse(lastCommand.at) > Date.parse(last.at)) {
+if (lastCommand && Date.parse(lastCommand.at) > Date.parse(boundary.at)) {
   console.log(JSON.stringify({ skipped: true, reason: '下一轮命令已开始，等待新的完整循环' }))
   process.exit(0)
 }
@@ -35,7 +43,8 @@ try {
 }
 const busy = operations.some(
   (row) =>
-    ['planned', 'running'].includes(row.state) || Date.parse(row.updated_at) > Date.parse(last.at)
+    ['planned', 'running'].includes(row.state) ||
+    Date.parse(row.updated_at) > Date.parse(boundary.at)
 )
 if (busy) {
   console.log(JSON.stringify({ skipped: true, reason: '当前循环正在操作文件，稍后重试' }))
