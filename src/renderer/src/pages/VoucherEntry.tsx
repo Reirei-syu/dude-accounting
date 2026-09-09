@@ -13,7 +13,15 @@ import VoucherCashFlowDialog from './voucher-entry/VoucherCashFlowDialog'
 export default function VoucherEntry(props: VoucherEntryProps): JSX.Element {
   const ledgerId = useLedgerStore((state) => state.currentLedger?.id)
   const userId = useAuthStore((state) => state.user?.id)
-  return <VoucherEntryScope key={`${userId}:${ledgerId}`} {...props} />
+  const initialElectronicDraft =
+    props.initialElectronicDraft?.ledgerId === ledgerId ? props.initialElectronicDraft : undefined
+  return (
+    <VoucherEntryScope
+      key={`${userId}:${ledgerId}:${initialElectronicDraft?.sourceRecordId ?? ''}:${initialElectronicDraft?.sourceFingerprint ?? ''}`}
+      {...props}
+      initialElectronicDraft={initialElectronicDraft}
+    />
+  )
 }
 
 function VoucherEntryScope(props: VoucherEntryProps): JSX.Element {
@@ -39,6 +47,16 @@ function VoucherEntryScope(props: VoucherEntryProps): JSX.Element {
     <div className="h-full flex flex-col p-4 gap-3">
       {/* 顶部操作区 */}
       <VoucherEntryToolbar {...controller} />
+      {controller.electronicSource && (
+        <div className="glass-panel-light px-4 py-3 text-sm">
+          电子凭证来源 #{controller.electronicSource.sourceRecordId} · 人工核验与摘录，非自动验真。
+          来源金额：
+          {controller.electronicSource.amountCents === null
+            ? '未提供'
+            : (controller.electronicSource.amountCents / 100).toFixed(2)}{' '}
+          元。 请复核日期、摘要、科目和借贷金额；保存成功后才建立来源关联。
+        </div>
+      )}
 
       {isClosedPeriod && (
         <div

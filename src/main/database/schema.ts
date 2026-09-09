@@ -2,8 +2,9 @@ import type Database from 'better-sqlite3'
 import { migrateAuthRevision } from './authRevisionMigration'
 import { migrateFileOperationCommits } from './fileOperationMigration'
 import { migrateAuditLogIndex } from './auditLogMigration'
+import { migrateElectronicVoucherWorkflow } from './electronicVoucherMigration'
 
-export const CURRENT_SCHEMA_VERSION = 5
+export const CURRENT_SCHEMA_VERSION = 6
 
 // 当前结构的唯一事实源；历史升级与新库使用相同定义。
 export const TABLE_SQL: Readonly<Record<string, string>> = {
@@ -343,4 +344,5 @@ export function createCurrentSchema(db: Database.Database, version = CURRENT_SCH
   if (version >= 3) migrateAuthRevision(db)
   if (version >= 4) migrateFileOperationCommits(db)
   if (version >= 5) migrateAuditLogIndex(db)
+  if (version >= 6) migrateElectronicVoucherWorkflow(db)
 }

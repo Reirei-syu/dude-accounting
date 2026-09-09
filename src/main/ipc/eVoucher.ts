@@ -4,6 +4,7 @@ import {
   convertElectronicVoucherCommand,
   importElectronicVoucherCommand,
   listElectronicVouchersCommand,
+  linkElectronicVoucherCommand,
   parseElectronicVoucherCommand,
   verifyElectronicVoucherCommand
 } from '../commands/electronicVoucherCommands'
@@ -11,6 +12,12 @@ import { withIpcTelemetry } from '../services/runtimeLogger'
 import { createCommandContextFromEvent, isCommandSuccess, toLegacySuccess } from './commandBridge'
 
 export function registerElectronicVoucherHandlers(): void {
+  handleInvoke('eVoucher:link', async (event, payload) =>
+    toLegacySuccess(
+      await linkElectronicVoucherCommand(createCommandContextFromEvent(event), payload),
+      (data) => data
+    )
+  )
   handleInvoke(
     'eVoucher:import',
     async (
@@ -70,6 +77,7 @@ export function registerElectronicVoucherHandlers(): void {
         verificationStatus?: 'verified' | 'failed'
         verificationMethod?: string
         verificationMessage?: string
+        manualConfirmation?: boolean
       }
     ) =>
       withIpcTelemetry(

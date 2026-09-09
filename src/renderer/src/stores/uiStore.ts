@@ -126,6 +126,12 @@ const BASE_MODULE_SUB_MENUS: Omit<Record<MainModule, SubMenuItem[]>, 'reports'> 
     }
   ],
   accounting: [
+    {
+      id: 'electronic-voucher',
+      title: '电子凭证',
+      componentType: 'ElectronicVoucherPage',
+      requiredPermission: 'voucher_entry'
+    },
     { id: 'voucher-entry', title: '凭证录入', componentType: 'VoucherEntry' },
     { id: 'voucher-list', title: '凭证管理', componentType: 'VoucherList' },
     { id: 'voucher-query', title: '凭证查询', componentType: 'VoucherQuery' },

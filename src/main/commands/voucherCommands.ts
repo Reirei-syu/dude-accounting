@@ -54,6 +54,11 @@ import { withCommandResult } from './result'
 import { withAuditedCommandResult } from './auditedResult'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
+import {
+  loadElectronicVoucher,
+  requireVerifiedElectronicVoucher,
+  trackElectronicVoucherResult
+} from './electronicVoucherWorkflow'
 import { MojibakeTextError, normalizeUserTextOrThrow } from '../../shared/mojibake'
 
 interface SaveVoucherInput {
@@ -61,6 +66,8 @@ interface SaveVoucherInput {
   voucherDate: string
   voucherWord?: string
   isCarryForward?: boolean
+  sourceRecordId?: number
+  sourceFingerprint?: string
   entries: VoucherEntryInput[]
 }
 
@@ -387,6 +394,11 @@ function normalizeSaveVoucherPayload(
     voucherDate: normalizeVoucherDateField(rawPayload),
     voucherWord: normalizeVoucherWordField(rawPayload),
     isCarryForward: normalizeBooleanField(rawPayload.isCarryForward, 'isCarryForward', false),
+    sourceRecordId: normalizeOptionalPositiveInteger(rawPayload.sourceRecordId, 'sourceRecordId'),
+    sourceFingerprint: normalizeOptionalStringField(
+      rawPayload.sourceFingerprint,
+      'sourceFingerprint'
+    ),
     entries: normalizeVoucherEntriesField(context, ledgerId, rawPayload)
   }
 }
@@ -613,53 +625,94 @@ export async function createVoucherCommand(
   context: CommandContext,
   payload: SaveVoucherInput
 ): Promise<CommandResult<{ voucherId: number; voucherNumber: number; status: number }>> {
-  return withAuditedCommandResult(context, () => {
-    const actor = requireCommandPermission(context.actor, 'voucher_entry')
-    const ledgerId = extractLedgerIdFromVoucherPayload(payload)
-    requireCommandLedgerAccess(context.db, context.actor, ledgerId)
-    const normalizedPayload = normalizeSaveVoucherPayload(context, payload)
-    const { period } = ensureVoucherPeriod(
-      context,
-      normalizedPayload.ledgerId,
-      normalizedPayload.voucherDate,
-      'date'
-    )
-    const allowSameRow = context.db
-      .prepare('SELECT value FROM system_settings WHERE key = ?')
-      .get('allow_same_maker_auditor') as { value: string } | undefined
-    const result = createVoucherWithEntries(context.db, {
-      ledgerId: normalizedPayload.ledgerId,
-      period,
-      voucherDate: normalizedPayload.voucherDate,
-      voucherWord: normalizedPayload.voucherWord,
-      isCarryForward: normalizedPayload.isCarryForward,
-      entries: normalizedPayload.entries,
-      creatorId: actor.id,
-      allowSameMakerAuditor: allowSameRow?.value === '1'
-    })
-    appendActorOperationLog(context, {
-      ledgerId: normalizedPayload.ledgerId,
-      module: 'voucher',
-      action: 'create',
-      targetType: 'voucher',
-      targetId: result.voucherId,
-      details: { after: result, period, entryCount: normalizedPayload.entries.length }
-    })
-    writeContextDiagnostic(context.runtime, {
-      event: 'voucher.save.context',
-      db: context.db,
-      context: {
+  return trackElectronicVoucherResult(
+    context,
+    payload?.sourceRecordId,
+    'save',
+    withAuditedCommandResult(context, () => {
+      const actor = requireCommandPermission(context.actor, 'voucher_entry')
+      const ledgerId = extractLedgerIdFromVoucherPayload(payload)
+      requireCommandLedgerAccess(context.db, context.actor, ledgerId)
+      const normalizedPayload = normalizeSaveVoucherPayload(context, payload)
+      if (normalizedPayload.sourceRecordId !== undefined) {
+        const source = loadElectronicVoucher(context, normalizedPayload.sourceRecordId)
+        if (source.ledger_id !== ledgerId)
+          throw new CommandError('VALIDATION_ERROR', '电子凭证来源与目标账套不一致', null, 2)
+        requireVerifiedElectronicVoucher(context, source, true)
+        if (
+          !normalizedPayload.sourceFingerprint ||
+          source.fingerprint !== normalizedPayload.sourceFingerprint
+        ) {
+          throw new CommandError('CONFLICT', '电子凭证来源已变化，请重新生成预填并复核', null, 6)
+        }
+      } else if (normalizedPayload.sourceFingerprint !== undefined) {
+        throw new CommandError('VALIDATION_ERROR', '来源指纹必须同时指定来源记录', null, 2)
+      }
+      const { period } = ensureVoucherPeriod(
+        context,
+        normalizedPayload.ledgerId,
+        normalizedPayload.voucherDate,
+        'date'
+      )
+      const allowSameRow = context.db
+        .prepare('SELECT value FROM system_settings WHERE key = ?')
+        .get('allow_same_maker_auditor') as { value: string } | undefined
+      const result = createVoucherWithEntries(context.db, {
         ledgerId: normalizedPayload.ledgerId,
         period,
         voucherDate: normalizedPayload.voucherDate,
-        voucherId: result.voucherId,
-        voucherNumber: result.voucherNumber,
-        entryCount: normalizedPayload.entries.length,
-        status: 'success'
+        voucherWord: normalizedPayload.voucherWord,
+        isCarryForward: normalizedPayload.isCarryForward,
+        entries: normalizedPayload.entries,
+        creatorId: actor.id,
+        allowSameMakerAuditor: allowSameRow?.value === '1'
+      })
+      if (normalizedPayload.sourceRecordId !== undefined) {
+        context.db
+          .prepare(
+            `INSERT INTO voucher_source_links (voucher_id, source_type, source_record_id)
+        VALUES (?, 'electronic_voucher', ?)`
+          )
+          .run(result.voucherId, normalizedPayload.sourceRecordId)
+        context.db
+          .prepare(
+            `UPDATE electronic_voucher_records SET status = 'converted', last_error = NULL,
+        updated_at = datetime('now') WHERE id = ?`
+          )
+          .run(normalizedPayload.sourceRecordId)
+        appendActorOperationLog(context, {
+          ledgerId,
+          module: 'electronic_voucher',
+          action: 'link',
+          targetType: 'electronic_voucher_record',
+          targetId: normalizedPayload.sourceRecordId,
+          details: { voucherId: result.voucherId }
+        })
       }
+      appendActorOperationLog(context, {
+        ledgerId: normalizedPayload.ledgerId,
+        module: 'voucher',
+        action: 'create',
+        targetType: 'voucher',
+        targetId: result.voucherId,
+        details: { after: result, period, entryCount: normalizedPayload.entries.length }
+      })
+      writeContextDiagnostic(context.runtime, {
+        event: 'voucher.save.context',
+        db: context.db,
+        context: {
+          ledgerId: normalizedPayload.ledgerId,
+          period,
+          voucherDate: normalizedPayload.voucherDate,
+          voucherId: result.voucherId,
+          voucherNumber: result.voucherNumber,
+          entryCount: normalizedPayload.entries.length,
+          status: 'success'
+        }
+      })
+      return result
     })
-    return result
-  })
+  )
 }
 
 export async function updateVoucherCommand(

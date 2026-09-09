@@ -149,6 +149,8 @@ const api = {
       voucherDate: string
       voucherWord?: string
       isCarryForward?: boolean
+      sourceRecordId?: number
+      sourceFingerprint?: string
       entries: Array<{
         summary: string
         subjectCode: string
@@ -321,6 +323,8 @@ const api = {
     getManifest: (exportId: number) => invoke('archive:getManifest', exportId)
   },
   eVoucher: {
+    link: (payload: { recordId: number; voucherId: number; sourceFingerprint: string }) =>
+      invoke('eVoucher:link', payload),
     import: (payload: {
       operationId?: string
       ledgerId: number
@@ -335,6 +339,7 @@ const api = {
       verificationStatus?: 'verified' | 'failed'
       verificationMethod?: string
       verificationMessage?: string
+      manualConfirmation?: boolean
     }) => invoke('eVoucher:verify', payload),
     parse: (payload: {
       recordId: number

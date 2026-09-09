@@ -92,6 +92,11 @@ describe('ledger backup import', () => {
     sourceDb.exec(
       "UPDATE vouchers SET posted_at='2026-03-02 09:00:00', emergency_reversal_reason='批准修正', emergency_reversal_by=2, emergency_reversal_at='2026-03-03 09:00:00', reversal_approval_tag='APR-001'"
     )
+    if (failure !== 'success-legacy-schema') {
+      sourceDb
+        .prepare('UPDATE electronic_voucher_records SET last_error = ? WHERE id = 811')
+        .run('原件核验依据待补充')
+    }
     sourceDb.close()
 
     const artifact = createLedgerBackupArtifact({
@@ -225,6 +230,11 @@ describe('ledger backup import', () => {
     expect(fs.readFileSync(oldWallpaper, 'utf8')).toBe('original-wallpaper')
 
     const importedDb = new Database(targetPath, { readonly: true })
+    expect(
+      importedDb
+        .prepare('SELECT last_error FROM electronic_voucher_records WHERE ledger_id = ?')
+        .get(result.importedLedgerId)
+    ).toEqual({ last_error: failure === 'success-legacy-schema' ? null : '原件核验依据待补充' })
     if (failure === 'success-legacy-schema')
       expect(
         importedDb

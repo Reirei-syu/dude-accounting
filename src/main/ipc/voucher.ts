@@ -21,6 +21,8 @@ interface SaveVoucherInput {
   voucherDate: string
   voucherWord?: string
   isCarryForward?: boolean
+  sourceRecordId?: number
+  sourceFingerprint?: string
   entries: VoucherEntryInput[]
 }
 

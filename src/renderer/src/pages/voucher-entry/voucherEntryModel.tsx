@@ -60,6 +60,14 @@ export interface CashFlowDraft {
 }
 
 export interface VoucherEntryProps {
+  initialElectronicDraft?: {
+    ledgerId: number
+    voucherDate: string
+    summary: string
+    sourceRecordId: number
+    sourceFingerprint: string
+    amountCents: number | null
+  }
   title?: string
   componentType?: string
   editVoucherId?: number | string

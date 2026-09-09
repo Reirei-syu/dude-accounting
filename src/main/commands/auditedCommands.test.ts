@@ -1,4 +1,7 @@
 import Database from 'better-sqlite3'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { runDatabaseMigrations } from '../database/migrations'
 import { issueSession, resolveSessionActor } from '../security/sessionAuthority'
@@ -451,15 +454,27 @@ describe('关键命令与真实审计表同事务', () => {
   it.each(['verify', 'parse', 'convert'] as const)(
     '电子凭证 %s 纯DB阶段与日志原子',
     async (action) => {
-      db.exec(`INSERT INTO electronic_voucher_files(id,ledger_id,original_name,stored_name,stored_path,sha256) VALUES(1,1,'test.xml','test.xml','isolated-test.xml','test-hash');
-      INSERT INTO electronic_voucher_records(id,ledger_id,file_id,voucher_type,fingerprint,status) VALUES(1,1,1,'digital_invoice','initial-fingerprint','verified')`)
+      fs.mkdirSync('.tmp', { recursive: true })
+      const folder = fs.mkdtempSync(path.resolve('.tmp', 'electronic-atomic-'))
+      const file = path.join(folder, 'invoice.pdf')
+      const bytes = Buffer.from('%PDF-1.4\n%%EOF\n')
+      fs.writeFileSync(file, bytes)
+      db.prepare(
+        `INSERT INTO electronic_voucher_files(id,ledger_id,original_name,stored_name,stored_path,sha256) VALUES(1,1,'invoice.pdf','invoice.pdf',?,?)`
+      ).run(file, createHash('sha256').update(bytes).digest('hex'))
+      db.exec(`INSERT INTO electronic_voucher_records(id,ledger_id,file_id,voucher_type,fingerprint,status,source_number,source_date,amount_cents) VALUES(1,1,1,'digital_invoice','initial-fingerprint','${action === 'convert' ? 'parsed' : 'verified'}','A','2026-01-01',100);
+      INSERT INTO electronic_voucher_verifications(record_id,verification_status,verification_method,verification_message) VALUES(1,'verified','manual-evidence-v1','已通过原件人工核验')`)
       const run = (): Promise<CommandResult<unknown>> =>
         action === 'verify'
           ? verifyElectronicVoucherCommand(context, { recordId: 1 })
           : action === 'parse'
             ? parseElectronicVoucherCommand(context, { recordId: 1, sourceNumber: 'A' })
             : convertElectronicVoucherCommand(context, { recordId: 1 })
-      await assertAtomic(run, 'electronic_voucher', action)
+      try {
+        await assertAtomic(run, 'electronic_voucher', action)
+      } finally {
+        fs.rmSync(folder, { recursive: true, force: true })
+      }
     }
   )
   it.each(['save', 'clear'] as const)('基础科目模板 %s 与日志原子', async (action) => {

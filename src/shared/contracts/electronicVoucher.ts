@@ -17,4 +17,6 @@ export interface ElectronicVoucherListRow {
   sha256: string
   file_size: number
   latest_verification_status: 'pending' | 'verified' | 'failed' | null
+  last_error: string | null
+  linked_voucher_id: number | null
 }

@@ -196,9 +196,12 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 | --- | --- | --- | --- | --- |
 | `evoucher import` | 导入电子凭证原件 | 导入电子凭证原件 | 是 | 否 |
 | `evoucher list` | 查询电子凭证记录 | 查询电子凭证记录 | 是 | 否 |
-| `evoucher verify` | 更新电子凭证校验结果 | 更新电子凭证校验结果 | 是 | 否 |
-| `evoucher parse` | 解析电子凭证结构化数据 | 解析电子凭证结构化数据 | 是 | 否 |
-| `evoucher convert` | 将电子凭证转换为凭证草稿 | 将电子凭证转换为凭证草稿 | 是 | 否 |
+| `evoucher verify` | 更新电子凭证校验结果 | 检查原件完整性或记录有明确依据的人工核验（非自动验真） | 是 | 否 |
+| `evoucher parse` | 解析电子凭证结构化数据 | 保存已核验电子凭证的人工摘录复核数据 | 是 | 否 |
+| `evoucher convert` | 将电子凭证转换为凭证草稿 | 生成电子凭证预填数据（保存成功后才关联入账） | 是 | 否 |
+| `evoucher link` | 关联电子凭证 | 将已核验且复核完成的电子凭证关联同账套已记账凭证 | 是 | 否 |
+
+离线流程：`import` 接收原件后保持待核验；`verify` 默认仅做完整性检查。PDF 人工核验通过须同时传 `verificationStatus:"verified"`、`manualConfirmation:true` 与非空 `verificationMessage` 依据，不能冒充自动验真。不支持的格式保持待核验。随后 `parse` 提交来源号码、有效日期和整数分金额，服务端阻止同号冲突。`convert` 仅返回预填，不创建凭证、不标记已入账；将返回的 `sourceRecordId` 与 `sourceFingerprint` 随 `voucher create` 分录一起保存，成功时原子关联来源。补充已有已记账凭证来源使用 `evoucher link`，载荷为 `{recordId,voucherId,sourceFingerprint}`。两条关联路径均要求同账套、来源已核验且完成结构化复核，一份原件不可重复关联。
 
 ## settings
 

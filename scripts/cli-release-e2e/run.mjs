@@ -1871,7 +1871,7 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
     'wallpaper.png'
   )
   this.state.files.evoucherSource = path.join(this.mainEnv.fixtureDirectory, 'bank_receipt.pdf')
-  fs.writeFileSync(this.state.files.evoucherSource, 'bank receipt content', 'utf8')
+  fs.writeFileSync(this.state.files.evoucherSource, '%PDF-1.4\nbank receipt test fixture\n%%EOF\n', 'utf8')
 
   await this.runBatchCommand('auth login', {
     payload: {
@@ -2758,6 +2758,14 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       ledgerId: this.state.ledgers.enterpriseId
     }
   })
+  await this.runBatchCommand('evoucher verify', {
+    payload: {
+      recordId: this.state.evouchers.recordId,
+      verificationStatus: 'verified',
+      manualConfirmation: true,
+      verificationMessage: '隔离 E2E 原件已人工复核，非自动验真'
+    }
+  })
   await this.runBatchCommand('evoucher parse', {
     payload: {
       recordId: this.state.evouchers.recordId,
@@ -2765,13 +2773,6 @@ CliReleaseHarness.prototype.runBatchCoverage = async function () {
       sourceDate: '2026-03-06',
       amountCents: 123400,
       counterpartName: 'CLI Counterparty'
-    }
-  })
-  await this.runBatchCommand('evoucher verify', {
-    payload: {
-      recordId: this.state.evouchers.recordId,
-      verificationStatus: 'verified',
-      verificationMethod: 'cli-release-e2e'
     }
   })
   await this.runBatchCommand('evoucher convert', {

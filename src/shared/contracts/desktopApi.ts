@@ -879,6 +879,8 @@ interface VoucherAPI {
     voucherDate: string
     voucherWord?: string
     isCarryForward?: boolean
+    sourceRecordId?: number
+    sourceFingerprint?: string
     entries: Array<{
       summary: string
       subjectCode: string
@@ -1144,6 +1146,11 @@ interface ArchiveAPI {
 }
 
 interface ElectronicVoucherAPI {
+  link: (payload: {
+    recordId: number
+    voucherId: number
+    sourceFingerprint: string
+  }) => Promise<{ success: boolean; error?: string; voucherId?: number }>
   import: (payload: {
     operationId?: string
     ledgerId: number
@@ -1166,10 +1173,11 @@ interface ElectronicVoucherAPI {
     verificationStatus?: 'verified' | 'failed'
     verificationMethod?: string
     verificationMessage?: string
+    manualConfirmation?: boolean
   }) => Promise<{
     success: boolean
     error?: string
-    verificationStatus?: 'verified' | 'failed'
+    verificationStatus?: 'pending' | 'verified' | 'failed'
   }>
   parse: (payload: {
     recordId: number
@@ -1191,6 +1199,8 @@ interface ElectronicVoucherAPI {
       voucherWord: string
       summary: string
       sourceRecordId: number
+      sourceFingerprint: string
+      amountCents: number | null
       entries: Array<{
         summary: string
         subjectCode: string

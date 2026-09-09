@@ -9,7 +9,7 @@ describe('授权版本迁移', () => {
     try {
       createCurrentSchema(db, 2)
       db.exec("PRAGMA user_version=2; INSERT INTO users(username) VALUES('alice')")
-      expect(runDatabaseMigrations(db).applied).toEqual([3, 4, 5])
+      expect(runDatabaseMigrations(db).applied).toEqual([3, 4, 5, 6])
       expect(db.prepare('SELECT auth_revision, is_enabled FROM users').get()).toEqual({
         auth_revision: 1,
         is_enabled: 1
@@ -33,7 +33,7 @@ describe('授权版本迁移', () => {
       ).toThrow('模拟失败')
       expect(db.pragma('user_version', { simple: true })).toBe(2)
       expect(() => db.prepare('SELECT auth_revision FROM users')).toThrow()
-      expect(runDatabaseMigrations(db).applied).toEqual([3, 4, 5])
+      expect(runDatabaseMigrations(db).applied).toEqual([3, 4, 5, 6])
     } finally {
       db.close()
     }

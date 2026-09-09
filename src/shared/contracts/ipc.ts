@@ -108,6 +108,7 @@ export const IPC_CHANNELS = {
   'eVoucher:verify': true,
   'eVoucher:parse': true,
   'eVoucher:convert': true,
+  'eVoucher:link': true,
   'reporting:generate': true,
   'reporting:list': true,
   'reporting:getDetail': true,

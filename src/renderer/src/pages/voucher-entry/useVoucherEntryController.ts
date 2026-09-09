@@ -48,7 +48,11 @@ import {
 
 // 返回对象是组件 Pick 契约的唯一类型来源，避免维护一份重复的状态声明。
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export function useVoucherEntryController({ editVoucherId, editRequestKey }: VoucherEntryProps) {
+export function useVoucherEntryController({
+  editVoucherId,
+  editRequestKey,
+  initialElectronicDraft
+}: VoucherEntryProps) {
   const mountedRef = useRef(false)
   const draftRequestRef = useRef(0)
   const navigationRequestRef = useRef(0)
@@ -94,11 +98,16 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
     [normalizedEditVoucherId, editRequestKey]
   )
   const [date, setDate] = useState(
-    currentPeriod ? `${currentPeriod}-01` : new Date().toISOString().split('T')[0]
+    initialElectronicDraft?.voucherDate ??
+      (currentPeriod ? `${currentPeriod}-01` : new Date().toISOString().split('T')[0])
   )
+  const [electronicSource, setElectronicSource] = useState(initialElectronicDraft)
   const [voucherNumber, setVoucherNumber] = useState<number>(1)
   const [rows, setRows] = useState<VoucherRow[]>(
-    Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow())
+    Array.from({ length: DEFAULT_ROWS }, (_, index) => ({
+      ...createEmptyRow(),
+      summary: index === 0 ? (initialElectronicDraft?.summary ?? '') : ''
+    }))
   )
   const [allSubjects, setAllSubjects] = useState<VoucherSubject[]>([])
   const [subjectOptions, setSubjectOptions] = useState<Record<string, VoucherSubject[]>>({})
@@ -730,7 +739,7 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
         const list = await loadNavigableVoucherRows(ledgerId, navigableVoucherPeriod)
         if (!cancelled && request === navigationRequestRef.current) {
           setNavigableVouchers(list)
-          if (editingVoucherId === null && activePeriod) {
+          if (editingVoucherId === null && activePeriod && !electronicSource) {
             setDate(getDefaultVoucherDateForNewVoucher(activePeriod, list, newVoucherDateStrategy))
           }
         }
@@ -751,7 +760,8 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
     editingVoucherId,
     loadNavigableVoucherRows,
     navigableVoucherPeriod,
-    newVoucherDateStrategy
+    newVoucherDateStrategy,
+    electronicSource
   ])
 
   const loadVoucherForEdit = async (voucherId: number): Promise<boolean> => {
@@ -809,6 +819,7 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
 
       const finalRows = padRows(mappedRows)
       setRows(finalRows)
+      setElectronicSource(undefined)
       setDate(targetVoucher.voucher_date)
       setVoucherNumber(targetVoucher.voucher_number)
       setEditingVoucherId(normalizedVoucherId)
@@ -893,6 +904,7 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
   }
 
   const resetVoucher = useCallback((): void => {
+    setElectronicSource(undefined)
     const nextRows = Array.from({ length: DEFAULT_ROWS }, () => createEmptyRow())
     setRows(nextRows)
     setSubjectOptions({})
@@ -1078,6 +1090,8 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
               ledgerId: currentLedger.id,
               voucherDate: date,
               voucherWord: defaultVoucherWord,
+              sourceRecordId: electronicSource?.sourceRecordId,
+              sourceFingerprint: electronicSource?.sourceFingerprint,
               entries: payloadEntries
             })
           : await window.api.voucher.update({
@@ -1278,6 +1292,7 @@ export function useVoucherEntryController({ editVoucherId, editRequestKey }: Vou
   }
 
   return {
+    electronicSource,
     activeSubjectRowId,
     applyCashFlowAllocation,
     auditorDisplayName,

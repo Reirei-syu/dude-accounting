@@ -1401,9 +1401,12 @@ function importLedgerIntoStaging(
     }
 
     const recordIdMap = new Map<number, number>()
+    const hasElectronicError = (
+      packageDb.pragma('table_info(electronic_voucher_records)') as Array<{ name: string }>
+    ).some((column) => column.name === 'last_error')
     const sourceElectronicRecords = packageDb
       .prepare(
-        `SELECT id, file_id, voucher_type, source_number, source_date, counterpart_name, amount_cents, fingerprint, status, created_at, updated_at
+        `SELECT id, file_id, voucher_type, source_number, source_date, counterpart_name, amount_cents, fingerprint, status, created_at, updated_at, ${hasElectronicError ? 'last_error' : 'NULL AS last_error'}
            FROM electronic_voucher_records
           ORDER BY id ASC`
       )
@@ -1419,6 +1422,7 @@ function importLedgerIntoStaging(
       status: string
       created_at: string
       updated_at: string
+      last_error: string | null
     }>
     const insertElectronicRecord = targetDb.prepare(
       `INSERT INTO electronic_voucher_records (
@@ -1440,6 +1444,11 @@ function importLedgerIntoStaging(
         row.updated_at
       )
       recordIdMap.set(row.id, Number(inserted.lastInsertRowid))
+      if (row.last_error !== null) {
+        targetDb
+          .prepare('UPDATE electronic_voucher_records SET last_error = ? WHERE id = ?')
+          .run(row.last_error, Number(inserted.lastInsertRowid))
+      }
     }
 
     const sourceVerifications = packageDb

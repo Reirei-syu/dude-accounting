@@ -13,13 +13,15 @@ import {
 import { migrateAuthRevision } from './authRevisionMigration'
 import { migrateFileOperationCommits } from './fileOperationMigration'
 import { migrateAuditLogIndex } from './auditLogMigration'
+import { migrateElectronicVoucherWorkflow } from './electronicVoucherMigration'
 
 const MIGRATIONS = [
   { version: 1, name: 'legacy 结构归一与原记录归档', run: migrateLegacyStructure },
   { version: 2, name: '历史元数据归一与唯一索引', run: migrateLegacyDataAndIndexes },
   { version: 3, name: '授权版本与最小会话身份', run: migrateAuthRevision },
   { version: 4, name: '文件操作原子提交标记', run: migrateFileOperationCommits },
-  { version: 5, name: '审计日志统一时间索引', run: migrateAuditLogIndex }
+  { version: 5, name: '审计日志统一时间索引', run: migrateAuditLogIndex },
+  { version: 6, name: '电子凭证处理错误与来源唯一约束', run: migrateElectronicVoucherWorkflow }
 ] as const
 
 export interface MigrationOptions {

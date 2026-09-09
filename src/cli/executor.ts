@@ -44,6 +44,7 @@ import {
   convertElectronicVoucherCommand,
   importElectronicVoucherCommand,
   listElectronicVouchersCommand,
+  linkElectronicVoucherCommand,
   parseElectronicVoucherCommand,
   verifyElectronicVoucherCommand
 } from '../main/commands/electronicVoucherCommands'
@@ -541,6 +542,11 @@ const registry: Record<string, Record<string, CommandExecutor>> = {
       getArchiveManifestCommand(createAuthedContext(runtime, outputMode, token), payload as never)
   },
   evoucher: {
+    link: async (runtime, payload, outputMode, token) =>
+      linkElectronicVoucherCommand(
+        createAuthedContext(runtime, outputMode, token),
+        payload as never
+      ),
     import: async (runtime, payload, outputMode, token) =>
       importElectronicVoucherCommand(
         createAuthedContext(runtime, outputMode, token),
