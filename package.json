@@ -2,10 +2,9 @@
   "name": "dude-app",
   "version": "2.0.5",
   "packageManager": "npm@11.6.2",
-  "description": "An Electron application with React and TypeScript",
+  "description": "供代理记账企业为委托单位记账使用的本地单机财务软件",
   "main": "./out/main/index.js",
   "author": "Reirei",
-  "homepage": "https://electron-vite.org",
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -28,12 +27,12 @@
     "postinstall": "electron-builder install-app-deps",
     "prepare:self-env": "powershell -ExecutionPolicy Bypass -File scripts/prepare-local-env.ps1",
     "prepare:mac-env": "sh scripts/prepare-mac-env.sh",
-    "build:unpack": "npm run build && electron-builder --dir",
+    "build:unpack": "npm run build && electron-builder --dir --publish never",
     "build:win:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-win-installer.ps1",
     "build:mac:installer": "sh scripts/build-mac-installer.sh",
-    "build:win": "npm run build && npm run build:cli-host:win && electron-builder --win",
-    "build:mac": "npm run build && electron-builder --mac",
-    "build:linux": "npm run build && electron-builder --linux"
+    "build:win": "npm run build && npm run build:cli-host:win && electron-builder --win --publish never",
+    "build:mac": "npm run build && electron-builder --mac --publish never",
+    "build:linux": "node scripts/build-linux-disabled.mjs"
   },
   "overrides": {
     "brace-expansion@^5.0.0": "5.0.9"
