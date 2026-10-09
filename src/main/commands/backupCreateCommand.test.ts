@@ -6,8 +6,57 @@ import { createBackupCommand, importBackupCommand } from './backupCommands'
 import { createBackupOperationFixture } from './testSupport/backupOperationFixture'
 import { validateLedgerBackupArtifact } from '../services/backupRecovery'
 import { getDatabase } from '../database/init'
+import { parseCliArgs } from '../../cli/parse'
+import { resolveCliPayload } from '../../cli/payload'
 
 describe('createBackupCommand', () => {
+  it('CLI 数字字符串账套 ID 生成数值清单，可校验并与数字载荷幂等重试', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const operationId = '98765432-1234-4234-8234-123456789abc'
+      const directoryPath = path.join(fixture.root, 'flags-backup')
+      const parsed = parseCliArgs(['backup', 'create', '--ledgerId', '7', '--directoryPath', directoryPath, '--operationId', operationId])
+      const result = await createBackupCommand(fixture.context, resolveCliPayload({ flags: parsed.flags }) as Parameters<typeof createBackupCommand>[1])
+      expect(result.status, JSON.stringify(result.error)).toBe('success')
+      expect(JSON.parse(fs.readFileSync(result.data!.manifestPath, 'utf8')).ledgerId).toBe(7)
+      expect(validateLedgerBackupArtifact(result.data!.backupPath, result.data!.manifestPath).valid).toBe(true)
+      const retried = await createBackupCommand(fixture.context, { ledgerId: 7, directoryPath, operationId })
+      expect(retried.status, JSON.stringify(retried.error)).toBe('success')
+      expect(retried.data!.backupId).toBe(result.data!.backupId)
+    } finally { fixture.cleanup() }
+  })
+  it('兼容旧数字字符串清单且不修改原包，仍拒绝错账套或非法 ID', async () => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const result = await createBackupCommand(fixture.context, { ledgerId: 7, directoryPath: fixture.root })
+      const manifest = JSON.parse(fs.readFileSync(result.data!.manifestPath, 'utf8'))
+      const legacyText = JSON.stringify({ ...manifest, ledgerId: '7' })
+      fs.writeFileSync(result.data!.manifestPath, legacyText)
+      const validation = validateLedgerBackupArtifact(result.data!.backupPath, result.data!.manifestPath)
+      expect(validation.valid, validation.error).toBe(true)
+      expect(validation.manifest!.ledgerId).toBe('7')
+      expect(fs.readFileSync(result.data!.manifestPath, 'utf8')).toBe(legacyText)
+      for (const ledgerId of ['8', '0', '7.1', true, null, '9007199254740993']) {
+        fs.writeFileSync(result.data!.manifestPath, JSON.stringify({ ...manifest, ledgerId }))
+        expect(validateLedgerBackupArtifact(result.data!.backupPath, result.data!.manifestPath).valid).toBe(false)
+      }
+      fs.writeFileSync(result.data!.manifestPath, legacyText)
+      const imported = await importBackupCommand(fixture.context, { backupId: result.data!.backupId })
+      expect(imported.status, JSON.stringify(imported.error)).toBe('success')
+      expect(fixture.context.db.prepare('SELECT id FROM ledgers WHERE id=?').get(imported.data!.importedLedgerId)).toBeTruthy()
+    } finally { fixture.cleanup() }
+  })
+  it.each(['0', 0, -1, '1.2', true, null, '9007199254740993'])('非法账套 ID %s 在产物创建前拒绝', async (ledgerId) => {
+    const fixture = createBackupOperationFixture()
+    try {
+      const directoryPath = path.join(fixture.root, 'invalid-backup')
+      const result = await createBackupCommand(fixture.context, { ledgerId: ledgerId as number, directoryPath })
+      expect(result.status).toBe('error')
+      expect(result.error?.code).toBe('VALIDATION_ERROR')
+      expect(fs.existsSync(directoryPath)).toBe(false)
+      expect(fixture.context.db.prepare('SELECT * FROM backup_packages').all()).toEqual([])
+    } finally { fixture.cleanup() }
+  })
   it('同名不同原件在备份副本内唯一命名，主库不变且导入后内容完整', async () => {
     const fixture = createBackupOperationFixture()
     try {

@@ -43,6 +43,7 @@ import { appendCliE2eEvent, shouldSuppressCliE2eRelaunch } from '../runtime/cliE
 import { requireCommandAdmin, requireCommandLedgerAccess, requireCommandPermission } from './authz'
 import { appendActorOperationLog } from './operationLog'
 import { withCommandResult } from './result'
+import { normalizePositiveInteger } from './payloadNormalizers'
 import type { CommandContext, CommandResult } from './types'
 import { CommandError } from './types'
 
@@ -95,12 +96,16 @@ export async function createBackupCommand(
 > {
   return withCommandResult(context, () => {
     const actor = requireCommandPermission(context.actor, 'ledger_settings')
-    requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
+    const ledgerId = normalizePositiveInteger(payload.ledgerId, 'ledgerId')
+    if (!Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
+      throw new CommandError('VALIDATION_ERROR', 'ledgerId 必须为有效正整数', { field: 'ledgerId' }, 2)
+    }
+    requireCommandLedgerAccess(context.db, context.actor, ledgerId)
     const ledger = context.db
       .prepare('SELECT id, name FROM ledgers WHERE id = ?')
-      .get(payload.ledgerId) as { id: number; name: string } | undefined
+      .get(ledgerId) as { id: number; name: string } | undefined
     if (!ledger) {
-      throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId: payload.ledgerId }, 5)
+      throw new CommandError('NOT_FOUND', '账套不存在', { ledgerId }, 5)
     }
 
     const createdAtDate = context.now
@@ -117,9 +122,9 @@ export async function createBackupCommand(
           kind: 'backup_create',
           actorId: actor.id,
           username: actor.username,
-          ledgerId: payload.ledgerId,
+          ledgerId,
           requestHash: createHash('sha256')
-            .update(JSON.stringify([payload.ledgerId, path.resolve(payload.directoryPath)]))
+            .update(JSON.stringify([ledgerId, path.resolve(payload.directoryPath)]))
             .digest('hex')
         },
         fileOperationArtifactRecovery,
@@ -134,7 +139,7 @@ export async function createBackupCommand(
               const staged = createLedgerBackupArtifact({
                 sourcePath: context.db.name,
                 backupDir: staging,
-                ledgerId: payload.ledgerId,
+                ledgerId,
                 ledgerName: ledger.name,
                 period: null,
                 fiscalYear: null,
@@ -152,11 +157,11 @@ export async function createBackupCommand(
         () => {
           context.actor = resolveSessionActor(context.db, actor.session, actor.source)
           requireCommandPermission(context.actor, 'ledger_settings')
-          requireCommandLedgerAccess(context.db, context.actor, payload.ledgerId)
+          requireCommandLedgerAccess(context.db, context.actor, ledgerId)
           rememberPathPreference(context.db, BACKUP_CREATE_LAST_DIR_KEY, payload.directoryPath)
           const createdAt = formatLocalDateTime(createdAtDate)
           const backupId = createBackupPackageRecord(context.db, {
-            ledgerId: payload.ledgerId,
+            ledgerId,
             backupPeriod,
             fiscalYear,
             packageType: 'ledger_backup',
@@ -175,7 +180,7 @@ export async function createBackupCommand(
               actor
             },
             {
-              ledgerId: payload.ledgerId,
+              ledgerId,
               module: 'backup',
               action: 'create',
               targetType: 'backup_package',

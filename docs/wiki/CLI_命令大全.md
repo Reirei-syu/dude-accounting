@@ -181,6 +181,7 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 
 说明：
 
+- `backup create --ledgerId 5 --directoryPath <目录>` 与数字 JSON 载荷使用相同账套 ID，生成清单保存数值 ID。旧版本清单中的合法数字字符串 ID 可正常校验、导入，原包保持不变；非法 ID、错账套及完整性问题仍会拒绝。
 - `backup restore` 现为正式纯 CLI 恢复链路；成功时会返回结构化字段 `restartRequired: true`。
 
 ## archive

@@ -66,7 +66,7 @@ export interface LedgerBackupSettingsAsset {
 export interface LedgerBackupManifest {
   schemaVersion: '2.0' | '2.1'
   packageType: 'ledger_backup'
-  ledgerId: number
+  ledgerId: number | string
   ledgerName: string | null
   period: string | null
   fiscalYear: string | null
@@ -542,6 +542,20 @@ export function validateLedgerBackupArtifact(
     return { valid: false, actualChecksum, error: '账套备份清单损坏', manifest: null }
   }
 
+  // 兼容旧 CLI 的数字字符串 ID，仅归一化比较值，保留原清单及规划摘要。
+  const rawLedgerId: unknown = manifest?.ledgerId
+  const ledgerId =
+    typeof rawLedgerId === 'string' && /^\d+$/.test(rawLedgerId.trim())
+      ? Number(rawLedgerId.trim())
+      : rawLedgerId
+  if (typeof ledgerId !== 'number' || !Number.isSafeInteger(ledgerId) || ledgerId <= 0) {
+    return {
+      valid: false,
+      actualChecksum,
+      error: '账套备份清单中的账套 ID 必须为有效正整数',
+      manifest
+    }
+  }
   const fileSize = fs.statSync(filePath).size
   const isManifestValid =
     manifest !== null &&
@@ -599,7 +613,7 @@ export function validateLedgerBackupArtifact(
         }
         checkDatabaseIntegrity(packageDb)
         const ledgers = packageDb.prepare('SELECT id FROM ledgers').all() as Array<{ id: number }>
-        if (ledgers.length !== 1 || ledgers[0].id !== manifest.ledgerId)
+        if (ledgers.length !== 1 || ledgers[0].id !== ledgerId)
           throw new Error('备份包必须仅包含清单声明的一个账套')
         for (const object of getSchemaObjects(packageDb).filter(
           (object) => object.type === 'table'
@@ -614,7 +628,7 @@ export function validateLedgerBackupArtifact(
               .prepare(
                 `SELECT 1 FROM ${table} WHERE ledger_id IS NOT NULL AND ledger_id <> ? LIMIT 1`
               )
-              .get(manifest.ledgerId)
+              .get(ledgerId)
           ) {
             throw new Error(`备份包混入其他账套记录：${object.name}`)
           }

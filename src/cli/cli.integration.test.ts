@@ -99,6 +99,24 @@ async function runCliWithStdin(
 }
 
 describe('embedded cli integration', () => {
+  it('普通参数创建的账套备份可校验，旧字符串清单也可校验并导入', async () => {
+    await runCliWithStdin(['auth', 'login', '--payload-stdin'], JSON.stringify({ username: 'admin', password: '' }))
+    const ledger = await runCliWithStdin(['ledger', 'create', '--payload-stdin'], JSON.stringify({ name: 'CLI 参数备份回归', standardType: 'npo', startPeriod: '2026-01' }))
+    expect(ledger.status).toBe('success')
+    const ledgerId = (ledger.data as { id: number }).id
+    const directoryPath = path.join(tempRoot, 'flag-backups')
+    const created = await runCli(['backup', 'create', '--ledgerId', String(ledgerId), '--directoryPath', directoryPath])
+    expect(created.status).toBe('success')
+    const { backupId, backupPath, manifestPath } = created.data as { backupId: number; backupPath: string; manifestPath: string }
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    expect(manifest.ledgerId).toBe(ledgerId)
+    expect((await runCli(['backup', 'validate', '--backupId', String(backupId)])).data).toMatchObject({ valid: true })
+    fs.writeFileSync(manifestPath, JSON.stringify({ ...manifest, ledgerId: String(ledgerId) }))
+    expect((await runCli(['backup', 'validate', '--backupId', String(backupId)])).data).toMatchObject({ valid: true })
+    const imported = await runCli(['backup', 'import', '--packagePath', path.dirname(backupPath)])
+    expect(imported.status).toBe('success')
+    expect((imported.data as { importedLedgerId: number }).importedLedgerId).not.toBe(ledgerId)
+  }, 120_000)
   it('多个 CLI 进程读取同一会话，安全变更后均立即拒绝旧身份', async () => {
     await runCliWithStdin(
       ['auth', 'login', '--payload-stdin'],

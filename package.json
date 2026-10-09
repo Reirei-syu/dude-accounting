@@ -1,6 +1,6 @@
 {
   "name": "dude-app",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "packageManager": "npm@11.6.2",
   "description": "供代理记账企业为委托单位记账使用的本地单机财务软件",
   "main": "./out/main/index.js",
