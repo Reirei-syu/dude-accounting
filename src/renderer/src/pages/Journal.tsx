@@ -14,6 +14,7 @@ import { getCurrentYearDateRange, type SubjectOption } from './bookQueryUtils'
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
 import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
+import QueryAmount from '../components/QueryAmount'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -440,8 +441,12 @@ export default function Journal(props: JournalProps): JSX.Element {
               <div>{row.summary}</div>
               <div>{row.subject_code}</div>
               <div>{row.subject_name}</div>
-              <div className="text-right">{formatAmount(row.debit_amount)}</div>
-              <div className="text-right">{formatAmount(row.credit_amount)}</div>
+              <div className="text-right">
+                <QueryAmount amount={row.debit_amount}>{formatAmount(row.debit_amount)}</QueryAmount>
+              </div>
+              <div className="text-right">
+                <QueryAmount amount={row.credit_amount}>{formatAmount(row.credit_amount)}</QueryAmount>
+              </div>
             </div>
           ))}
 

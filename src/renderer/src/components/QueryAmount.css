@@ -1,0 +1,6 @@
+/* 查询时弱化零金额；打印媒体保持正常不透明度。 */
+@media screen {
+  .query-zero-amount {
+    opacity: 0.5;
+  }
+}

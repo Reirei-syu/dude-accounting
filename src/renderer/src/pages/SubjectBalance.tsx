@@ -26,6 +26,7 @@ import {
   type SubjectBalanceDisplayRow
 } from './subjectBalanceSummary'
 import ScaledFilterRow from '../components/ScaledFilterRow'
+import QueryAmount from '../components/QueryAmount'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -610,12 +611,24 @@ export default function SubjectBalance(props: SubjectBalanceProps): JSX.Element 
               <div style={{ paddingLeft: `${Math.max(row.level - 1, 0) * 18}px` }}>
                 {row.subject_name}
               </div>
-              <div className="text-right">{formatAmount(row.opening_debit_amount)}</div>
-              <div className="text-right">{formatAmount(row.opening_credit_amount)}</div>
-              <div className="text-right">{formatAmount(row.period_debit_amount)}</div>
-              <div className="text-right">{formatAmount(row.period_credit_amount)}</div>
-              <div className="text-right">{formatAmount(row.ending_debit_amount)}</div>
-              <div className="text-right">{formatAmount(row.ending_credit_amount)}</div>
+              <div className="text-right">
+                <QueryAmount amount={row.opening_debit_amount}>{formatAmount(row.opening_debit_amount)}</QueryAmount>
+              </div>
+              <div className="text-right">
+                <QueryAmount amount={row.opening_credit_amount}>{formatAmount(row.opening_credit_amount)}</QueryAmount>
+              </div>
+              <div className="text-right">
+                <QueryAmount amount={row.period_debit_amount}>{formatAmount(row.period_debit_amount)}</QueryAmount>
+              </div>
+              <div className="text-right">
+                <QueryAmount amount={row.period_credit_amount}>{formatAmount(row.period_credit_amount)}</QueryAmount>
+              </div>
+              <div className="text-right">
+                <QueryAmount amount={row.ending_debit_amount}>{formatAmount(row.ending_debit_amount)}</QueryAmount>
+              </div>
+              <div className="text-right">
+                <QueryAmount amount={row.ending_credit_amount}>{formatAmount(row.ending_credit_amount)}</QueryAmount>
+              </div>
             </div>
           ))}
 

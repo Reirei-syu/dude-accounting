@@ -14,6 +14,7 @@ import { getCurrentYearDateRange, resolveAuxiliaryItemsForSubject } from './book
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
 import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
+import QueryAmount from '../components/QueryAmount'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -526,12 +527,24 @@ export default function AuxiliaryBalance(props: AuxiliaryBalanceProps): JSX.Elem
                 <div>{row.auxiliary_category}</div>
                 <div>{row.auxiliary_code}</div>
                 <div>{row.auxiliary_name}</div>
-                <div className="text-right">{formatAmount(row.opening_debit_amount)}</div>
-                <div className="text-right">{formatAmount(row.opening_credit_amount)}</div>
-                <div className="text-right">{formatAmount(row.period_debit_amount)}</div>
-                <div className="text-right">{formatAmount(row.period_credit_amount)}</div>
-                <div className="text-right">{formatAmount(row.ending_debit_amount)}</div>
-                <div className="text-right">{formatAmount(row.ending_credit_amount)}</div>
+                <div className="text-right">
+                  <QueryAmount amount={row.opening_debit_amount}>{formatAmount(row.opening_debit_amount)}</QueryAmount>
+                </div>
+                <div className="text-right">
+                  <QueryAmount amount={row.opening_credit_amount}>{formatAmount(row.opening_credit_amount)}</QueryAmount>
+                </div>
+                <div className="text-right">
+                  <QueryAmount amount={row.period_debit_amount}>{formatAmount(row.period_debit_amount)}</QueryAmount>
+                </div>
+                <div className="text-right">
+                  <QueryAmount amount={row.period_credit_amount}>{formatAmount(row.period_credit_amount)}</QueryAmount>
+                </div>
+                <div className="text-right">
+                  <QueryAmount amount={row.ending_debit_amount}>{formatAmount(row.ending_debit_amount)}</QueryAmount>
+                </div>
+                <div className="text-right">
+                  <QueryAmount amount={row.ending_credit_amount}>{formatAmount(row.ending_credit_amount)}</QueryAmount>
+                </div>
               </div>
             )
           })}

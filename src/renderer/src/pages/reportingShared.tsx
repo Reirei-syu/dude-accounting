@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js'
 import type { JSX } from 'react'
+import QueryAmount from '../components/QueryAmount'
 import {
   buildPresentedReportTables,
   type ReportRenderOptions
@@ -143,6 +144,14 @@ interface ViewerProps {
   renderOptions?: ReportRenderOptions
 }
 
+function ReportAmount({ amountCents }: { amountCents: number }): JSX.Element {
+  return (
+    <QueryAmount amount={amountCents}>
+      {formatAmountCents(amountCents)}
+    </QueryAmount>
+  )
+}
+
 export function ReportSnapshotViewer({ detail, renderOptions }: ViewerProps): JSX.Element {
   const isMultiColumn = (detail.content.tableColumns?.length ?? 0) > 0
   const presentedTables = buildPresentedReportTables(
@@ -208,7 +217,7 @@ export function ReportSnapshotViewer({ detail, renderOptions }: ViewerProps): JS
               className="mt-2 text-lg font-semibold"
               style={{ color: 'var(--color-text-primary)' }}
             >
-              {formatAmountCents(total.amountCents)}
+              <ReportAmount amountCents={total.amountCents} />
             </div>
           </div>
         ))}
@@ -260,9 +269,11 @@ export function ReportSnapshotViewer({ detail, renderOptions }: ViewerProps): JS
                                 whiteSpace: index === 0 ? 'normal' : 'nowrap'
                               }}
                             >
-                              {typeof cell.value === 'number' && cell.isAmount
-                                ? formatAmountCents(cell.value)
-                                : String(cell.value ?? '')}
+                              {typeof cell.value === 'number' && cell.isAmount ? (
+                                <ReportAmount amountCents={cell.value} />
+                              ) : (
+                                String(cell.value ?? '')
+                              )}
                             </td>
                           ))}
                         </tr>
@@ -337,12 +348,12 @@ export function ReportSnapshotViewer({ detail, renderOptions }: ViewerProps): JS
                           className="text-right font-medium"
                           style={{ color: 'var(--color-text-primary)' }}
                         >
-                          {formatAmountCents(row.cells?.[column.key] ?? 0)}
+                          <ReportAmount amountCents={row.cells?.[column.key] ?? 0} />
                         </div>
                       ))
                     ) : (
                       <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-                        {formatAmountCents(row.amountCents)}
+                        <ReportAmount amountCents={row.amountCents} />
                       </div>
                     )}
                   </div>

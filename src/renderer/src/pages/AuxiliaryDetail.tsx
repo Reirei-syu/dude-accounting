@@ -20,6 +20,7 @@ import {
 import { toExportAmount, type BookExportFormat } from './bookExportUtils'
 import { prepareAndOpenPrintPreview } from './printUtils'
 import ScaledFilterRow from '../components/ScaledFilterRow'
+import QueryAmount from '../components/QueryAmount'
 import { useLedgerStore } from '../stores/ledgerStore'
 import { useUIStore } from '../stores/uiStore'
 
@@ -578,10 +579,16 @@ export default function AuxiliaryDetail(props: AuxiliaryDetailProps): JSX.Elemen
                     : '-'}
                 </div>
                 <div>{row.summary}</div>
-                <div className="text-right">{formatAmount(row.debit_amount)}</div>
-                <div className="text-right">{formatAmount(row.credit_amount)}</div>
+                <div className="text-right">
+                  <QueryAmount amount={row.debit_amount}>{formatAmount(row.debit_amount)}</QueryAmount>
+                </div>
+                <div className="text-right">
+                  <QueryAmount amount={row.credit_amount}>{formatAmount(row.credit_amount)}</QueryAmount>
+                </div>
                 <div className="text-center">{getBalanceSideLabel(row.balance_side)}</div>
-                <div className="text-right">{formatAmount(row.balance_amount)}</div>
+                <div className="text-right">
+                  <QueryAmount amount={row.balance_amount}>{formatAmount(row.balance_amount)}</QueryAmount>
+                </div>
               </div>
             )
           })}
