@@ -155,6 +155,8 @@ description: "Dude Accounting CLI 全量命令与中文命令对照表"
 
 税务模板导出：`report export-tax-template --ledger-id <账套ID> --declaration-type monthly|quarterly|annual --year <YYYY> --output <xlsx路径>`。月报需加 `--month <1-12>`，季报需加 `--quarter <1-4>`；默认不覆盖已有文件，需显式加 `--overwrite`。
 
+报表金额在 Excel 中保存为数值（元），并显示两位小数。普通民非业务活动表第一组列为结束月份数、第二组为结束年份累计数；跨月时第一组明确标注月份，不能把它当作整个季度数。现金流量表按所选区间统计，与上年同期比较。税务模板的业务活动表第一组为申报区间数，金额公式及校验提示在导出时写入当前计算结果缓存，无需先用 Excel 重算才能读取；原模板公式和样式保留。
+
 ## book
 
 | 英文命令 | 中文命令 | 功能说明 | 需登录 | 桌面辅助 |

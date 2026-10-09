@@ -155,6 +155,51 @@ describe('reportSnapshotOutput service', () => {
     )
   })
 
+  it('exports amount cells as usable Excel numbers while preserving text and line numbers', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail = createCrossYearDetail()
+    detail.content.tables![0].rows[0].cells.push({ value: 12 })
+    detail.content.tables![0].columns.push({ key: 'line', label: '行次' })
+    detail.content.tables![0].rows.push({
+      key: 'negative',
+      cells: [{ value: '净变动' }, { value: -593, isAmount: true }, { value: 0, isAmount: true }]
+    })
+    const outputPath = path.join(tempDir, 'numeric.xlsx')
+    await writeReportSnapshotExcel(outputPath, detail)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(outputPath)
+    const sheet = workbook.worksheets[0]
+    expect(sheet.getCell('A5').value).toBe('一、营业收入')
+    expect(sheet.getCell('B5').value).toBe(570)
+    expect(sheet.getCell('B5').numFmt).toBe('#,##0.00')
+    expect(sheet.getCell('D5').value).toBe(12)
+    expect(sheet.getCell('D5').numFmt).not.toBe('#,##0.00')
+    expect(sheet.getCell('B6').value).toBe(-5.93)
+    expect(sheet.getCell('C6').value).toBe(0)
+  })
+
+  it('exports legacy section amounts and totals as numeric yuan', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
+    const detail = createMonthDetail()
+    detail.content.tables = undefined
+    detail.content.sections = [
+      {
+        key: 'assets',
+        title: '资产',
+        rows: [{ key: 'cash', label: '货币资金', amountCents: 9953146 }]
+      }
+    ]
+    detail.content.totals = [{ key: 'assets', label: '资产总计', amountCents: 9953146 }]
+    const outputPath = path.join(tempDir, 'legacy-numeric.xlsx')
+    await writeReportSnapshotExcel(outputPath, detail)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(outputPath)
+    const sheet = workbook.worksheets[0]
+    expect(sheet.getCell('B6').value).toBe(99531.46)
+    expect(sheet.getCell('B9').value).toBe(99531.46)
+    expect(sheet.getCell('B9').numFmt).toBe('#,##0.00')
+  })
+
   it('returns a clear error when chromium pdf generation is unavailable', async () => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-report-output-'))
 
@@ -346,11 +391,11 @@ describe('reportSnapshotOutput service', () => {
     await workbook.xlsx.readFile(xlsxPath)
     const worksheet = workbook.worksheets[0]
 
-    expect(html).toContain('本年金额')
-    expect(html).not.toContain('上年金额')
+    expect(html).toContain('本期金额')
+    expect(html).not.toContain('上年同期金额')
     expect(worksheet?.getCell(4, 1).value).toBe('项目')
-    expect(worksheet?.getCell(4, 2).value).toBe('本年金额')
-    expect(worksheet?.getCell(4, 3).value).not.toBe('上年金额')
+    expect(worksheet?.getCell(4, 2).value).toBe('本期金额')
+    expect(worksheet?.getCell(4, 3).value).not.toBe('上年同期金额')
     expect(fs.existsSync(pdfPath)).toBe(false)
   })
 })

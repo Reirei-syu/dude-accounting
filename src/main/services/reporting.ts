@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { buildPresentedReportTables } from '../../shared/reportTablePresentation'
 import type {
   LedgerRow,
   ReportSnapshotScope,
@@ -60,29 +61,33 @@ function buildSnapshotContent(
   generatedAt: string,
   options: BuildReportSnapshotContentOptions = {}
 ): ReportSnapshotContent {
+  const present = (content: ReportSnapshotContent): ReportSnapshotContent => ({
+    ...content,
+    tables: buildPresentedReportTables(reportType, content.tables, undefined, 'cents', scope)
+  })
   const title = getReportTitle(reportType, ledger.standard_type)
   if (reportType === 'balance_sheet') {
-    return buildBalanceSheetSnapshot(db, ledger, scope, generatedAt)
+    return present(buildBalanceSheetSnapshot(db, ledger, scope, generatedAt))
   }
   if (reportType === 'equity_statement') {
-    return buildEnterpriseEquityStatementSnapshot(db, ledger, scope, generatedAt)
+    return present(buildEnterpriseEquityStatementSnapshot(db, ledger, scope, generatedAt))
   }
   if (ledger.standard_type === 'npo' && reportType === 'activity_statement') {
-    return buildNgoActivityStatementSnapshot(
+    return present(buildNgoActivityStatementSnapshot(
       db,
       ledger,
       scope,
       generatedAt,
       options.activityCurrentPeriod
-    )
+    ))
   }
   if (reportType === 'cashflow_statement') {
     if (ledger.standard_type === 'npo') {
-      return buildNgoCashFlowStatementSnapshot(db, ledger, scope, generatedAt)
+      return present(buildNgoCashFlowStatementSnapshot(db, ledger, scope, generatedAt))
     }
-    return buildCashFlowSnapshot(db, ledger, scope, generatedAt)
+    return present(buildCashFlowSnapshot(db, ledger, scope, generatedAt))
   }
-  return buildProfitLossSnapshot(db, ledger, scope, generatedAt, title)
+  return present(buildProfitLossSnapshot(db, ledger, scope, generatedAt, title))
 }
 
 export function buildReportSnapshotContentForExport(

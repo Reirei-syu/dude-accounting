@@ -7,7 +7,8 @@ import { buildTimestampToken, ensureDirectory, sanitizePathSegment } from './fil
 import type { ReportExportFormat, ReportSnapshotDetail, ReportSnapshotScope } from './reporting'
 import {
   buildPresentedReportTables,
-  type ReportRenderOptions
+  type ReportRenderOptions,
+  type ReportTablePresentationCell
 } from '../../shared/reportTablePresentation'
 
 const REPORT_EXPORT_FALLBACK_NAME = '报表导出'
@@ -115,7 +116,9 @@ function getExportTableHeaders(
   const presentedTables = buildPresentedReportTables(
     detail.report_type,
     detail.content.tables,
-    renderOptions
+    renderOptions,
+    'cents',
+    detail.content.scope
   )
 
   if (presentedTables && presentedTables.length > 0) {
@@ -132,22 +135,24 @@ function getExportTableHeaders(
 function getExportTableRows(
   detail: ReportSnapshotDetail,
   renderOptions?: ReportRenderOptions
-): Array<{ section: string; values: string[] }> {
+): Array<{ section: string; cells: ReportTablePresentationCell[] }> {
   const presentedTables = buildPresentedReportTables(
     detail.report_type,
     detail.content.tables,
-    renderOptions
+    renderOptions,
+    'cents',
+    detail.content.scope
   )
 
   if (presentedTables && presentedTables.length > 0) {
     return presentedTables.flatMap((table) =>
       table.rows.map((row) => ({
         section: table.key,
-        values: row.cells.map((cell) =>
-          typeof cell.value === 'number' && cell.isAmount
-            ? formatAmount(cell.value)
-            : String(cell.value ?? '')
-        )
+        cells: row.cells.map((cell) => ({
+          ...cell,
+          value:
+            typeof cell.value === 'number' && cell.isAmount ? cell.value / 100 : (cell.value ?? '')
+        }))
       }))
     )
   }
@@ -155,17 +160,18 @@ function getExportTableRows(
   return detail.content.sections.flatMap((section) =>
     section.rows.map((row) => {
       const label = `${row.lineNo ? `${row.lineNo} ` : ''}${row.code ? `${row.code} ` : ''}${row.label}`
-      const values =
+      const cells: ReportTablePresentationCell[] =
         detail.content.tableColumns && detail.content.tableColumns.length > 0
           ? [
-              label,
-              ...detail.content.tableColumns.map((column) =>
-                formatAmount(row.cells?.[column.key] ?? 0)
-              )
+              { value: label },
+              ...detail.content.tableColumns.map((column) => ({
+                value: (row.cells?.[column.key] ?? 0) / 100,
+                isAmount: true
+              }))
             ]
-          : [label, formatAmount(row.amountCents)]
+          : [{ value: label }, { value: row.amountCents / 100, isAmount: true }]
 
-      return { section: section.title, values }
+      return { section: section.title, cells }
     })
   )
 }
@@ -184,7 +190,9 @@ export function buildReportSnapshotHtml(
   const presentedTables = buildPresentedReportTables(
     detail.report_type,
     detail.content.tables,
-    renderOptions
+    renderOptions,
+    'cents',
+    detail.content.scope
   )
 
   const sectionHtml =
@@ -496,9 +504,12 @@ export async function writeReportSnapshotExcel(
       rowIndex += 1
     }
 
-    row.values.forEach((value, index) => {
+    row.cells.forEach((sourceCell, index) => {
       const cell = worksheet.getCell(rowIndex, index + 1)
-      cell.value = value
+      cell.value = sourceCell.value
+      if (sourceCell.isAmount && typeof sourceCell.value === 'number') {
+        cell.numFmt = '#,##0.00'
+      }
       cell.font = { name: '宋体', size: 10 }
       cell.alignment = { horizontal: index === 0 ? 'left' : 'right', vertical: 'middle' }
       cell.border = {
@@ -508,7 +519,7 @@ export async function writeReportSnapshotExcel(
         right: { style: 'thin' }
       }
     })
-    const rowLabel = String(row.values[0] ?? '')
+    const rowLabel = String(row.cells[0]?.value ?? '')
     const highlightKind = resolveRowHighlightKindByLabel(rowLabel)
     if (highlightKind) {
       const fillColor = highlightKind === 'total' ? 'FFEFF6FF' : 'FFECFDF5'
@@ -532,7 +543,8 @@ export async function writeReportSnapshotExcel(
     rowIndex += 1
     detail.content.totals.forEach((total) => {
       worksheet.getCell(rowIndex, 1).value = total.label
-      worksheet.getCell(rowIndex, headers.length).value = formatAmount(total.amountCents)
+      worksheet.getCell(rowIndex, headers.length).value = total.amountCents / 100
+      worksheet.getCell(rowIndex, headers.length).numFmt = '#,##0.00'
       for (let column = 1; column <= headers.length; column += 1) {
         const cell = worksheet.getCell(rowIndex, column)
         cell.font = { name: '宋体', size: 10 }

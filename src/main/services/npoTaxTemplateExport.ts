@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
+import Decimal from 'decimal.js'
 import type Database from 'better-sqlite3'
 import {
   buildReportSnapshotContentForExport,
@@ -375,7 +376,7 @@ function fillIdentity(
   balanceSheet.getCell('G4').value = period.endDate
 }
 
-function setFormulaResult(cell: ExcelJS.Cell, result: string): void {
+function setFormulaResult(cell: ExcelJS.Cell, result: string | number): void {
   const value = cell.value as FormulaCellValue | null
   if (typeof value === 'object' && value !== null && typeof value.formula === 'string') {
     const formulaValue = value as ExcelJS.CellFormulaValue
@@ -384,6 +385,85 @@ function setFormulaResult(cell: ExcelJS.Cell, result: string): void {
       result
     }
   }
+}
+
+// The bundled template uses ROUND with cell references, sums and differences.
+// Evaluate that bounded grammar without executing formula text or reusing stale caches.
+function refreshAmountFormulaCaches(workbook: ExcelJS.Workbook): void {
+  const evaluated = new Map<ExcelJS.Cell, Decimal>()
+  const active = new Set<ExcelJS.Cell>()
+  const evaluate = (cell: ExcelJS.Cell): Decimal => {
+    const cached = evaluated.get(cell)
+    if (cached) return cached
+    if (!cellHasFormula(cell)) {
+      if (cell.value === null || cell.value === '') return new Decimal(0)
+      if (typeof cell.value === 'number') return new Decimal(cell.value)
+      throw new Error(`税务模板金额单元格不是数值：${cell.worksheet.name}!${cell.address}`)
+    }
+    if (active.has(cell))
+      throw new Error(`税务模板公式循环引用：${cell.worksheet.name}!${cell.address}`)
+    active.add(cell)
+    const expression = /^ROUND\((.+),2\)$/i.exec(cell.formula)?.[1]
+    if (!expression)
+      throw new Error(`税务模板金额公式不受支持：${cell.worksheet.name}!${cell.address}`)
+    let position = 0
+    const parseTerm = (): Decimal => {
+      if (expression[position] === '(') {
+        position += 1
+        const value = parseSum()
+        if (expression[position++] !== ')') throw new Error('税务模板公式括号不匹配')
+        return value
+      }
+      const reference = /^(?:([^!()+,-]+)!)?([A-Z]+\d+)/.exec(expression.slice(position))
+      if (!reference)
+        throw new Error(`税务模板金额公式不受支持：${cell.worksheet.name}!${cell.address}`)
+      position += reference[0].length
+      const sheet = reference[1] ? workbook.getWorksheet(reference[1]) : cell.worksheet
+      if (!sheet) throw new Error(`税务模板公式引用的工作表不存在：${reference[1]}`)
+      return evaluate(sheet.getCell(reference[2]))
+    }
+    const parseSum = (): Decimal => {
+      let value = parseTerm()
+      while (expression[position] === '+' || expression[position] === '-') {
+        const operator = expression[position++]
+        const next = parseTerm()
+        value = operator === '+' ? value.plus(next) : value.minus(next)
+      }
+      return value
+    }
+    const value = parseSum().toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    if (position !== expression.length)
+      throw new Error(`税务模板金额公式不受支持：${cell.worksheet.name}!${cell.address}`)
+    setFormulaResult(cell, value.toNumber())
+    evaluated.set(cell, value)
+    active.delete(cell)
+    return value
+  }
+  for (const sheet of workbook.worksheets) {
+    sheet.eachRow((row) =>
+      row.eachCell((cell) => {
+        if (
+          cell.type === ExcelJS.ValueType.Formula &&
+          Number(cell.row) >= 7 &&
+          !(sheet.name === '资产负债表' && cell.address === 'B36')
+        ) {
+          evaluate(cell)
+        }
+      })
+    )
+  }
+  const balance = workbook.getWorksheet('资产负债表')!
+  // Preserve the template's existing balance-check formula and its warning text.
+  const openingBalanced = evaluate(balance.getCell('D35')).equals(evaluate(balance.getCell('H35')))
+  const closingBalanced = evaluate(balance.getCell('E35')).equals(evaluate(balance.getCell('I35')))
+  setFormulaResult(
+    balance.getCell('B36'),
+    openingBalanced
+      ? closingBalanced
+        ? ''
+        : '提示：资产总计期末数与负债和净资产总计期末数不等'
+      : '提示：资产总计年初数与负债和资产总计年初数不等'
+  )
 }
 
 function refreshIdentityFormulaCaches(
@@ -573,6 +653,7 @@ export async function exportNpoTaxTemplate(
   fillBalanceSheet(balanceSheet, balanceContent, aliases)
   fillActivitySheet(activitySheet, activityContent, aliases)
   fillCashflowSheet(cashflowSheet, cashflowContent, aliases)
+  refreshAmountFormulaCaches(workbook)
   setWorkbookRecalculation(workbook)
 
   await fsp.mkdir(path.dirname(outputPath), { recursive: true })

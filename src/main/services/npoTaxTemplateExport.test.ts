@@ -534,6 +534,74 @@ describe('npoTaxTemplateExport service', () => {
       formula: expect.stringContaining('资产负债表!C3'),
       result: '91310000TESTNPO001'
     })
+    expect(balanceSheet?.getCell('D35').result).toBe(500)
+    expect(balanceSheet?.getCell('E35').result).toBe(750)
+    expect(balanceSheet?.getCell('I35').result).toBe(750)
+    expect(activitySheet?.getCell('F15').result).toBe(300)
+    expect(activitySheet?.getCell('F25').result).toBe(50)
+    expect(activitySheet?.getCell('F27').result).toBe(250)
+    expect(cashflowSheet?.getCell('E42').result).toBe(250)
+    expect(balanceSheet?.getCell('B36').result ?? '').toBe('')
+  })
+
+  it('caches fractional negative totals without requiring Excel to recalculate', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-npo-tax-template-'))
+    const db = new FakeTaxTemplateDb()
+    seedNpoLedger(db)
+    for (const entry of db.voucherEntries) {
+      if (entry.voucher_id === 101) {
+        entry.debit_amount = 0
+        entry.credit_amount = 0
+      }
+      if (entry.voucher_id === 103) {
+        if (entry.debit_amount) entry.debit_amount = 7
+        if (entry.credit_amount) entry.credit_amount = 7
+      }
+      if (entry.voucher_id === 104) {
+        if (entry.debit_amount) entry.debit_amount = 600
+        if (entry.credit_amount) entry.credit_amount = 600
+      }
+    }
+    const outputPath = path.join(tempDir, 'fractional.xlsx')
+    await exportNpoTaxTemplate(db as never, {
+      ledgerId: 1,
+      declarationType: 'quarterly',
+      year: 2026,
+      quarter: 1,
+      outputPath,
+      templatePath
+    })
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(outputPath)
+    expect(workbook.getWorksheet('业务活动表')!.getCell('F27').result).toBe(-5.93)
+    expect(workbook.getWorksheet('现金流量表')!.getCell('E42').result).toBe(-5.93)
+    expect(workbook.getWorksheet('资产负债表')!.getCell('E35').result).toBe(494.07)
+  })
+
+  it('rejects an unsupported amount formula instead of exporting a stale cache', async () => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dude-npo-tax-template-'))
+    const db = new FakeTaxTemplateDb()
+    seedNpoLedger(db)
+    const template = new ExcelJS.Workbook()
+    await template.xlsx.readFile(templatePath)
+    template.getWorksheet('资产负债表')!.getCell('D15').value = {
+      formula: 'SUM(D7:D14)',
+      result: 123
+    }
+    const modifiedTemplate = path.join(tempDir, 'unsupported-template.xlsx')
+    await template.xlsx.writeFile(modifiedTemplate)
+    const outputPath = path.join(tempDir, 'unsupported.xlsx')
+    await expect(
+      exportNpoTaxTemplate(db as never, {
+        ledgerId: 1,
+        declarationType: 'quarterly',
+        year: 2026,
+        quarter: 1,
+        outputPath,
+        templatePath: modifiedTemplate
+      })
+    ).rejects.toThrow('税务模板金额公式不受支持：资产负债表!D15')
+    expect(fs.existsSync(outputPath)).toBe(false)
   })
 
   it('blocks non-npo ledgers and missing taxpayer identification numbers', async () => {

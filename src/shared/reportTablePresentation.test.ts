@@ -3,6 +3,50 @@ import { describe, expect, it } from 'vitest'
 import { buildPresentedReportTables } from './reportTablePresentation'
 
 describe('reportTablePresentation', () => {
+  it('identifies enterprise cashflow comparison as the same interval in the prior year', () => {
+    const tables = [{ key: 'enterprise-cashflow', columns: [
+      { key: 'current', label: '本期金额' }, { key: 'previous', label: '上期金额' }
+    ], rows: [] }]
+    expect(buildPresentedReportTables('cashflow_statement', tables, undefined, 'cents',
+      { startPeriod: '2026-07', endPeriod: '2026-09' })?.[0].columns[1].label).toBe('上年同期金额')
+  })
+  it('clarifies the actual periods when presenting an existing quarterly snapshot', () => {
+    const scope = { startPeriod: '2026-07', endPeriod: '2026-09' }
+    const activity = [
+      {
+        key: 'activity',
+        columns: [
+          { key: 'current_unrestricted', label: '本月数\n（非限定性）' },
+          { key: 'cumulative_unrestricted', label: '本年累计数\n（非限定性）' }
+        ],
+        rows: []
+      }
+    ]
+    expect(
+      buildPresentedReportTables('activity_statement', activity, undefined, 'cents', scope)?.[0]
+        .columns[0].label
+    ).toBe('2026年9月数\n（非限定性）')
+    const cashflow = [
+      {
+        key: 'cashflow',
+        columns: [
+          { key: 'current', label: '本年金额' },
+          { key: 'previous', label: '上年金额' }
+        ],
+        rows: []
+      }
+    ]
+    expect(
+      buildPresentedReportTables(
+        'cashflow_statement',
+        cashflow,
+        undefined,
+        'cents',
+        scope
+      )?.[0].columns.map((c) => c.label)
+    ).toEqual(['本期金额', '上年同期金额'])
+    expect(activity[0].columns[0].label).toBe('本月数\n（非限定性）')
+  })
   it('can hide cashflow previous columns while keeping current values', () => {
     const tables = [
       {

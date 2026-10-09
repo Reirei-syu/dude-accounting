@@ -148,7 +148,9 @@ export function ReportSnapshotViewer({ detail, renderOptions }: ViewerProps): JS
   const presentedTables = buildPresentedReportTables(
     detail.report_type,
     detail.content.tables,
-    renderOptions
+    renderOptions,
+    'cents',
+    detail.content.scope
   )
   const hasOfficialTables = (presentedTables?.length ?? 0) > 0
 

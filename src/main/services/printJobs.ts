@@ -752,7 +752,8 @@ function getReportSegment(
     detail.report_type,
     detail.content.tables,
     renderOptions,
-    'yuan'
+    'yuan',
+    detail.content.scope
   )
   const headers =
     presentedTables?.[0]?.columns?.map((column) => ({

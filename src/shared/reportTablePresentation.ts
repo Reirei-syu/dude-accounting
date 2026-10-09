@@ -37,7 +37,8 @@ export function buildPresentedReportTables(
   reportType: string,
   tables: ReportTablePresentationTable[] | undefined,
   options?: ReportRenderOptions | null,
-  amountMode: 'cents' | 'yuan' = 'cents'
+  amountMode: 'cents' | 'yuan' = 'cents',
+  scope?: { startPeriod: string; endPeriod: string }
 ): ReportTablePresentationTable[] | undefined {
   if (!tables) {
     return tables
@@ -58,7 +59,34 @@ export function buildPresentedReportTables(
 
     return {
       ...table,
-      columns: table.columns.filter((_, index) => !hiddenColumnIndexes.includes(index)),
+      columns: table.columns
+        .filter((_, index) => !hiddenColumnIndexes.includes(index))
+        .map((column) => {
+          let label = column.label
+          if (
+            scope &&
+            reportType === 'activity_statement' &&
+            scope.startPeriod !== scope.endPeriod
+          ) {
+            const [year, month] = scope.endPeriod.split('-')
+            label = label.replace(/^本月数/, `${year}年${Number(month)}月数`)
+            if (scope.startPeriod.slice(0, 4) !== year) {
+              label = label.replace(/^本年累计数/, `${year}年累计数`)
+            }
+          }
+          if (scope && reportType === 'cashflow_statement') {
+            if (column.key === 'previous' && label === '上期金额') label = '上年同期金额'
+            const fullYear =
+              scope.startPeriod.slice(0, 4) === scope.endPeriod.slice(0, 4) &&
+              scope.startPeriod.endsWith('-01') &&
+              scope.endPeriod.endsWith('-12')
+            if (!fullYear) {
+              if (column.key === 'current' && label === '本年金额') label = '本期金额'
+              if (column.key === 'previous' && label === '上年金额') label = '上年同期金额'
+            }
+          }
+          return { ...column, label }
+        }),
       rows: table.rows.map((row) => ({
         ...row,
         cells: row.cells

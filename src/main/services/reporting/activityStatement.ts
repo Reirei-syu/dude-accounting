@@ -118,6 +118,12 @@ export function buildNgoActivityStatementSnapshot(
     scope.endDate,
     scope.includeUnpostedVouchers
   )
+  const currentLabel =
+    currentPeriod === null
+      ? '本期数'
+      : currentPeriod === scope.endPeriod
+        ? '本月数'
+        : `${currentPeriod.slice(0, 4)}年${Number(currentPeriod.slice(5))}月数`
   const cumulativeStartDate = `${scope.endPeriod.slice(0, 4)}-01-01`
   const cumulativeEntries = listEffectiveEntries(
     db,
@@ -293,13 +299,16 @@ export function buildNgoActivityStatementSnapshot(
           { key: 'item', label: '项目' },
           {
             key: 'current_unrestricted',
-            label: insertHeaderBreakBeforeParenthesis('本月数（非限定性）')
+            label: insertHeaderBreakBeforeParenthesis(`${currentLabel}（非限定性）`)
           },
           {
             key: 'current_restricted',
-            label: insertHeaderBreakBeforeParenthesis('本月数（限定性）')
+            label: insertHeaderBreakBeforeParenthesis(`${currentLabel}（限定性）`)
           },
-          { key: 'current_total', label: insertHeaderBreakBeforeParenthesis('本月数（合计）') },
+          {
+            key: 'current_total',
+            label: insertHeaderBreakBeforeParenthesis(`${currentLabel}（合计）`)
+          },
           {
             key: 'cumulative_unrestricted',
             label: insertHeaderBreakBeforeParenthesis('本年累计数（非限定性）')

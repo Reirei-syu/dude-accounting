@@ -1032,8 +1032,19 @@ describe('reporting service', () => {
       now: '2026-03-09T11:03:00.000Z'
     })
 
-    const cashflowTable = (snapshot.content as { tables?: Array<{ columns: Array<{ label: string }>; rows: Array<{ cells: Array<{ value: string | number | null }> }> }> }).tables?.[0]
-    expect(cashflowTable?.columns.map((column) => column.label)).toEqual(['项目', '本年金额', '上年金额'])
+    const cashflowTable = (
+      snapshot.content as {
+        tables?: Array<{
+          columns: Array<{ label: string }>
+          rows: Array<{ cells: Array<{ value: string | number | null }> }>
+        }>
+      }
+    ).tables?.[0]
+    expect(cashflowTable?.columns.map((column) => column.label)).toEqual([
+      '项目',
+      '本期金额',
+      '上年同期金额'
+    ])
     expect(
       cashflowTable?.rows.some(
         (row) => row.cells[0]?.value === '提供服务收到的现金' && row.cells[1]?.value === 20_000
@@ -1137,6 +1148,8 @@ describe('reporting service', () => {
     expect(readTotal(snapshot.content.totals, 'net_assets_change')).toBe(8_000)
 
     const activityTable = snapshot.content.tables?.[0]
+    expect(activityTable?.columns[1].label).toBe('2026年1月数\n（非限定性）')
+    expect(activityTable?.columns[4].label).toBe('2026年累计数\n（非限定性）')
     const serviceIncomeRow = activityTable?.rows.find((row) => row.key === 'income-4301')
     const adminExpenseRow = activityTable?.rows.find((row) => row.key === 'expense-5301')
     const netChangeRow = activityTable?.rows.find((row) => row.key === 'net-assets-change')
@@ -1176,6 +1189,7 @@ describe('reporting service', () => {
     })
 
     const activityTable = snapshot.content.tables?.[0]
+    expect(activityTable?.columns[1].label).toBe('2026年3月数\n（非限定性）')
     const serviceIncomeRow = activityTable?.rows.find((row) => row.key === 'income-4301')
     const adminExpenseRow = activityTable?.rows.find((row) => row.key === 'expense-5301')
     const netChangeRow = activityTable?.rows.find((row) => row.key === 'net-assets-change')
@@ -1204,6 +1218,11 @@ describe('reporting service', () => {
     })
 
     expect(snapshot.period).toBe('2025.12-2026.01')
+    expect(snapshot.content.tables?.[0].columns.map((column) => column.label)).toEqual([
+      '项目',
+      '本期金额',
+      '上年同期金额'
+    ])
     expect(snapshot.content.scope.startDate).toBe('2025-12-01')
     expect(snapshot.content.scope.endDate).toBe('2026-01-31')
     expect(findTableRow(snapshot, '提供服务收到的现金')?.cells[1]?.value).toBe(20_000)
